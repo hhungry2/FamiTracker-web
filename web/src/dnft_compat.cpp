@@ -373,6 +373,75 @@ int MessageBoxA(HWND, LPCSTR lpText, LPCSTR, UINT uType) {
 	return dnft_compat::ReportMessage(lpText, uType);
 }
 
+// Files, on the ones CFile keeps in memory.
+
+namespace {
+DWORD g_LastError = ERROR_SUCCESS;
+
+BOOL Fail(DWORD error) {
+	g_LastError = error;
+	return FALSE;
+}
+}
+
+DWORD GetLastError() {
+	return g_LastError;
+}
+
+void SetLastError(DWORD dwErrCode) {
+	g_LastError = dwErrCode;
+}
+
+UINT GetTempFileName(LPCTSTR, LPCTSTR lpPrefixString, UINT uUnique, LPTSTR lpTempFileName) {
+	// Unlike Windows the name does not depend on the directory: nothing else is there.
+	static UINT counter = 0;
+	UINT unique = uUnique ? uUnique : ++counter;
+	std::snprintf(lpTempFileName, MAX_PATH, "memory/tmp/%.3s%04X.tmp", lpPrefixString ? lpPrefixString : "", unique & 0xFFFF);
+	if (!uUnique)
+		Files()[lpTempFileName] = std::make_shared<std::vector<unsigned char>>();	// as Windows does
+	return unique;
+}
+
+BOOL CopyFile(LPCTSTR lpExistingFileName, LPCTSTR lpNewFileName, BOOL bFailIfExists) {
+	auto &files = Files();
+	auto it = files.find(lpExistingFileName);
+	if (it == files.end())
+		return Fail(ERROR_FILE_NOT_FOUND);
+	if (bFailIfExists && files.count(lpNewFileName))
+		return Fail(ERROR_FILE_EXISTS);
+	files[lpNewFileName] = std::make_shared<std::vector<unsigned char>>(*it->second);
+	return TRUE;
+}
+
+BOOL DeleteFile(LPCTSTR lpFileName) {
+	if (!Files().erase(lpFileName))
+		return Fail(ERROR_FILE_NOT_FOUND);
+	return TRUE;
+}
+
+BOOL MoveFileEx(LPCTSTR lpExistingFileName, LPCTSTR lpNewFileName, DWORD dwFlags) {
+	auto &files = Files();
+	auto it = files.find(lpExistingFileName);
+	if (it == files.end())
+		return Fail(ERROR_FILE_NOT_FOUND);
+	if (!(dwFlags & MOVEFILE_REPLACE_EXISTING) && files.count(lpNewFileName))
+		return Fail(ERROR_ALREADY_EXISTS);
+	auto content = it->second;
+	files.erase(it);
+	files[lpNewFileName] = std::move(content);
+	return TRUE;
+}
+
+BOOL ReplaceFile(LPCTSTR lpReplacedFileName, LPCTSTR lpReplacementFileName, LPCTSTR lpBackupFileName, DWORD, LPVOID, LPVOID) {
+	// The file to replace has to exist; callers fall back to MoveFileEx() when it does not.
+	auto &files = Files();
+	if (!files.count(lpReplacedFileName) || !files.count(lpReplacementFileName))
+		return Fail(ERROR_FILE_NOT_FOUND);
+	if (lpBackupFileName && !CopyFile(lpReplacedFileName, lpBackupFileName, FALSE))
+		return FALSE;
+	return MoveFileEx(lpReplacementFileName, lpReplacedFileName, MOVEFILE_REPLACE_EXISTING);
+}
+
 namespace {
 // Events only need to exist: nothing waits on them without a second thread.
 struct EventObject {

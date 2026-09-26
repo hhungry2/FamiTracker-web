@@ -39,11 +39,24 @@ public:
 	void Start(int Track, bool loop);
 	void Stop();
 
+	// Audio without end, as the desktop tracker's is while it is open: nothing plays until
+	// StartPlayer(), and halting the player (HaltPlayer() or the Cxx effect) leaves the
+	// output running for the notes played by hand. Ended by Stop().
+	void BeginStream();
+	// The desktop's play commands (MODE_PLAY_*); the cursor is the view's selection.
+	void StartPlayer(int Mode, int Track);
+	void HaltPlayer();
+
 	// One tick of the engine: reads rows, updates channels, clocks the APU. The audio
 	// produced goes to the sink.
 	void Tick();
 
+	// Rendering and playing (Start()); IsPlayerRunning() is about the player alone
 	bool IsPlaying() const;
+	bool IsPlayerRunning() const;
+	// Whether the last tick read a row: the one GetFrame() and GetRow() gave before it
+	bool RowWasRead() const;
+	// The row the player reads next
 	int GetFrame() const;
 	int GetRow() const;
 	int GetTrack() const;
@@ -55,6 +68,7 @@ public:
 	static const Sink &GetSink();
 
 private:
+	bool BeginRendering(int Track, bool loop);
 	void Configure();
 	void RenewAPU();
 

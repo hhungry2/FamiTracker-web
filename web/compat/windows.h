@@ -247,24 +247,30 @@ inline HRESULT CoInitializeEx(void *, DWORD) { return S_OK; }
 inline void CoUninitialize() {}
 
 // ---- files ---------------------------------------------------------------------------
-// There is no disk. These fail the way Windows does when a path cannot be written.
+// There is no disk: these work on the files CFile keeps in memory (see dnft_compat.h),
+// so that saving a module, which writes a temporary file and moves it in place,
+// behaves as on Windows.
 
 #define MOVEFILE_REPLACE_EXISTING 0x1
 #define MOVEFILE_COPY_ALLOWED     0x2
 #define ERROR_SUCCESS             0L
 #define ERROR_FILE_NOT_FOUND      2L
 #define ERROR_ACCESS_DENIED       5L
-inline BOOL CopyFile(LPCTSTR, LPCTSTR, BOOL) { return FALSE; }
+#define ERROR_FILE_EXISTS         80L
+#define ERROR_ALREADY_EXISTS      183L
 #define REPLACEFILE_WRITE_THROUGH       0x00000001
 #define REPLACEFILE_IGNORE_MERGE_ERRORS 0x00000002
-inline BOOL ReplaceFile(LPCTSTR, LPCTSTR, LPCTSTR, DWORD, LPVOID, LPVOID) { return FALSE; }
+BOOL CopyFile(LPCTSTR lpExistingFileName, LPCTSTR lpNewFileName, BOOL bFailIfExists);
+BOOL ReplaceFile(LPCTSTR lpReplacedFileName, LPCTSTR lpReplacementFileName, LPCTSTR lpBackupFileName,
+                 DWORD dwReplaceFlags, LPVOID lpExclude, LPVOID lpReserved);
 inline BOOL FlushFileBuffers(HANDLE) { return TRUE; }
-inline BOOL DeleteFile(LPCTSTR) { return FALSE; }
-inline BOOL MoveFileEx(LPCTSTR, LPCTSTR, DWORD) { return FALSE; }
-inline BOOL MoveFile(LPCTSTR, LPCTSTR) { return FALSE; }
-inline DWORD GetLastError() { return ERROR_ACCESS_DENIED; }
+BOOL DeleteFile(LPCTSTR lpFileName);
+BOOL MoveFileEx(LPCTSTR lpExistingFileName, LPCTSTR lpNewFileName, DWORD dwFlags);
+inline BOOL MoveFile(LPCTSTR lpExistingFileName, LPCTSTR lpNewFileName) { return MoveFileEx(lpExistingFileName, lpNewFileName, 0); }
+DWORD GetLastError();
+void SetLastError(DWORD dwErrCode);
 inline DWORD GetTempPath(DWORD n, LPTSTR buf) { if (n) buf[0] = 0; return 0; }
-inline UINT GetTempFileName(LPCTSTR, LPCTSTR, UINT, LPTSTR buf) { buf[0] = 0; return 0; }
+UINT GetTempFileName(LPCTSTR lpPathName, LPCTSTR lpPrefixString, UINT uUnique, LPTSTR lpTempFileName);
 
 #define FORMAT_MESSAGE_ALLOCATE_BUFFER 0x00000100
 #define FORMAT_MESSAGE_IGNORE_INSERTS  0x00000200
