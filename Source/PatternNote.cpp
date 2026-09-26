@@ -48,7 +48,7 @@ CString stChanNote::ToString() const
 	default:
 		{
 			CString str;
-			str.Format(_T("%s%d"), NOTE_NAME[Note - 1], Octave);
+			str.Format(_T("%s%d"), NOTE_NAME[Note - 1].GetString(), Octave);
 			return str;
 		}
 	}

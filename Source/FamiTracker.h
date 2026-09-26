@@ -69,7 +69,7 @@ class CVersionChecker;		// // //
 
 class CMutex;
 
-enum play_mode_t;	// Defined in soundgen.h
+enum play_mode_t : int;	// Defined in soundgen.h
 
 /*!
 	\brief A MFC document template supporting both .0cc and .ftm file extensions.

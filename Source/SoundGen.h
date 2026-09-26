@@ -68,7 +68,7 @@ struct GuiMessage {
 };
 
 // Player modes
-enum play_mode_t {
+enum play_mode_t : int {
 	MODE_PLAY,				// Play from top of pattern
 	MODE_PLAY_START,		// Play from start of song
 	MODE_PLAY_REPEAT,		// Play and repeat
@@ -85,7 +85,7 @@ enum render_end_t {
 class stChanNote;		// // //
 struct stRecordSetting;
 
-enum note_prio_t;
+enum note_prio_t : int;
 
 class CChannelHandler;
 class CFamiTrackerView;
@@ -109,6 +109,10 @@ using FairMutex = yamc::fair::mutex;
 
 class CSoundGen : IAudioCallback
 {
+#ifdef DNFT_PORTABLE
+	// Builds without an audio thread (web/) drive the player from the host's loop
+	friend class CSoundGenHost;
+#endif
 public:
 	CSoundGen();
 	virtual ~CSoundGen();

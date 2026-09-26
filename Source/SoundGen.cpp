@@ -33,10 +33,15 @@
 #include "FamiTrackerTypes.h"
 #include "FTMComponentInterface.h"		// // //
 #include "FamiTrackerDoc.h"
+#ifdef DNFT_PORTABLE
+// Builds without the desktop interface (web/) provide stand-ins for these
+#include "portable/SoundGenUI.h"
+#else
 #include "FamiTrackerView.h"
 #include "VisualizerWnd.h"
 #include "MainFrm.h"
 #include "SoundInterface.h"
+#endif
 #include "WaveFile.h"		// // //
 #include "APU/APU.h"
 #include "ChannelHandler.h"
@@ -46,7 +51,9 @@
 #include "InstrumentRecorder.h"		// // //
 #include "Settings.h"
 #include "TrackerChannel.h"
+#ifndef DNFT_PORTABLE
 #include "MIDI.h"
+#endif
 #include "ChannelFactory.h"		// // // test
 #include "DetuneTable.h"		// // //
 #include <array>

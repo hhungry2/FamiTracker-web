@@ -30,7 +30,7 @@ const static TCHAR* HEADER_FONT = _T("Tahoma");
 const static int HEADER_FONT_SIZE = 11;
 
 // Static colors
-const struct {
+const struct stStaticColorScheme {
 	static const COLORREF CHANNEL_NORMAL	= 0x00202020;	// Normal channel name
 	static const COLORREF CHANNEL_MUTED		= 0x002020E0;	// Muted channel name
 	static const COLORREF FRAME_LIGHT		= 0x00FFFFFF;	// 3D frame
@@ -38,7 +38,7 @@ const struct {
 } STATIC_COLOR_SCHEME;
 
 // Blending levels
-const struct {
+const struct stShadeLevel {
 	static const int SEPARATOR		= 75;	// Channel separators
 	static const int EMPTY_BG		= 70;	// Empty background
 	static const int UNFOCUSED		= 50;	// Unfocused cursor

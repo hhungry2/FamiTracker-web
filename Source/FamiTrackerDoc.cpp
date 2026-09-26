@@ -2535,7 +2535,7 @@ void CFamiTrackerDoc::ReadBlock_DetuneTables(CDocumentFile *pDocFile, const int 
 			}
 		}
 		catch (CModuleException *e) {
-			e->AppendError("At %s detune table,", CDetuneDlg::CHIP_STR[Chip]);
+			e->AppendError("At %s detune table,", CDetuneDlg::CHIP_STR[Chip].GetString());
 			throw;
 		}
 	}
