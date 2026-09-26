@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dn-FamiTracker web engine</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --text: #1d1d1f; --muted: #6b6b70; --line: #deddd8;
+    --accent: #c2410c; --accent-text: #ffffff; --off: #e7e5df; --mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151517; --panel: #1f1f22; --text: #ececef; --muted: #9a9aa2; --line: #333338; --accent: #fb923c; --accent-text: #151517; --off: #2a2a2e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  #drop { border: 2px dashed var(--line); border-radius: 10px; padding: 20px; text-align: center; color: var(--muted); }
+  #drop.over { border-color: var(--accent); color: var(--text); }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button, select { font: inherit; color: var(--text); background: var(--off); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  select { max-width: 100%; min-width: 0; }
+  #demo { flex: 1; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); min-width: 84px; }
+  input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
+  .seekbar { flex-wrap: nowrap; }
+  .time { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  h2 { font-size: 17px; margin: 0 0 2px; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; margin: 12px 0 0; }
+  dt { color: var(--muted); }
+  dd { margin: 0; overflow-wrap: anywhere; }
+  #channels { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  #channels button { font-family: var(--mono); font-size: 13px; padding: 4px 8px; background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  #channels button.muted { background: var(--off); color: var(--muted); border-color: var(--line); text-decoration: line-through; }
+  #position { font-family: var(--mono); color: var(--muted); margin-top: 10px; }
+  #status { color: var(--muted); font-size: 13px; min-height: 1.5em; }
+  #status.error { color: #dc2626; }
+  footer { color: var(--muted); font-size: 13px; }
+  footer a { color: inherit; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Dn-FamiTracker web engine</h1>
+  <p class="sub">The tracker's own playback code, compiled to WebAssembly. Plays .dnm, .0cc and .ftm modules.</p>
+
+  <section>
+    <div id="drop">Drop a module here, or <label><u>choose a file</u><input id="file" type="file" accept=".dnm,.0cc,.ftm" hidden></label></div>
+    <div class="row" style="margin-top:12px" id="demoRow" hidden>
+      <label for="demo">Demo modules</label>
+      <select id="demo"><option value="">—</option></select>
+    </div>
+  </section>
+
+  <section>
+    <div class="row">
+      <button id="play" class="primary" disabled>Play</button>
+      <button id="stop" disabled>Stop</button>
+      <select id="track" hidden></select>
+      <label class="row" style="gap:6px"><input id="loop" type="checkbox"> Loop</label>
+    </div>
+    <div class="row seekbar" style="margin-top:12px">
+      <span class="time" id="now">0:00</span>
+      <input id="seek" type="range" min="0" max="0" value="0" step="100" disabled>
+      <span class="time" id="length">0:00</span>
+    </div>
+    <div id="position"></div>
+    <div id="status">Loading engine…</div>
+  </section>
+
+  <section id="info" hidden>
+    <h2 id="title"></h2>
+    <div id="author" class="sub" style="margin:0"></div>
+    <dl id="details"></dl>
+    <div id="channels"></div>
+  </section>
+
+  <footer>
+    Dn-FamiTracker is free software under the GNU GPL v3 or later. This build and its source:
+    <a href="https://github.com/hhungry2/Dn-FamiTracker-web">github.com/hhungry2/Dn-FamiTracker-web</a>.
+  </footer>
+</main>
+
+<script type="module">
+import { DnFTPlayer } from './dnft-player.mjs';
+
+const $ = id => document.getElementById(id);
+const status = (text, error = false) => { $('status').textContent = text; $('status').classList.toggle('error', error); };
+const clock = ms => { const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+
+let player = null;
+let bytes = null;
+let meta = null;
+let muted = [];
+let seeking = false;
+
+async function engine() {
+  if (!player) {
+    player = await DnFTPlayer.create();
+    player.onposition = ms => {
+      if (!seeking) $('seek').value = ms;
+      $('now').textContent = clock(ms);
+    };
+    player.onstate = s => {
+      $('position').textContent =
+        `frame ${String(s.position).padStart(2, '0')}  row ${String(s.line).padStart(3, '0')}  speed ${s.tempo}  tempo ${s.ftTempo}`;
+    };
+    player.onended = () => { player.pause(); updatePlay(); status('Ended.'); };
+    player.onload = ({ ms, budgetMs }) => status(`Rendering at ${(budgetMs / ms).toFixed(0)}x realtime, ${player.context.sampleRate} Hz`);
+    player.setIntProperty('zxtune.sound.loop', $('loop').checked ? 1 : 0);
+  }
+  return player;
+}
+
+function updatePlay() {
+  $('play').textContent = player?.playing ? 'Pause' : 'Play';
+}
+
+function showInfo() {
+  $('info').hidden = false;
+  $('title').textContent = meta.title || '(untitled)';
+  $('author').textContent = [meta.author, meta.copyright].filter(Boolean).join(' · ');
+  const rows = [
+    ['Program', `${meta.program} (${meta.type})`],
+    ['Chips', meta.chips],
+    ['Machine', `${meta.computer}, ${meta.frameRate} Hz engine`],
+    ['Track', meta.tracks > 1 ? `${meta.track} of ${meta.tracks}${meta.trackTitle ? ` — ${meta.trackTitle}` : ''}` : meta.trackTitle || '1'],
+    ['Length', meta.loopMs ? `${clock(meta.durationMs)} (loops after, ${clock(meta.loopMs)} loop)` : `${clock(meta.durationMs)} (then halts)`],
+  ];
+  if (meta.comment) rows.push(['Comment', meta.comment]);
+  $('details').replaceChildren(...rows.flatMap(([k, v]) => {
+    const dt = document.createElement('dt'); dt.textContent = k;
+    const dd = document.createElement('dd'); dd.textContent = v;
+    return [dt, dd];
+  }));
+  muted = meta.channels.map(() => false);
+  $('channels').replaceChildren(...meta.channels.map((c, i) => {
+    const b = document.createElement('button');
+    b.textContent = c.shortName;
+    b.title = `${c.name} — click to mute`;
+    b.onclick = () => {
+      muted[i] = !muted[i];
+      b.classList.toggle('muted', muted[i]);
+      player.setIntProperty('zxtune.core.channels_mask', muted.reduce((m, on, ch) => on ? m | (1 << ch) : m, 0));
+    };
+    return b;
+  }));
+  player.setIntProperty('zxtune.core.channels_mask', 0);
+}
+
+async function open(subpath = '') {
+  const p = await engine();
+  try {
+    meta = await p.open(bytes, subpath);
+  } catch (e) {
+    status(`Could not open the module: ${e.message}`, true);
+    return;
+  }
+  $('seek').max = meta.durationMs;
+  $('seek').value = 0;
+  $('seek').disabled = false;
+  $('length').textContent = clock(meta.durationMs);
+  $('play').disabled = $('stop').disabled = false;
+  showInfo();
+  await p.play();
+  updatePlay();
+}
+
+async function load(data, name) {
+  bytes = new Uint8Array(data);
+  const p = await engine();
+  status(`Opening ${name}…`);
+  const tracks = await p.detect(bytes).catch(() => []);
+  if (!tracks.length) {
+    status(`${name} is not a module this engine plays.`, true);
+    return;
+  }
+  $('track').hidden = tracks.length < 2;
+  $('track').replaceChildren(...tracks.map((t, i) => new Option(`#${i + 1} ${t.title}`, t.subpath)));
+  await open(tracks[0].subpath);
+}
+
+$('file').onchange = async e => {
+  const file = e.target.files[0];
+  if (file) await load(await file.arrayBuffer(), file.name);
+};
+const drop = $('drop');
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = async e => {
+  e.preventDefault();
+  drop.classList.remove('over');
+  const file = e.dataTransfer.files[0];
+  if (file) await load(await file.arrayBuffer(), file.name);
+};
+
+$('track').onchange = () => open($('track').value);
+$('play').onclick = async () => {
+  if (player.playing) await player.pause(); else await player.play();
+  updatePlay();
+};
+$('stop').onclick = async () => {
+  await player.pause();
+  player.seek(0);
+  $('seek').value = 0;
+  $('now').textContent = clock(0);
+  updatePlay();
+};
+$('seek').oninput = () => { seeking = true; $('now').textContent = clock(Number($('seek').value)); };
+$('seek').onchange = () => { seeking = false; player.seek(Number($('seek').value)); };
+$('loop').onchange = () => player?.setIntProperty('zxtune.sound.loop', $('loop').checked ? 1 : 0);
+
+// Modules shipped next to the page, if the build put any there
+fetch('demo/index.json').then(r => r.ok ? r.json() : []).then(list => {
+  if (!list.length) return;
+  $('demoRow').hidden = false;
+  $('demo').append(...list.map(name => new Option(name.replace(/\.(dnm|0cc|ftm)$/i, ''), name)));
+  $('demo').onchange = async () => {
+    const name = $('demo').value;
+    if (!name) return;
+    const r = await fetch(`demo/${encodeURIComponent(name)}`);
+    await load(await r.arrayBuffer(), name);
+  };
+}).catch(() => {});
+
+engine().then(p => status(`Engine ready (${p.context.sampleRate} Hz). Open a module to play it.`),
+              e => status(e.message, true));
+</script>
+</body>
+</html>
