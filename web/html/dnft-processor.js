@@ -9,16 +9,22 @@
 //   from the page:   {type: 'engine'} + port to the worker, {type: 'reset', generation}
 //   to the worker:   {type: 'need', generation}
 //   from the worker: {type: 'pcm', buffer, last, generation}
-//   to the page:     {type: 'played', frames}, {type: 'ended', frames}
+//   to the page:     {type: 'played', frames, time}, {type: 'ended', frames}
+// `time` is the context time at which the last of the frames played leaves the worklet.
+//
+// processorOptions: bufferSeconds (0.4) of audio kept queued, chunkFrames (4096) the
+// worker renders per request, reportSeconds (0.1) between position updates. The editor
+// asks for small buffers, so that notes played by hand are heard soon.
 
-const CHUNK_FRAMES = 4096;        // what the worker renders per request
 const MAX_REQUESTS = 8;           // chunks asked for and not delivered yet
-const REPORT_SECONDS = 0.1;       // position updates to the page
 
 class DnFTProcessor extends AudioWorkletProcessor {
   constructor(options) {
     super();
-    this.bufferFrames = (options.processorOptions?.bufferSeconds ?? 0.4) * sampleRate;
+    const settings = options.processorOptions ?? {};
+    this.bufferFrames = (settings.bufferSeconds ?? 0.4) * sampleRate;
+    this.chunkFrames = settings.chunkFrames ?? 4096;
+    this.reportFrames = (settings.reportSeconds ?? 0.1) * sampleRate;
     this.worker = null;
     this.generation = 0;
     this.reset();
@@ -61,7 +67,7 @@ class DnFTProcessor extends AudioWorkletProcessor {
   request() {
     if (!this.worker || this.last)
       return;
-    while (this.requests < MAX_REQUESTS && this.queuedFrames + this.requests * CHUNK_FRAMES < this.bufferFrames) {
+    while (this.requests < MAX_REQUESTS && this.queuedFrames + this.requests * this.chunkFrames < this.bufferFrames) {
       ++this.requests;
       this.worker.postMessage({ type: 'need', generation: this.generation });
     }
@@ -91,9 +97,9 @@ class DnFTProcessor extends AudioWorkletProcessor {
 
     this.request();
 
-    if (this.playedFrames - this.reportedFrames >= REPORT_SECONDS * sampleRate) {
+    if (this.playedFrames - this.reportedFrames >= this.reportFrames) {
       this.reportedFrames = this.playedFrames;
-      this.port.postMessage({ type: 'played', frames: this.playedFrames });
+      this.port.postMessage({ type: 'played', frames: this.playedFrames, time: currentTime + left.length / sampleRate });
     }
     if (this.last && this.queuedFrames === 0 && !this.endReported) {
       this.endReported = true;

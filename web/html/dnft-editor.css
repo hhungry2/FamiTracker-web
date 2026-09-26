@@ -1,0 +1,839 @@
+/* Dn-FamiTracker web port - the editor's look.
+   Everything is scoped to .dnft-editor and set with custom properties, so a page can
+   restyle it by redefining them. The pattern grid is dark in both themes, as trackers
+   are; the rest follows prefers-color-scheme, or data-theme="light|dark" on <html>. */
+
+.dnft-editor {
+  --dnft-font: system-ui, -apple-system, "Segoe UI", "Noto Sans JP", sans-serif;
+  --dnft-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --dnft-bg: #f4f3ef;
+  --dnft-surface: #ffffff;
+  --dnft-surface-2: #eeede8;
+  --dnft-text: #1d1d1f;
+  --dnft-muted: #66666c;
+  --dnft-line: #dcdbd5;
+  --dnft-accent: #c2410c;
+  --dnft-accent-text: #ffffff;
+  --dnft-accent-soft: rgba(194, 65, 12, 0.12);
+  --dnft-error: #c81e1e;
+
+  --dnft-pe-bg: #101218;
+  --dnft-pe-beat: #171a22;
+  --dnft-pe-bar: #1f2330;
+  --dnft-pe-note: #eef1f7;
+  --dnft-pe-instrument: #86e0b3;
+  --dnft-pe-volume: #8fbcff;
+  --dnft-pe-effect: #ffb870;
+  --dnft-pe-dim: #3a3f4d;
+  --dnft-pe-row-number: #8a90a0;
+  --dnft-pe-cursor-row: #2b3142;
+  --dnft-pe-edit-row: #45202b;
+  --dnft-pe-play-row: rgba(90, 170, 255, 0.30);
+  --dnft-pe-cursor: #d8def0;
+  --dnft-pe-selection: rgba(120, 165, 255, 0.30);
+  --dnft-pe-separator: #282c38;
+  --dnft-pe-header: #1a1d26;
+  --dnft-pe-header-text: #cfd5e3;
+
+  position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr);
+  height: 100%;
+  min-height: 520px;
+  box-sizing: border-box;
+  background: var(--dnft-bg);
+  color: var(--dnft-text);
+  font: 13px/1.4 var(--dnft-font);
+  overflow: hidden;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .dnft-editor {
+    --dnft-bg: #121317;
+    --dnft-surface: #1b1c21;
+    --dnft-surface-2: #25262c;
+    --dnft-text: #ececf0;
+    --dnft-muted: #9c9ca6;
+    --dnft-line: #32333b;
+    --dnft-accent: #fb923c;
+    --dnft-accent-text: #16120e;
+    --dnft-accent-soft: rgba(251, 146, 60, 0.16);
+    --dnft-error: #ff6b6b;
+  }
+}
+
+:root[data-theme="dark"] .dnft-editor {
+  --dnft-bg: #121317;
+  --dnft-surface: #1b1c21;
+  --dnft-surface-2: #25262c;
+  --dnft-text: #ececf0;
+  --dnft-muted: #9c9ca6;
+  --dnft-line: #32333b;
+  --dnft-accent: #fb923c;
+  --dnft-accent-text: #16120e;
+  --dnft-accent-soft: rgba(251, 146, 60, 0.16);
+  --dnft-error: #ff6b6b;
+}
+
+.dnft-editor *,
+.dnft-editor *::before,
+.dnft-editor *::after {
+  box-sizing: border-box;
+}
+
+.dnft-editor [hidden] {
+  display: none !important;
+}
+
+/* ---- controls ---- */
+
+.dnft-button,
+.dnft-icon-button,
+.dnft-spin button,
+.dnft-editor select,
+.dnft-editor input[type="text"],
+.dnft-editor input[type="number"] {
+  font: inherit;
+  color: var(--dnft-text);
+  background: var(--dnft-surface-2);
+  border: 1px solid var(--dnft-line);
+  border-radius: 6px;
+}
+
+.dnft-button {
+  padding: 5px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.dnft-button:hover:not(:disabled),
+.dnft-icon-button:hover:not(:disabled),
+.dnft-spin button:hover {
+  border-color: var(--dnft-accent);
+}
+
+.dnft-button:disabled,
+.dnft-icon-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.dnft-button--primary,
+.dnft-toggle.is-on {
+  background: var(--dnft-accent);
+  border-color: var(--dnft-accent);
+  color: var(--dnft-accent-text);
+}
+
+.dnft-icon-button {
+  min-width: 26px;
+  height: 24px;
+  padding: 0 5px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.dnft-editor select {
+  padding: 4px 6px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.dnft-editor input[type="text"],
+.dnft-editor input[type="number"] {
+  padding: 4px 6px;
+  width: 100%;
+  min-width: 0;
+}
+
+.dnft-editor input[type="number"] {
+  font-family: var(--dnft-mono);
+}
+
+.dnft-editor :focus-visible {
+  outline: 2px solid var(--dnft-accent);
+  outline-offset: 1px;
+}
+
+.dnft-label {
+  color: var(--dnft-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.dnft-field {
+  display: grid;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--dnft-muted);
+}
+
+.dnft-field > input,
+.dnft-field > select,
+.dnft-field > .dnft-pair {
+  color: var(--dnft-text);
+}
+
+.dnft-field--inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dnft-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--dnft-text);
+  cursor: pointer;
+}
+
+.dnft-pair {
+  display: flex;
+  gap: 4px;
+}
+
+/* ---- toolbar ---- */
+
+.dnft-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  padding: 8px 10px;
+  background: var(--dnft-surface);
+  border-bottom: 1px solid var(--dnft-line);
+}
+
+.dnft-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.dnft-demos {
+  max-width: 180px;
+}
+
+.dnft-dirty {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--dnft-accent);
+  vertical-align: middle;
+}
+
+.dnft-spin {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.dnft-spin button {
+  width: 24px;
+  height: 26px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.dnft-spin output {
+  min-width: 2ch;
+  text-align: center;
+  font-family: var(--dnft-mono);
+  font-weight: 600;
+}
+
+.dnft-spin .dnft-label {
+  margin-right: 2px;
+}
+
+.dnft-toolbar select[data-role="instrument"] {
+  width: 180px;
+  max-width: 100%;
+  font-family: var(--dnft-mono);
+}
+
+.dnft-toolbar .dnft-field--inline {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.dnft-volume {
+  margin-left: auto;
+}
+
+.dnft-volume input {
+  width: 90px;
+  accent-color: var(--dnft-accent);
+}
+
+/* ---- side panels ---- */
+
+.dnft-main {
+  display: grid;
+  grid-template-columns: minmax(230px, 280px) minmax(0, 1fr);
+  min-height: 0;
+}
+
+.dnft-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--dnft-surface);
+  border-right: 1px solid var(--dnft-line);
+}
+
+.dnft-panel {
+  border-bottom: 1px solid var(--dnft-line);
+}
+
+.dnft-panel > summary,
+.dnft-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 7px 10px;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  cursor: default;
+}
+
+.dnft-panel > summary {
+  cursor: pointer;
+  list-style: revert;
+  display: list-item;
+}
+
+.dnft-panel-body {
+  display: grid;
+  gap: 8px;
+  padding: 2px 10px 12px;
+}
+
+.dnft-panel-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  justify-content: flex-end;
+}
+
+.dnft-track {
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+}
+
+.dnft-track > span {
+  grid-column: 1 / -1;
+}
+
+.dnft-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.dnft-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.dnft-frames-panel,
+.dnft-instruments-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 150px;
+}
+
+.dnft-frames-panel {
+  flex: 1 1 45%;
+}
+
+.dnft-instruments-panel {
+  flex: 1 1 35%;
+}
+
+.dnft-frame-list,
+.dnft-instrument-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  margin: 0 10px 10px;
+  padding: 4px 0;
+  border: 1px solid var(--dnft-line);
+  border-radius: 6px;
+  background: var(--dnft-pe-bg);
+  font-family: var(--dnft-mono);
+  font-size: 12px;
+  color: var(--dnft-pe-note);
+}
+
+.dnft-frame-row {
+  display: flex;
+  gap: 2px;
+  padding: 0 6px;
+  white-space: nowrap;
+  line-height: 18px;
+}
+
+.dnft-frame-row.is-current {
+  background: var(--dnft-pe-cursor-row);
+}
+
+.dnft-frame-row.is-playing .dnft-frame-number {
+  color: var(--dnft-pe-volume);
+}
+
+.dnft-frame-number {
+  width: 3ch;
+  color: var(--dnft-pe-row-number);
+  cursor: pointer;
+}
+
+.dnft-frame-pattern {
+  padding: 0 3px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.dnft-frame-pattern.is-channel {
+  background: var(--dnft-pe-cursor);
+  color: var(--dnft-pe-bg);
+}
+
+.dnft-frame-list:focus .dnft-frame-pattern.is-channel {
+  outline: 1px solid var(--dnft-accent);
+}
+
+.dnft-instrument-list {
+  list-style: none;
+}
+
+.dnft-instrument {
+  padding: 1px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 20px;
+}
+
+.dnft-instrument:hover {
+  background: var(--dnft-pe-beat);
+}
+
+.dnft-instrument.is-current {
+  background: var(--dnft-pe-cursor-row);
+  color: var(--dnft-pe-instrument);
+}
+
+/* ---- the pattern ---- */
+
+.dnft-pattern {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.dnft-pv {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  background: var(--dnft-pe-bg);
+  font: 13px var(--dnft-mono);
+}
+
+.dnft-pv-scroller {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  outline: none;
+  border: 2px solid transparent;
+}
+
+.dnft-pv-scroller:focus {
+  border-color: var(--dnft-pe-separator);
+}
+
+.dnft-editor.is-editing .dnft-pv-scroller:focus {
+  border-color: #b33a4f;
+}
+
+.dnft-pv-header {
+  display: flex;
+  flex: none;
+  width: max-content;
+  min-width: 100%;
+  background: var(--dnft-pe-header);
+  border-bottom: 1px solid var(--dnft-pe-separator);
+  font-family: var(--dnft-font);
+}
+
+.dnft-pv-corner {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex: none;
+  background: var(--dnft-pe-header);
+  border-right: 1px solid var(--dnft-pe-separator);
+}
+
+.dnft-pv-channel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+  flex: none;
+  padding: 4px 4px 4px 6px;
+  border-right: 1px solid var(--dnft-pe-separator);
+  overflow: hidden;
+}
+
+.dnft-pv-channel-name {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--dnft-pe-header-text);
+  font: 600 12px var(--dnft-font);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.dnft-pv-channel.is-muted .dnft-pv-channel-name {
+  color: var(--dnft-pe-dim);
+  text-decoration: line-through;
+}
+
+.dnft-pv-channel-columns {
+  display: flex;
+  gap: 1px;
+  flex: none;
+}
+
+.dnft-pv-channel-columns button {
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border: 1px solid var(--dnft-pe-separator);
+  border-radius: 3px;
+  background: none;
+  color: var(--dnft-pe-row-number);
+  font: 11px/1 var(--dnft-mono);
+  cursor: pointer;
+}
+
+.dnft-pv-channel-columns button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.dnft-pv-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.dnft-pv-canvas {
+  position: sticky;
+  left: 0;
+  display: block;
+  cursor: text;
+  touch-action: none;
+}
+
+/* ---- keys and status ---- */
+
+.dnft-keys {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 10px;
+  background: var(--dnft-surface);
+  border-top: 1px solid var(--dnft-line);
+}
+
+.dnft-piano {
+  position: relative;
+  display: flex;
+  flex: 1;
+  height: 56px;
+  min-width: 280px;
+  max-width: 760px;
+  touch-action: none;
+  user-select: none;
+}
+
+.dnft-piano-key {
+  position: relative;
+  flex: 1 1 0;
+  margin: 0 1px 0 0;
+  padding: 0;
+  border: 1px solid var(--dnft-line);
+  border-radius: 0 0 5px 5px;
+  background: #fafaf8;
+  cursor: pointer;
+}
+
+.dnft-piano-key.is-black {
+  flex: 0 0 0;
+  width: 0;
+  margin: 0;
+  border: 0;
+  z-index: 2;
+  background: none;
+}
+
+.dnft-piano-key.is-black::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -8px;
+  width: 16px;
+  height: 60%;
+  border-radius: 0 0 3px 3px;
+  background: #26272d;
+}
+
+.dnft-piano-key.is-down {
+  background: var(--dnft-accent);
+}
+
+.dnft-piano-key.is-black.is-down::before {
+  background: var(--dnft-accent);
+}
+
+.dnft-piano-key[data-label]::after {
+  content: attr(data-label);
+  position: absolute;
+  bottom: 3px;
+  left: 0;
+  right: 0;
+  font: 10px var(--dnft-mono);
+  color: #77777d;
+}
+
+.dnft-key-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: center;
+  gap: 4px;
+}
+
+.dnft-key-actions [data-action="note-cut"],
+.dnft-key-actions [data-action="note-release"] {
+  font-family: var(--dnft-mono);
+}
+
+.dnft-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+  padding: 5px 10px;
+  border-top: 1px solid var(--dnft-line);
+  font-size: 12px;
+  color: var(--dnft-muted);
+}
+
+.dnft-position {
+  font-family: var(--dnft-mono);
+  color: var(--dnft-text);
+}
+
+.dnft-message {
+  flex: 1;
+  min-width: 0;
+}
+
+.dnft-message.is-error {
+  color: var(--dnft-error);
+}
+
+.dnft-source a {
+  color: inherit;
+}
+
+/* ---- overlays ---- */
+
+.dnft-drop,
+.dnft-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  text-align: center;
+  font-size: 15px;
+}
+
+.dnft-drop {
+  margin: 8px;
+  border: 2px dashed var(--dnft-accent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--dnft-bg) 85%, transparent);
+  pointer-events: none;
+}
+
+.dnft-loading {
+  background: var(--dnft-bg);
+  color: var(--dnft-muted);
+}
+
+/* ---- dialogs ---- */
+
+.dnft-dialog {
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 0;
+  border: 1px solid var(--dnft-line);
+  border-radius: 12px;
+  background: var(--dnft-surface);
+  color: var(--dnft-text);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+}
+
+.dnft-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.dnft-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--dnft-line);
+}
+
+.dnft-dialog-title {
+  font-size: 14px;
+}
+
+.dnft-instrument-name,
+.dnft-instrument-note,
+.dnft-sequences {
+  margin: 12px 14px;
+}
+
+.dnft-instrument-note {
+  color: var(--dnft-muted);
+}
+
+.dnft-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  border-bottom: 1px solid var(--dnft-line);
+}
+
+.dnft-tab {
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+  background: none;
+  color: var(--dnft-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.dnft-tab.is-used {
+  color: var(--dnft-text);
+  font-weight: 600;
+}
+
+.dnft-tab.is-active {
+  border-color: var(--dnft-line);
+  background: var(--dnft-surface-2);
+  color: var(--dnft-accent);
+}
+
+.dnft-sequence {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.dnft-sequence-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+
+.dnft-sequence-bar input[type="number"] {
+  width: 70px;
+}
+
+.dnft-sequence-graph {
+  width: 100%;
+  height: 160px;
+  border: 1px solid var(--dnft-line);
+  border-radius: 6px;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.dnft-sequence-mml {
+  font-family: var(--dnft-mono) !important;
+}
+
+.dnft-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dnft-muted);
+}
+
+/* ---- narrow screens ---- */
+
+@media (max-width: 860px) {
+  .dnft-main {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .dnft-side {
+    max-height: 34vh;
+    border-right: 0;
+    border-bottom: 1px solid var(--dnft-line);
+  }
+
+  .dnft-volume {
+    margin-left: 0;
+  }
+
+  .dnft-keys {
+    flex-direction: column;
+  }
+
+  .dnft-piano {
+    flex: none;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .dnft-toolbar {
+    gap: 6px 10px;
+  }
+}

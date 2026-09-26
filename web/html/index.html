@@ -17,6 +17,7 @@
   main { max-width: 860px; margin: 0 auto; padding: 24px 16px 48px; }
   h1 { font-size: 20px; margin: 0 0 4px; }
   .sub { color: var(--muted); margin: 0 0 20px; }
+  .sub a { color: var(--accent); }
   section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
   #drop { border: 2px dashed var(--line); border-radius: 10px; padding: 20px; text-align: center; color: var(--muted); }
   #drop.over { border-color: var(--accent); color: var(--text); }
@@ -46,7 +47,7 @@
 <body>
 <main>
   <h1>Dn-FamiTracker web engine</h1>
-  <p class="sub">The tracker's own playback code, compiled to WebAssembly. Plays .dnm, .0cc and .ftm modules.</p>
+  <p class="sub">The tracker's own playback code, compiled to WebAssembly. Plays .dnm, .0cc and .ftm modules. To write them, open <a href="editor.html">the editor</a>.</p>
 
   <section>
     <div id="drop">Drop a module here, or <label><u>choose a file</u><input id="file" type="file" accept=".dnm,.0cc,.ftm" hidden></label></div>
