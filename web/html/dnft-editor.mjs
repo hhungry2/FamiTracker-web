@@ -88,7 +88,7 @@ export class DnFTEditor {
     base = '.',
     lang = navigator.language?.startsWith('ja') ? 'ja' : 'en',
     autosave = true,
-    source = 'https://github.com/hhungry2/Dn-FamiTracker-web',
+    source = 'https://github.com/hhungry2/FamiTracker-web',
     demos = null,
   } = {}) {
     this.base = base;

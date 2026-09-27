@@ -1,4 +1,4 @@
-# Dn-FamiTracker-web
+# FamiTracker-web
 
 [Dn-FamiTracker](https://github.com/Dn-Programming-Core-Management/Dn-FamiTracker) の再生エンジンを
 WebAssembly に移植するフォークです。ブラウザで FamiTracker 系のモジュール（.dnm / .0cc / .ftm）を

@@ -1,5 +1,5 @@
-Dn-FamiTracker web
-==================
+FamiTracker-web
+===============
 
 The playback engine of Dn-FamiTracker compiled to WebAssembly: the tracker's own module
 loader, sound driver and chip emulation, taken unchanged from `Source/`, with a small
