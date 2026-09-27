@@ -262,6 +262,67 @@ check('song settings', () => {
   s.delete();
 });
 
+check('module properties: comment, track title, engine speed, vibrato, pitch mode', () => {
+  const s = dnft.createSession(RATE);
+  s.setComment('Line one\nLine two\r\nLine three', true);
+  s.setTrackTitle(0, 'Opening');
+  s.setEngineSpeed(120);
+  s.setVibratoStyle(false);
+  s.setLinearPitch(true);
+  const expect = info => {
+    assert.equal(info.comment, 'Line one\nLine two\nLine three');
+    assert.equal(info.showComment, true);
+    assert.deepEqual(info.tracks, ['Opening']);
+    assert.deepEqual([info.engineSpeed, info.frameRate, info.newVibrato, info.linearPitch], [120, 120, false, true]);
+  };
+  expect(s.info());
+  const bytes = rethrow(() => s.save());
+  s.delete();
+  // the desktop's comment box breaks lines with CR LF
+  assert.ok(new TextDecoder('latin1').decode(bytes).includes('Line one\r\nLine two\r\nLine three'));
+
+  const again = openSession(bytes);
+  expect(again.info());
+  again.setEngineSpeed(0);
+  assert.deepEqual([again.info().engineSpeed, again.info().frameRate], [0, 60]);
+  again.setEngineSpeed(1000);
+  assert.equal(again.info().engineSpeed, 400);
+  again.delete();
+});
+
+check('the engine speed sets how fast instruments run', () => {
+  const heard = hz => {
+    const s = dnft.createSession(RATE);
+    s.setEngineSpeed(hz);
+    const blip = s.addInstrument(0, 'Blip');
+    const index = s.freeSequence(INST_2A03, SEQ_VOLUME);
+    s.setSequence(INST_2A03, SEQ_VOLUME, index, new Int8Array([...new Array(30).fill(15), 0]), -1, -1, 0);
+    s.setInstrumentSequence(blip, SEQ_VOLUME, true, index);
+    s.noteOn(0, NOTE_C, 4, blip, 16);
+    const pcm = render(s, 500);
+    s.delete();
+    // 30 ticks: half a second at 60 Hz, a quarter at 120 Hz
+    return energy(pcm.subarray(RATE * 0.3, RATE * 0.45));
+  };
+  assert.ok(heard(0) > 1000, 'silent at 60 Hz');
+  assert.ok(heard(120) < 10, 'still sounds at 120 Hz');
+});
+
+check('a deep clone copies the sequences, a clone shares them', () => {
+  const s = dnft.createSession(RATE);
+  const index = s.freeSequence(INST_2A03, SEQ_VOLUME);
+  s.setSequence(INST_2A03, SEQ_VOLUME, index, new Int8Array([15, 10, 5]), -1, -1, 0);
+  s.setInstrumentSequence(0, SEQ_VOLUME, true, index);
+  const shallow = s.cloneInstrument(0);
+  const deep = s.deepCloneInstrument(0);
+  assert.deepEqual(s.instrument(shallow).sequences[SEQ_VOLUME], { enabled: true, index });
+  const copy = s.instrument(deep).sequences[SEQ_VOLUME];
+  assert.equal(copy.enabled, true);
+  assert.notEqual(copy.index, index);
+  assert.deepEqual([...s.sequence(INST_2A03, SEQ_VOLUME, copy.index).items], [15, 10, 5]);
+  s.delete();
+});
+
 check('an expansion chip adds its channels and keeps the patterns', () => {
   const s = dnft.createSession(RATE);
   s.setCells(0, 2, 0, 0, new Uint8Array(cell(NOTE_C, 3)));

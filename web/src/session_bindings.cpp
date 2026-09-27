@@ -69,6 +69,25 @@ std::string Truncate(std::string text, size_t maxBytes) {
 	return text;
 }
 
+// The longest string CDocumentFile::ReadString() reads back whole
+const size_t MAX_FILE_STRING = 65535;
+
+// Line breaks as `lineBreak`, whichever of CR LF, CR and LF the text has
+std::string WithLineBreaks(const std::string &text, const char *lineBreak) {
+	std::string out;
+	out.reserve(text.size());
+	for (size_t i = 0; i < text.size(); ++i) {
+		if (text[i] == '\r' || text[i] == '\n') {
+			out += lineBreak;
+			if (text[i] == '\r' && i + 1 < text.size() && text[i + 1] == '\n')
+				++i;
+		}
+		else
+			out += text[i];
+	}
+	return out;
+}
+
 void PackCell(const stChanNote &note, uint8_t *out) {
 	out[0] = note.Note;
 	out[1] = note.Octave;
@@ -183,7 +202,8 @@ public:
 		result.set("artist", dnft::detail::ToUtf8(doc.GetSongArtist(), 32));
 		result.set("copyright", dnft::detail::ToUtf8(doc.GetSongCopyright(), 32));
 		const CString comment = doc.GetComment();
-		result.set("comment", dnft::detail::ToUtf8(comment.GetString(), comment.GetLength()));
+		result.set("comment", WithLineBreaks(dnft::detail::ToUtf8(comment.GetString(), comment.GetLength()), "\n"));
+		result.set("showComment", doc.ShowCommentOnOpen());
 		result.set("pal", doc.GetMachine() == PAL);
 		result.set("engineSpeed", doc.GetEngineSpeed());
 		result.set("frameRate", doc.GetFrameRate());
@@ -226,9 +246,11 @@ public:
 		Doc().SetSongCopyright(Truncate(text, 31).c_str());
 	}
 
-	void setComment(const std::string &text) {
-		CString comment(text.c_str());
-		Doc().SetComment(comment, Doc().ShowCommentOnOpen());
+	//! Kept with the line breaks of the desktop's comment box (CR LF); showOnOpen: the
+	//! desktop shows the comment when the file is opened
+	void setComment(const std::string &text, bool showOnOpen) {
+		CString comment(Truncate(WithLineBreaks(text, "\r\n"), MAX_FILE_STRING).c_str());
+		Doc().SetComment(comment, showOnOpen);
 	}
 
 	// ---- tracks ------------------------------------------------------------------------
@@ -282,7 +304,7 @@ public:
 
 	void setTrackTitle(int track, const std::string &title) {
 		CheckTrack(track);
-		Doc().SetTrackTitle(track, CString(title.c_str()));
+		Doc().SetTrackTitle(track, CString(Truncate(title, MAX_FILE_STRING).c_str()));
 	}
 
 	void setPatternLength(int track, int rows) {

@@ -23,6 +23,11 @@ import { STRINGS } from './dnft-editor-strings.mjs';
 const AUTOSAVE_KEY = 'dnft-editor.autosave';
 const AUTOSAVE_DELAY = 1500;
 const PAGE_ROWS = 16;
+// Engine ticks per second a module may ask for (CSpeedDlg)
+const ENGINE_RATE_MIN = 16;
+const ENGINE_RATE_MAX = 400;
+// Characters of a comment, well within what a module file holds (session_bindings.cpp)
+const COMMENT_MAX = 20000;
 
 // The desktop's note keys, by the key's place on the keyboard: [semitone, octave offset]
 const NOTE_KEYS = {
@@ -164,12 +169,14 @@ export class DnFTEditor {
               <label class="dnft-field"><span data-text="title"></span><input type="text" data-song="title" spellcheck="false"></label>
               <label class="dnft-field"><span data-text="artist"></span><input type="text" data-song="artist" spellcheck="false"></label>
               <label class="dnft-field"><span data-text="copyright"></span><input type="text" data-song="copyright" spellcheck="false"></label>
+              <label class="dnft-field"><span data-text="comment"></span><button type="button" class="dnft-button dnft-comment-button" data-action="comment"></button></label>
               <div class="dnft-field dnft-track">
                 <span data-text="track"></span>
                 <select data-role="track"></select>
                 <button type="button" class="dnft-icon-button" data-action="add-track">+</button>
                 <button type="button" class="dnft-icon-button" data-action="remove-track">−</button>
               </div>
+              <label class="dnft-field"><span data-text="trackTitle"></span><input type="text" data-role="track-title" spellcheck="false"></label>
               <div class="dnft-grid">
                 <label class="dnft-field"><span data-text="speed"></span><input type="number" data-setting="speed" min="1" max="255"></label>
                 <label class="dnft-field"><span data-text="tempo"></span><input type="number" data-setting="tempo" min="32" max="255"></label>
@@ -185,6 +192,14 @@ export class DnFTEditor {
               <div class="dnft-field"><span data-text="chips"></span><div class="dnft-chips"></div></div>
               <label class="dnft-field dnft-field--inline"><span data-text="n163Channels"></span><input type="number" data-role="n163" min="1" max="8" value="1"></label>
               <label class="dnft-field dnft-field--inline"><span data-text="machine"></span><select data-role="machine"><option value="0">NTSC</option><option value="1">PAL</option></select></label>
+              <div class="dnft-field"><span data-text="engineSpeed"></span>
+                <span class="dnft-pair dnft-engine-speed">
+                  <select data-role="engine-mode"><option value="0" data-text="engineDefault"></option><option value="1" data-text="engineCustom"></option></select>
+                  <input type="number" data-role="engine-rate" min="${ENGINE_RATE_MIN}" max="${ENGINE_RATE_MAX}"><span>Hz</span>
+                </span>
+              </div>
+              <label class="dnft-field"><span data-text="vibrato"></span><select data-role="vibrato"><option value="1" data-text="vibratoNew"></option><option value="0" data-text="vibratoOld"></option></select></label>
+              <label class="dnft-field"><span data-text="pitchMode"></span><select data-role="linear-pitch"><option value="0" data-text="pitchPeriod"></option><option value="1" data-text="pitchLinear"></option></select></label>
             </div>
           </details>
           <section class="dnft-panel dnft-frames-panel">
@@ -207,6 +222,7 @@ export class DnFTEditor {
               <span class="dnft-panel-tools">
                 <button type="button" class="dnft-icon-button" data-action="add-instrument"></button>
                 <button type="button" class="dnft-icon-button" data-action="clone-instrument"></button>
+                <button type="button" class="dnft-icon-button" data-action="deep-clone-instrument"></button>
                 <button type="button" class="dnft-icon-button" data-action="remove-instrument"></button>
                 <button type="button" class="dnft-icon-button" data-action="edit-instrument"></button>
               </span>
@@ -232,7 +248,17 @@ export class DnFTEditor {
         <span class="dnft-source"></span>
       </div>
       <div class="dnft-drop" hidden></div>
-      <div class="dnft-loading"></div>`;
+      <div class="dnft-loading"></div>
+      <dialog class="dnft-dialog dnft-comment-dialog">
+        <form method="dialog" class="dnft-dialog-head">
+          <strong class="dnft-dialog-title" data-text="comment"></strong>
+          <button type="submit" class="dnft-button" data-text="close"></button>
+        </form>
+        <div class="dnft-comment-body">
+          <textarea class="dnft-comment-text" spellcheck="false" maxlength="${COMMENT_MAX}"></textarea>
+          <label class="dnft-check"><input type="checkbox" data-role="show-comment"> <span data-text="showComment"></span></label>
+        </div>
+      </dialog>`;
     container.append(root);
 
     const $ = selector => root.querySelector(selector);
@@ -262,7 +288,8 @@ export class DnFTEditor {
     root.querySelector('[data-action="pattern-down"]').title = t.patternDown;
     root.querySelector('[data-action="pattern-up"]').title = t.patternUp;
     label('add-instrument', '＋', t.addInstrumentHint);
-    label('clone-instrument', '⧉', t.cloneInstrument);
+    label('clone-instrument', '⧉', t.cloneInstrumentHint);
+    label('deep-clone-instrument', '⎘', t.deepCloneInstrumentHint);
     label('remove-instrument', '✕', t.removeInstrument);
     label('edit-instrument', '✎', t.editInstrument);
     label('add-track', '+', t.addTrack);
@@ -283,6 +310,12 @@ export class DnFTEditor {
     $('[data-setting="rows"]').title = t.rowsHint;
     $('[data-setting="beat"]').title = t.highlightHint;
     $('[data-setting="bar"]').title = t.highlightHint;
+    $('[data-action="comment"]').title = t.commentHint;
+    $('.dnft-engine-speed').title = t.engineSpeedHint;
+    $('[data-role="engine-mode"]').setAttribute('aria-label', t.engineSpeed);
+    $('[data-role="engine-rate"]').setAttribute('aria-label', `${t.engineSpeed} (Hz)`);
+    $('[data-role="vibrato"]').title = t.vibratoHint;
+    $('[data-role="linear-pitch"]').title = t.pitchModeHint;
     $('.dnft-drop').textContent = t.dropHere;
     $('.dnft-loading').textContent = t.loading;
     const source = $('.dnft-source');
@@ -305,7 +338,12 @@ export class DnFTEditor {
       toolbar: $('.dnft-toolbar'), file: $('.dnft-file'), dirty: $('.dnft-dirty'),
       octave: $('[data-spin="octave"] output'), step: $('[data-spin="step"] output'),
       instrument: $('[data-role="instrument"]'), volume: $('[data-role="volume"]'),
-      track: $('[data-role="track"]'), n163: $('[data-role="n163"]'), machine: $('[data-role="machine"]'),
+      track: $('[data-role="track"]'), trackTitle: $('[data-role="track-title"]'),
+      n163: $('[data-role="n163"]'), machine: $('[data-role="machine"]'),
+      engineMode: $('[data-role="engine-mode"]'), engineRate: $('[data-role="engine-rate"]'),
+      vibrato: $('[data-role="vibrato"]'), linearPitch: $('[data-role="linear-pitch"]'),
+      comment: $('[data-action="comment"]'), commentDialog: $('.dnft-comment-dialog'),
+      commentText: $('.dnft-comment-text'), showComment: $('[data-role="show-comment"]'),
       chips: $('.dnft-chips'), frames: $('.dnft-frame-list'), instruments: $('.dnft-instrument-list'),
       pattern: $('.dnft-pattern'), piano: $('.dnft-piano'), position: $('.dnft-position'),
       message: $('.dnft-message'), drop: $('.dnft-drop'), loading: $('.dnft-loading'),
@@ -418,6 +456,20 @@ export class DnFTEditor {
     els.chips.addEventListener('change', () => this.setExpansion());
     els.n163.addEventListener('change', () => this.setExpansion());
     els.machine.addEventListener('change', () => this.setMachine(els.machine.value === '1'));
+    els.trackTitle.addEventListener('change', () => this.setTrackTitle(els.trackTitle.value));
+    els.engineMode.addEventListener('change', async () => {
+      const custom = els.engineMode.value === '1';
+      // a custom speed starts from the one playing now, as the desktop's dialog does
+      await this.setEngineSpeed(custom ? this.song.info.frameRate : 0);
+      if (custom)
+        els.engineRate.select();
+    });
+    els.engineRate.addEventListener('change', () => this.setEngineSpeed(Number(els.engineRate.value)));
+    els.vibrato.addEventListener('change', () => this.setVibratoStyle(els.vibrato.value === '1'));
+    els.linearPitch.addEventListener('change', () => this.setLinearPitch(els.linearPitch.value === '1'));
+    els.commentText.addEventListener('change', () => this.saveComment());
+    els.showComment.addEventListener('change', () => this.saveComment());
+    els.commentDialog.addEventListener('close', () => this.saveComment());
 
     // the pattern
     const scroller = this.view.scroller;
@@ -515,6 +567,9 @@ export class DnFTEditor {
   setSong(snapshot) {
     this.stopPlaying();
     this.session.clearRows();
+    // what it holds was the previous song's (saveComment())
+    if (this.els.commentDialog.open)
+      this.els.commentDialog.close();
     this.song = new Song(snapshot);
     this.track = 0;
     this.cursor = { frame: 0, row: 0, channel: 0, column: 0 };
@@ -559,9 +614,15 @@ export class DnFTEditor {
     this.message(this.strings.opened + file.name);
     this.saveToBrowser();
     this.renderToolbar();
+    // as the desktop does for a module that asks for it
+    if (this.song.info.showComment && this.song.info.comment)
+      this.openComment();
   }
 
   async saveFile() {
+    // Ctrl+S while the comment is being written
+    if (this.els.commentDialog.open)
+      this.saveComment();
     let bytes;
     try {
       bytes = await this.session.call('save');
@@ -1176,10 +1237,48 @@ export class DnFTEditor {
 
   // ---- song settings ------------------------------------------------------------------
 
+  // After a change of the module's properties: what the page shows of them
+  async reloadInfo() {
+    this.song.info = await this.session.call('info');
+    this.renderSongPanel();
+    this.edited();
+  }
+
   async setSongText(field, value) {
     const method = { title: 'setTitle', artist: 'setArtist', copyright: 'setCopyright' }[field];
     await this.session.call(method, value);
-    this.song.info = await this.session.call('info');
+    await this.reloadInfo();
+  }
+
+  async setTrackTitle(title) {
+    if (title === this.song.info.tracks[this.track])
+      return;
+    await this.session.call('setTrackTitle', this.track, title);
+    await this.reloadInfo();
+  }
+
+  // Module > Comments
+  openComment() {
+    const { els } = this;
+    this.commentSong = this.song;
+    els.commentText.value = this.song.info.comment;
+    els.showComment.checked = this.song.info.showComment;
+    if (!els.commentDialog.open)
+      els.commentDialog.showModal();
+    els.commentText.focus();
+  }
+
+  // What the comment box holds, to the module: as it is typed away from, and on closing
+  saveComment() {
+    const { els } = this;
+    if (this.commentSong !== this.song)
+      return;
+    const text = els.commentText.value, show = els.showComment.checked;
+    const info = this.song.info;
+    if (text === info.comment && show === info.showComment)
+      return;
+    this.song.info = { ...info, comment: text, showComment: show };
+    this.session.send('setComment', text, show);
     this.renderSongPanel();
     this.edited();
   }
@@ -1253,9 +1352,38 @@ export class DnFTEditor {
   async setMachine(pal) {
     this.stopPlaying();
     await this.session.call('setMachine', pal);
-    this.song.info = await this.session.call('info');
-    this.renderSongPanel();
-    this.edited();
+    await this.reloadInfo();
+  }
+
+  // The properties below reset the sound generator (session_bindings.cpp), which stops
+  // what plays
+
+  // Engine ticks per second, 0 for the machine's (Module > Engine Speed)
+  async setEngineSpeed(hz) {
+    const speed = hz ? Math.max(ENGINE_RATE_MIN, Math.min(ENGINE_RATE_MAX, Math.round(hz))) : 0;
+    if (!Number.isFinite(speed) || speed === this.song.info.engineSpeed) {
+      this.renderSongPanel();
+      return;
+    }
+    this.stopPlaying();
+    await this.session.call('setEngineSpeed', speed);
+    await this.reloadInfo();
+  }
+
+  async setVibratoStyle(newStyle) {
+    if (newStyle === this.song.info.newVibrato)
+      return;
+    this.stopPlaying();
+    await this.session.call('setVibratoStyle', newStyle);
+    await this.reloadInfo();
+  }
+
+  async setLinearPitch(linear) {
+    if (linear === this.song.info.linearPitch)
+      return;
+    this.stopPlaying();
+    await this.session.call('setLinearPitch', linear);
+    await this.reloadInfo();
   }
 
   // After what changes the channels: everything again
@@ -1365,8 +1493,9 @@ export class DnFTEditor {
     this.instrumentEditor.open(index);
   }
 
-  async cloneInstrument() {
-    const index = await this.session.call('cloneInstrument', this.instrument).catch(() => -1);
+  // deep: with copies of the sequences, not sharing them
+  async cloneInstrument({ deep = false } = {}) {
+    const index = await this.session.call(deep ? 'deepCloneInstrument' : 'cloneInstrument', this.instrument).catch(() => -1);
     if (index < 0)
       return;
     await this.refreshInstruments();
@@ -1403,6 +1532,7 @@ export class DnFTEditor {
       case 'follow': this.follow = !this.follow; return this.renderToolbar();
       case 'undo': return this.undo();
       case 'redo': return this.redo();
+      case 'comment': return this.openComment();
       case 'add-track': return this.addTrack();
       case 'remove-track': return this.removeTrack();
       case 'insert-frame': return this.frameOp('insert');
@@ -1415,6 +1545,7 @@ export class DnFTEditor {
       case 'pattern-up': return this.setFramePattern(this.cursor.frame, this.cursor.channel, this.patternOf(this.cursor.frame, this.cursor.channel) + 1);
       case 'add-instrument': return this.addInstrument();
       case 'clone-instrument': return this.cloneInstrument();
+      case 'deep-clone-instrument': return this.cloneInstrument({ deep: true });
       case 'remove-instrument': return this.removeInstrument();
       case 'edit-instrument': return this.song.instrument(this.instrument) && this.instrumentEditor.open(this.instrument);
       case 'note-cut': return this.editMode && this.enterNote(NOTE.HALT, 0);
@@ -1677,8 +1808,13 @@ export class DnFTEditor {
       input.value = values[input.dataset.setting];
     root.querySelector('[data-setting="speed"]').max = tr.groove ? 31 : tr.tempo ? info.speedSplitPoint - 1 : 255;
     root.querySelector('[data-setting="tempo"]').min = info.speedSplitPoint;
+    const commentLine = info.comment.split('\n').find(line => line.trim()) ?? '';
+    els.comment.textContent = commentLine || this.strings.noComment;
+    els.comment.classList.toggle('is-empty', !commentLine);
     els.track.replaceChildren(...info.tracks.map((title, i) => new Option(`${hex2(i + 1)} ${title}`, i)));
     els.track.value = this.track;
+    if (document.activeElement !== els.trackTitle)
+      els.trackTitle.value = info.tracks[this.track] ?? '';
     root.querySelector('[data-action="remove-track"]').disabled = info.tracks.length < 2;
     for (const box of els.chips.querySelectorAll('input'))
       box.checked = (info.chips & Number(box.value)) !== 0;
@@ -1686,6 +1822,11 @@ export class DnFTEditor {
     els.n163.disabled = !(info.chips & CHIP.N163);
     els.machine.value = info.pal ? '1' : '0';
     els.machine.disabled = info.chips !== 0;
+    els.engineMode.value = info.engineSpeed ? '1' : '0';
+    els.engineRate.value = info.frameRate;
+    els.engineRate.disabled = !info.engineSpeed;
+    els.vibrato.value = info.newVibrato ? '1' : '0';
+    els.linearPitch.value = info.linearPitch ? '1' : '0';
   }
 
   renderFrames() {
@@ -1755,7 +1896,8 @@ export class DnFTEditor {
     const panel = this.root.querySelector('.dnft-instruments-panel');
     const exists = !!song.instrument(this.instrument);
     panel.querySelector('[data-action="remove-instrument"]').disabled = !exists;
-    panel.querySelector('[data-action="clone-instrument"]').disabled = !exists || song.instruments.length >= MAX_INSTRUMENTS;
+    for (const action of ['clone-instrument', 'deep-clone-instrument'])
+      panel.querySelector(`[data-action="${action}"]`).disabled = !exists || song.instruments.length >= MAX_INSTRUMENTS;
     panel.querySelector('[data-action="edit-instrument"]').disabled = !exists;
     panel.querySelector('[data-action="add-instrument"]').disabled = song.instruments.length >= MAX_INSTRUMENTS;
   }

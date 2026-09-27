@@ -346,6 +346,34 @@
   gap: 4px 10px;
 }
 
+.dnft-comment-button {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+
+.dnft-comment-button.is-empty {
+  color: var(--dnft-muted);
+}
+
+.dnft-engine-speed {
+  align-items: center;
+}
+
+.dnft-engine-speed select {
+  flex: 1;
+}
+
+.dnft-editor .dnft-engine-speed input {
+  flex: none;
+  width: 72px;
+}
+
+.dnft-engine-speed input:disabled {
+  opacity: 0.6;
+}
+
 .dnft-frames-panel,
 .dnft-instruments-panel {
   display: flex;
@@ -803,6 +831,25 @@
   margin: 0;
   font-size: 12px;
   color: var(--dnft-muted);
+}
+
+.dnft-comment-body {
+  display: grid;
+  gap: 10px;
+  margin: 12px 14px 14px;
+}
+
+.dnft-comment-text {
+  width: 100%;
+  height: min(50vh, 420px);
+  min-height: 160px;
+  padding: 8px 10px;
+  resize: vertical;
+  font: 13px/1.5 var(--dnft-mono);
+  color: var(--dnft-text);
+  background: var(--dnft-surface-2);
+  border: 1px solid var(--dnft-line);
+  border-radius: 6px;
 }
 
 /* ---- narrow screens ---- */

@@ -106,7 +106,7 @@ The document is read and changed through the tracker's own functions:
 
 | | |
 | --- | --- |
-| module | `info()` (title, chips, channels, tracks...), `setTitle`, `setArtist`, `setCopyright`, `setComment`, `setExpansion(chips, n163Channels)`, `setMachine(pal)`, `setEngineSpeed`, `setVibratoStyle`, `setLinearPitch` |
+| module | `info()` (title, chips, channels, tracks, comment, engineSpeed...), `setTitle`, `setArtist`, `setCopyright`, `setComment(text, showOnOpen)`, `setExpansion(chips, n163Channels)`, `setMachine(pal)`, `setEngineSpeed(hz)` (0: the machine's), `setVibratoStyle(newStyle)`, `setLinearPitch(enable)` |
 | tracks | `track(t)` (frames, rows, speed, tempo, highlight, effColumns, frameList), `addTrack`, `removeTrack`, `setTrackTitle`, `setPatternLength`, `setFrameCount`, `setSpeed`, `setTempo`, `setHighlight`, `setEffColumns` |
 | patterns | `pattern(t, channel, pattern)`, `patterns(t)` (every one with something in it), `setCells(t, channel, pattern, row, cells)` |
 | frames | `setFramePattern`, `setFrameList`, `insertFrame`, `removeFrame`, `duplicateFrame`, `cloneFrame`, `moveFrame`, `freePattern` |
@@ -116,6 +116,10 @@ A pattern cell is 12 bytes, the fields of the tracker's `stChanNote`: note, octa
 instrument, four effect numbers, four effect parameters. `dnft.effects()` gives the
 effect letters, the parameter an effect starts with, and which letter means which effect
 on each chip. Indices are checked, and what is out of range throws.
+
+A comment comes with `\n` line breaks and is kept with the CR LF of the desktop's comment
+box. Changing the machine, the engine speed, the vibrato style or the pitch mode resets
+the sound generator, which stops playback.
 
 As with players, one session drives the sound generator at a time.
 
