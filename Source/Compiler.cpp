@@ -1509,7 +1509,8 @@ void CCompiler::CreateNSFeFooter(stNSFeFooter *pFooter)
 	// write tlbl chunk
 	memcpy(pFooter->tlbl.Ident, "tlbl", 4);
 	for (unsigned int i = 0; i < m_pDocument->GetTrackCount(); i++) {
-		std::string_view label = LPCTSTR(m_pDocument->GetTrackTitle(i));
+		const CString title = m_pDocument->GetTrackTitle(i);
+		std::string_view label = LPCTSTR(title);
 		if (!label.empty())
 			emplace_str(pFooter->tlbl.Data, label);
 	}
@@ -1524,7 +1525,8 @@ void CCompiler::CreateNSFeFooter(stNSFeFooter *pFooter)
 	// write text chunk
 	memcpy(pFooter->text.Ident, "text", 4);
 	{
-		std::string_view text = LPCTSTR(m_pDocument->GetComment());
+		const CString comment = m_pDocument->GetComment();
+		std::string_view text = LPCTSTR(comment);
 		if (!text.empty())
 			emplace_str(pFooter->text.Data, text);
 	}

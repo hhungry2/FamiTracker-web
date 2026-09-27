@@ -43,6 +43,10 @@ public:
 	static std::shared_ptr<Session> Create(uint32_t sampleRate);
 	// Parses a .dnm, .0cc or .ftm file. Throws LoadError.
 	static std::shared_ptr<Session> Open(const uint8_t *data, size_t size, uint32_t sampleRate);
+	// File > Import Text: a module in the tracker's text format. Throws LoadError with the
+	// importer's message; `warning` gets what it reported about a file it did read (a
+	// JSON block it could not parse).
+	static std::shared_ptr<Session> ImportText(const uint8_t *data, size_t size, uint32_t sampleRate, std::string &warning);
 	~Session();
 	Session(const Session &) = delete;
 	Session &operator=(const Session &) = delete;
@@ -87,9 +91,36 @@ public:
 	// chips, machine, engine speed, vibrato style, linear pitch. Stops playback.
 	void ApplyDocumentProperties();
 
+	// Whether the session drives the sound generator (the exports that read its tables
+	// need that)
+	bool IsCurrent() const;
+
+	// File > Create WAV: renders the track as the desktop's wave export does, mono at
+	// `sampleRate`, with the channels of `muted` silent: `passes` times through the song,
+	// or for `seconds` when `passes` is 0. Stops playback; the session's own output is
+	// silent until EndWave().
+	void BeginWave(int track, int passes, int seconds, uint64_t muted, uint32_t sampleRate);
+	// Appends the audio of whole ticks to `out` until it holds `samples` or the export
+	// is over. False once it is over.
+	bool RenderWave(std::vector<int16_t> &out, size_t samples);
+	// 0 to 1, as the desktop's progress dialog counts
+	double GetWaveProgress() const;
+	// Back to the session's own output, after the export or to abandon it
+	void EndWave();
+	bool IsRenderingWave() const { return m_bWave; }
+
+	// Module properties > Import file: a module to take tracks, instruments, grooves
+	// and detune tables from (CModuleImportDlg). Throws LoadError.
+	const CFamiTrackerDoc &BeginImport(const uint8_t *data, size_t size);
+	// Imports the tracks marked in `tracks` as new tracks, and what the flags ask for.
+	// Both modules get the expansion chips of either, as on the desktop. Stops playback.
+	// Returns false when something could not be imported (`messages` tells why); what
+	// was imported before stays.
+	bool FinishImport(const std::vector<bool> &tracks, bool instruments, bool grooves, bool detune, std::string &messages);
+	void CancelImport();
+
 private:
 	Session(std::unique_ptr<CFamiTrackerDoc> document, uint32_t sampleRate);
-	bool IsCurrent() const;
 	void Pump();
 
 	std::unique_ptr<CFamiTrackerDoc> m_pDocument;
@@ -103,6 +134,8 @@ private:
 	std::vector<int16_t> m_Pending;	// mono samples rendered but not handed out yet
 	size_t m_iPendingPos = 0;
 	std::vector<RowEvent> m_RowEvents;
+	bool m_bWave = false;			// a wave export has the sound generator
+	std::unique_ptr<CFamiTrackerDoc> m_pImport;	// the module of BeginImport()
 };
 
 } // namespace dnft

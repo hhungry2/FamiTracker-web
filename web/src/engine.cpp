@@ -41,7 +41,7 @@ Engine &GetEngine() {
 }
 
 MessageCollector::MessageCollector() {
-	dnft_compat::SetMessageHandler([this](const std::string &text, unsigned int type) {
+	m_Previous = dnft_compat::SetMessageHandler([this](const std::string &text, unsigned int type) {
 		if (!m_sText.empty())
 			m_sText += '\n';
 		m_sText += text;
@@ -51,7 +51,7 @@ MessageCollector::MessageCollector() {
 }
 
 MessageCollector::~MessageCollector() {
-	dnft_compat::SetMessageHandler(nullptr);
+	dnft_compat::SetMessageHandler(std::move(m_Previous));
 }
 
 } // namespace detail
@@ -174,6 +174,28 @@ LoadedDocument LoadDocument(const uint8_t *data, size_t size) {
 	else
 		loaded.program = "FamiTracker";
 	return loaded;
+}
+
+std::unique_ptr<CFamiTrackerDoc> NewDocument() {
+	Engine &engine = GetEngine();
+	CSoundGen &soundGen = *theApp.GetSoundGenerator();
+
+	// As in LoadDocument(): a new document offers itself to the sound generator when
+	// nothing is assigned, and needs one assigned while it sets itself up.
+	MessageCollector messages;
+	const bool hadDocument = soundGen.GetDocument() != nullptr;
+	std::unique_ptr<CFamiTrackerDoc> pDoc(static_cast<CFamiTrackerDoc *>(CFamiTrackerDoc::CreateObject()));
+	const bool created = pDoc->OnNewDocument() != FALSE;
+	if (!hadDocument && soundGen.GetDocument())
+		engine.host->Detach();
+	if (!created)
+		throw std::runtime_error(messages.GetText().empty() ? "could not create a module" : messages.GetText());
+	return pDoc;
+}
+
+std::string NewPath(const std::string &name) {
+	static unsigned serial = 0;
+	return "memory/" + std::to_string(++serial) + "/" + name;
 }
 
 } // namespace detail

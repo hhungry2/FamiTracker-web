@@ -31,6 +31,7 @@
 #include "InstrumentManager.h"
 #include "engine_internal.h"
 #include "session.h"
+#include "export.h"
 
 #include <emscripten/bind.h>
 
@@ -52,6 +53,10 @@ val CopyToJs(const uint8_t *data, size_t size) {
 	val array = val::global("Uint8Array").new_(size);
 	array.call<void>("set", val(emscripten::typed_memory_view(size, data)));
 	return array;
+}
+
+val CopyToJs(const std::vector<uint8_t> &bytes) {
+	return CopyToJs(bytes.data(), bytes.size());
 }
 
 std::vector<uint8_t> FromJs(const val &array) {
@@ -605,6 +610,127 @@ public:
 		m_pSession->ApplyDocumentProperties();
 	}
 
+	// ---- other files -------------------------------------------------------------------
+
+	//! File > Export Text (Uint8Array)
+	val exportText() const {
+		return CopyToJs(dnft::ExportText(Doc()));
+	}
+
+	//! File > Export JSON (Uint8Array)
+	val exportJSON() const {
+		return CopyToJs(dnft::ExportJson(Doc()));
+	}
+
+	//! File > Export Rows: a CSV table of the cells with something in them (Uint8Array)
+	val exportRows() const {
+		return CopyToJs(dnft::ExportRows(Doc()));
+	}
+
+	//! File > Create NSF: {files: [{name, data}], log, messages}, files empty when it
+	//! failed. format: 'nsf', 'nsfe', 'nsf2', 'nes', 'bin', 'prg' or 'asm'; machine: 0 NTSC,
+	//! 1 PAL, 2 both; extraData: the sources of an NSF around the music (bin, asm)
+	val exportNSF(const std::string &format, int machine, bool extraData) {
+		static const std::pair<const char *, dnft::NsfFormat> FORMATS[] = {
+			{"nsf", dnft::NsfFormat::NSF}, {"nsfe", dnft::NsfFormat::NSFE}, {"nsf2", dnft::NsfFormat::NSF2},
+			{"nes", dnft::NsfFormat::NES}, {"bin", dnft::NsfFormat::BIN}, {"prg", dnft::NsfFormat::PRG},
+			{"asm", dnft::NsfFormat::ASM},
+		};
+		const auto kind = std::find_if(std::begin(FORMATS), std::end(FORMATS), [&](const auto &f) { return format == f.first; });
+		if (kind == std::end(FORMATS))
+			throw std::invalid_argument("no export format " + format);
+		// the period and vibrato tables come from the sound generator playing the module
+		if (!m_pSession->IsCurrent())
+			throw std::runtime_error("another player or session has the sound generator");
+		m_pSession->Stop();
+		const dnft::NsfExport exported = dnft::ExportNsf(Doc(), kind->second, machine, extraData);
+		val files = val::array();
+		for (const auto &file : exported.files) {
+			val entry = val::object();
+			entry.set("name", file.name);
+			entry.set("data", CopyToJs(file.data));
+			files.call<void>("push", entry);
+		}
+		val result = val::object();
+		result.set("files", files);
+		result.set("log", exported.log);
+		result.set("messages", exported.messages);
+		return result;
+	}
+
+	//! File > Create WAV: see Session::BeginWave(); passes 0 renders for `seconds`
+	void beginWave(int track, int passes, int seconds, double muted, uint32_t sampleRate) {
+		m_pSession->BeginWave(track, passes, seconds, static_cast<uint64_t>(muted), sampleRate);
+	}
+
+	//! About `samples` more of the export: {samples: Int16Array (mono), done, progress}
+	val renderWave(uint32_t samples) {
+		std::vector<int16_t> out;
+		out.reserve(samples + 4096);
+		const bool more = m_pSession->RenderWave(out, samples);
+		val array = val::global("Int16Array").new_(out.size());
+		array.call<void>("set", val(emscripten::typed_memory_view(out.size(), out.data())));
+		val result = val::object();
+		result.set("samples", array);
+		result.set("done", !more);
+		result.set("progress", m_pSession->GetWaveProgress());
+		return result;
+	}
+
+	//! Ends the export, or abandons it: the session's own output comes back
+	void endWave() {
+		m_pSession->EndWave();
+	}
+
+	//! Module properties > Import file, for the module at the heap offset: {tracks: [title],
+	//! instruments, grooves, chips, namcoChannels}. finishImport() or cancelImport() next.
+	val beginImport(uint32_t data, uint32_t size) {
+		const CFamiTrackerDoc &imported = m_pSession->BeginImport(static_cast<const uint8_t *>(HeapPointer(data)), size);
+		val tracks = val::array();
+		for (unsigned i = 0; i < imported.GetTrackCount(); ++i) {
+			const CString title = imported.GetTrackTitle(i);
+			tracks.call<void>("push", val(dnft::detail::ToUtf8(title.GetString(), title.GetLength())));
+		}
+		int grooves = 0;
+		for (int i = 0; i < MAX_GROOVE; ++i)
+			if (imported.GetGroove(i))
+				++grooves;
+		val result = val::object();
+		result.set("tracks", tracks);
+		result.set("instruments", static_cast<int>(imported.GetInstrumentCount()));
+		result.set("grooves", grooves);
+		result.set("chips", static_cast<int>(imported.GetExpansionChip()));
+		result.set("namcoChannels", imported.GetNamcoChannels());
+		return result;
+	}
+
+	//! Imports the tracks whose flag is set, and what the flags ask for: {imported, messages}.
+	//! What was imported before a failure stays.
+	val finishImport(const val &tracks, bool instruments, bool grooves, bool detune) {
+		const auto flags = emscripten::convertJSArrayToNumberVector<int>(tracks);
+		std::string messages;
+		const bool imported = m_pSession->FinishImport(std::vector<bool>(flags.begin(), flags.end()), instruments, grooves, detune, messages);
+		val result = val::object();
+		result.set("imported", imported);
+		result.set("messages", messages);
+		return result;
+	}
+
+	void cancelImport() {
+		m_pSession->CancelImport();
+	}
+
+	//! What the text import reported about a file it still read (see importText())
+	std::string takeWarning() {
+		std::string warning;
+		warning.swap(m_sWarning);
+		return warning;
+	}
+
+	void setWarning(std::string warning) {
+		m_sWarning = std::move(warning);
+	}
+
 private:
 	CFamiTrackerDoc &Doc() const {
 		return m_pSession->GetDocument();
@@ -681,6 +807,7 @@ private:
 	}
 
 	std::shared_ptr<dnft::Session> m_pSession;
+	std::string m_sWarning;
 };
 
 std::shared_ptr<EditSession> createSession(uint32_t sampleRate) {
@@ -690,6 +817,16 @@ std::shared_ptr<EditSession> createSession(uint32_t sampleRate) {
 //! @param data heap offset of a .dnm, .0cc or .ftm file
 std::shared_ptr<EditSession> openSession(uint32_t data, uint32_t size, uint32_t sampleRate) {
 	return std::make_shared<EditSession>(dnft::Session::Open(static_cast<const uint8_t *>(HeapPointer(data)), size, sampleRate));
+}
+
+//! File > Import Text: a session on the module in the tracker's text format at the heap
+//! offset. Throws with the importer's message (the line it stopped at); the session's
+//! takeWarning() gives what it reported about a file it still read.
+std::shared_ptr<EditSession> importText(uint32_t data, uint32_t size, uint32_t sampleRate) {
+	std::string warning;
+	auto session = std::make_shared<EditSession>(dnft::Session::ImportText(static_cast<const uint8_t *>(HeapPointer(data)), size, sampleRate, warning));
+	session->setWarning(std::move(warning));
+	return session;
 }
 
 //! {letters: the letter of each effect number, defaults: the parameter an effect gets
@@ -778,10 +915,22 @@ EMSCRIPTEN_BINDINGS(dnft_session) {
 		.function("setMachine", &EditSession::setMachine)
 		.function("setEngineSpeed", &EditSession::setEngineSpeed)
 		.function("setVibratoStyle", &EditSession::setVibratoStyle)
-		.function("setLinearPitch", &EditSession::setLinearPitch);
+		.function("setLinearPitch", &EditSession::setLinearPitch)
+		.function("exportText", &EditSession::exportText)
+		.function("exportJSON", &EditSession::exportJSON)
+		.function("exportRows", &EditSession::exportRows)
+		.function("exportNSF", &EditSession::exportNSF)
+		.function("beginWave", &EditSession::beginWave)
+		.function("renderWave", &EditSession::renderWave)
+		.function("endWave", &EditSession::endWave)
+		.function("beginImport", &EditSession::beginImport)
+		.function("finishImport", &EditSession::finishImport)
+		.function("cancelImport", &EditSession::cancelImport)
+		.function("takeWarning", &EditSession::takeWarning);
 
 	emscripten::function("createSession", &createSession);
 	emscripten::function("openSession", &openSession);
+	emscripten::function("importText", &importText);
 	emscripten::function("effects", &effectTable);
 
 	emscripten::constant("PLAY_SONG", static_cast<int>(dnft::Session::PLAY_SONG));

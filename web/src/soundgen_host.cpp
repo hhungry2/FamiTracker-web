@@ -17,6 +17,7 @@
 #include "SoundGen.h"
 #include "soundgen_host.h"
 
+#include <algorithm>
 #include <climits>
 #include <thread>
 
@@ -117,26 +118,18 @@ void CSoundGenHost::Detach() {
 	g.OnRemoveDocument(0, 0);
 }
 
-bool CSoundGenHost::BeginRendering(int Track, bool loop) {
+bool CSoundGenHost::BeginRendering(int Track, int EndWhen, unsigned int EndParam, int DelayTicks) {
 	CSoundGen &g = m_Gen;
 	Stop();
 	if (!g.m_pDocument || !g.m_pDocument->IsFileLoaded())
 		return false;
 
-	// CSoundGen::RenderToFile() and OnStartRender(), without the wave file and without
-	// the five silent ticks the export waits before playing.
+	// CSoundGen::RenderToFile() and OnStartRender(), without the wave file
 	g.m_iRenderTrack = Track;
 	g.m_iRenderRow = 0;
-	if (loop) {
-		g.m_iRenderEndWhen = SONG_TIME_LIMIT;
-		g.m_iRenderEndParam = UINT_MAX;
-		g.m_iRenderRowCount = 0;
-	}
-	else {
-		g.m_iRenderEndWhen = SONG_LOOP_LIMIT;
-		g.m_iRenderEndParam = g.m_pDocument->ScanActualLength(Track, 1);
-		g.m_iRenderRowCount = g.m_iRenderEndParam;
-	}
+	g.m_iRenderEndWhen = static_cast<render_end_t>(EndWhen);
+	g.m_iRenderEndParam = EndParam;
+	g.m_iRenderRowCount = EndWhen == SONG_LOOP_LIMIT ? EndParam : 0;
 	g.m_pWaveFile = std::make_unique<CWaveFile>();
 	RenewAPU();
 	g.ResetBuffer();
@@ -144,19 +137,59 @@ bool CSoundGenHost::BeginRendering(int Track, bool loop) {
 	g.m_bRequestRenderStop = false;
 	g.m_bStoppingRender = false;
 	g.m_bRendering = true;
-	g.m_iDelayedStart = 0;
-	g.m_iDelayedEnd = 0;
+	g.m_iDelayedStart = DelayTicks;
+	g.m_iDelayedEnd = DelayTicks;
 	return true;
 }
 
 void CSoundGenHost::Start(int Track, bool loop) {
-	if (BeginRendering(Track, loop))
+	// without the five silent ticks the export waits before playing
+	bool started = loop ?
+		BeginRendering(Track, SONG_TIME_LIMIT, UINT_MAX, 0) :
+		m_Gen.m_pDocument && BeginRendering(Track, SONG_LOOP_LIMIT, m_Gen.m_pDocument->ScanActualLength(Track, 1), 0);
+	if (started)
 		m_Gen.OnStartPlayer(MODE_PLAY_START, Track);
 }
 
 void CSoundGenHost::BeginStream() {
 	// The time limit is never reached: rendering only ends when asked to.
-	BeginRendering(0, true);
+	BeginRendering(0, SONG_TIME_LIMIT, UINT_MAX, 0);
+}
+
+bool CSoundGenHost::BeginExport(int Track, bool ByTime, int EndParam) {
+	CSoundGen &g = m_Gen;
+	if (!g.m_pDocument)
+		return false;
+	// CSoundGen::RenderToFile(): seconds count in ticks, passes in rows. OnStartRender()
+	// waits five ticks before it plays and five after the end; the player starts from
+	// the message OnIdle() posts when the wait is over (see Tick()).
+	const unsigned int param = ByTime ?
+		static_cast<unsigned int>(EndParam) * g.m_pDocument->GetFrameRate() :
+		g.m_pDocument->ScanActualLength(Track, static_cast<unsigned int>(EndParam));
+	return BeginRendering(Track, ByTime ? SONG_TIME_LIMIT : SONG_LOOP_LIMIT, param, 5);
+}
+
+bool CSoundGenHost::IsRendering() const {
+	return m_Gen.m_bRendering;
+}
+
+void CSoundGenHost::EndExportIfHalted() {
+	// The player checks the export's limit only while it plays (CSoundGen::RunFrame()),
+	// so a song that halts (Cxx) before the limit would render silence without end: end
+	// it the way reaching the limit does, five ticks later.
+	CSoundGen &g = m_Gen;
+	if (g.m_bRendering && !g.m_bPlaying && !g.m_iDelayedStart && !g.m_maybeSelfMessage && !g.m_bStoppingRender)
+		g.m_bRequestRenderStop = true;
+}
+
+double CSoundGenHost::GetRenderProgress() const {
+	// what the desktop's progress dialog shows (CWavProgressDlg::OnTimer())
+	const CSoundGen &g = m_Gen;
+	if (!g.m_bRendering)
+		return 1.0;
+	if (g.m_iRenderEndWhen == SONG_LOOP_LIMIT)
+		return g.m_iRenderRowCount ? std::min(1.0, static_cast<double>(std::max(0, g.m_iRenderRow)) / g.m_iRenderRowCount) : 0.0;
+	return g.m_iRenderEndParam ? std::min(1.0, static_cast<double>(g.m_iPlayTicks) / g.m_iRenderEndParam) : 0.0;
 }
 
 void CSoundGenHost::StartPlayer(int Mode, int Track) {
@@ -183,6 +216,14 @@ void CSoundGenHost::Tick() {
 	CSoundGen &g = m_Gen;
 	if (!g.m_pDocument || !g.m_pSoundStream || !g.m_pDocument->IsFileLoaded())
 		return;
+	// The audio thread's loop (CSoundGen::ThreadEntry()) handles the message the sound
+	// generator posts itself (the start of an export's playback) before the next tick.
+	// Messages from the user interface are not taken: the host makes those calls itself.
+	if (g.m_maybeSelfMessage) {
+		const GuiMessage message = *g.m_maybeSelfMessage;
+		g.m_maybeSelfMessage = {};
+		g.DispatchGuiMessage(message);
+	}
 	g.OnIdle();
 }
 

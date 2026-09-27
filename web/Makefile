@@ -1,6 +1,7 @@
 # Dn-FamiTracker web build: the tracker core compiled to WebAssembly.
 #
-# Needs an activated emsdk (emcc/em++ on PATH):
+# Needs an activated emsdk (emcc/em++ on PATH), python3, and ca65 and ld65 from cc65
+# for the NSF drivers (CA65 and LD65 name other commands for them):
 #   source <emsdk>/emsdk_env.sh
 #   make -C web -j$(nproc)
 #
@@ -20,8 +21,8 @@ DIST := dist
 CXX := em++
 CC := emcc
 
-# The part of Source/ that loads and plays modules. Everything else there is user
-# interface or export code.
+# The part of Source/ that loads, plays and exports modules. Everything else there is
+# user interface code.
 CORE_SOURCES := \
 	FamiTrackerDoc DocumentFile SimpleFile ModuleException \
 	PatternData PatternNote Groove Bookmark BookmarkCollection BookmarkManager \
@@ -35,14 +36,15 @@ CORE_SOURCES := \
 	APU/APU APU/Mixer APU/SoundChip APU/2A03 APU/MMC5 APU/VRC6 APU/VRC7 APU/FDS APU/N163 APU/S5B \
 	APU/nsfplay/xgm/devices/Sound/nes_apu APU/nsfplay/xgm/devices/Sound/nes_dmc \
 	APU/nsfplay/xgm/devices/Sound/nes_mmc5 APU/nsfplay/xgm/devices/Sound/nes_vrc6 \
-	Blip_Buffer/Blip_Buffer
+	Blip_Buffer/Blip_Buffer \
+	Compiler PatternCompiler ChunkRenderText ChunkRenderBinary TextExporter JsonExporter
 
 CORE_C_SOURCES := \
 	APU/digital-sound-antiques/emu2149 APU/digital-sound-antiques/emu2413
 
 # The port itself: compatibility layer, stand-ins for the user interface, the player,
-# the editing session and their javascript bindings.
-WEB_SOURCES := dnft_compat app standins soundgen_host engine bindings session session_bindings
+# the editing session, the exports and their javascript bindings.
+WEB_SOURCES := dnft_compat app standins soundgen_host engine bindings session export session_bindings
 
 CORE_OBJECTS := \
 	$(addprefix $(BUILD)/core/,$(addsuffix .o,$(CORE_SOURCES))) \
@@ -51,8 +53,9 @@ OBJECTS := $(CORE_OBJECTS) $(addprefix $(BUILD)/web/,$(addsuffix .o,$(WEB_SOURCE
 
 DEFINES := -DDNFT_PORTABLE
 # compat/ goes first: it answers <afx.h>, <windows.h> and friends. The repository root
-# and Source/ match the include directories of the desktop project.
-INCLUDES := -Icompat -Isrc -I$(ROOT) -I$(SRC) -I$(SRC)/APU
+# and Source/ match the include directories of the desktop project; generated/ has
+# what the build makes, such as the NSF drivers that Source/Driver.h includes.
+INCLUDES := -Icompat -Isrc -I$(ROOT) -I$(SRC) -I$(SRC)/APU -I$(BUILD)/generated
 
 ifdef debug
 OPT := -O0 -g -DDNFT_DEBUG
@@ -110,7 +113,7 @@ $(BUILD)/core/%.c.o: $(SRC)/%.c
 
 $(BUILD)/web/%.o: src/%.cpp
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) $(WEB_WARNINGS) -I$(BUILD)/generated -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(WEB_WARNINGS) -c $< -o $@
 
 # Message texts come from the string tables of the desktop resource script
 $(BUILD)/generated/strings.inc: $(ROOT)/Dn-FamiTracker.rc $(ROOT)/resource.h tools/rc_strings.py
@@ -118,6 +121,32 @@ $(BUILD)/generated/strings.inc: $(ROOT)/Dn-FamiTracker.rc $(ROOT)/resource.h too
 	python3 tools/rc_strings.py $(ROOT)/Dn-FamiTracker.rc $(ROOT)/resource.h > $@
 
 $(BUILD)/web/dnft_compat.o: $(BUILD)/generated/strings.inc
+
+# The NSF drivers, which the NSF export puts around the music: assembled from
+# Source/drivers/asm by the script the desktop build runs (Source/drivers/build.cmd),
+# which calls ca65 and ld65. A build of cc65 made with emcc runs under node:
+#   make CA65="node <cc65>/bin/ca65" LD65="node <cc65>/bin/ld65"   (see tools/build_cc65.sh)
+CA65 ?= ca65
+LD65 ?= ld65
+PYTHON ?= python3
+DRIVER_ASM := $(wildcard $(SRC)/drivers/asm/*.s $(SRC)/drivers/asm/*.mac)
+DRIVER_SCRIPT := $(SRC)/drivers/asm/build/build_engine.py
+DRIVERS_BUILT := $(BUILD)/generated/drivers/.built
+
+$(DRIVERS_BUILT): $(DRIVER_ASM) $(DRIVER_SCRIPT)
+	@$(CA65) --version >/dev/null 2>&1 || { echo "The NSF drivers need ca65 and ld65 from cc65 (https://cc65.github.io); set CA65 and LD65 to run them from elsewhere." >&2; exit 1; }
+	rm -rf $(BUILD)/drivers $(dir $@)
+	mkdir -p $(BUILD)/drivers/asm/build $(BUILD)/drivers/bin $(dir $@)
+	cp $(DRIVER_ASM) $(BUILD)/drivers/asm/
+	cp $(DRIVER_SCRIPT) $(BUILD)/drivers/asm/build/
+	printf '#!/bin/sh\nexec %s "$$@"\n' '$(CA65)' > $(BUILD)/drivers/bin/ca65
+	printf '#!/bin/sh\nexec %s "$$@"\n' '$(LD65)' > $(BUILD)/drivers/bin/ld65
+	chmod +x $(BUILD)/drivers/bin/ca65 $(BUILD)/drivers/bin/ld65
+	cd $(BUILD)/drivers/asm/build && PATH="$(abspath $(BUILD)/drivers/bin):$$PATH" $(PYTHON) build_engine.py
+	cp $(BUILD)/drivers/asm/build/drivers/*.h $(dir $@)
+	touch $@
+
+$(BUILD)/core/Compiler.o: $(DRIVERS_BUILT)
 
 clean:
 	rm -rf build $(DIST)

@@ -7,8 +7,8 @@
 ** (at your option) any later version.
 */
 
-// Definitions the core links against whose desktop versions live in user interface or
-// export sources that the web build leaves out.
+// Definitions the core links against whose desktop versions live in user interface
+// sources that the web build leaves out.
 
 #include "stdafx.h"
 #include "FamiTracker.h"
@@ -17,8 +17,6 @@
 #include "portable/SoundGenUI.h"
 #include "InstrumentRecorder.h"
 #include "DetuneDlg.h"
-#include "Chunk.h"
-#include "ChunkRenderText.h"
 #include "VersionChecker.h"
 #include "libsamplerate/include/samplerate.h"
 
@@ -126,34 +124,13 @@ void CInstrumentRecorder::ReleaseCurrent() {
 CVersionChecker::~CVersionChecker() noexcept {
 }
 
-// ---- constants from dialogs and the NSF exporter ------------------------------------------------
+// ---- constants from dialogs --------------------------------------------------------------------
 
 // DetuneDlg.cpp
 const CString CDetuneDlg::CHIP_STR[6] = {_T("NTSC"), _T("PAL"), _T("Saw"), _T("VRC7"), _T("FDS"), _T("N163")};
 
 // SpeedDlg.cpp (declared extern in SpeedDlg.h, which this file does not include)
 extern const int RATE_MIN = 16;
-
-// ChunkRenderText.cpp
-const char CChunkRenderText::LABEL_SONG_LIST[]			= "ft_song_list";
-const char CChunkRenderText::LABEL_INSTRUMENT_LIST[]	= "ft_instrument_list";
-const char CChunkRenderText::LABEL_SAMPLES_LIST[]		= "ft_sample_list";
-const char CChunkRenderText::LABEL_SAMPLES[]			= "ft_samples";
-const char CChunkRenderText::LABEL_GROOVE_LIST[]		= "ft_groove_list";
-const char CChunkRenderText::LABEL_GROOVE[]				= "ft_groove_%i";
-const char CChunkRenderText::LABEL_WAVETABLE[]			= "ft_wave_table";
-const char CChunkRenderText::LABEL_SAMPLE[]				= "ft_sample_%i";
-const char CChunkRenderText::LABEL_WAVES[]				= "ft_waves_%i";
-const char CChunkRenderText::LABEL_SEQ_2A03[]			= "ft_seq_2a03_%i";
-const char CChunkRenderText::LABEL_SEQ_VRC6[]			= "ft_seq_vrc6_%i";
-const char CChunkRenderText::LABEL_SEQ_FDS[]			= "ft_seq_fds_%i";
-const char CChunkRenderText::LABEL_SEQ_N163[]			= "ft_seq_n163_%i";
-const char CChunkRenderText::LABEL_SEQ_S5B[]			= "ft_seq_s5b_%i";
-const char CChunkRenderText::LABEL_INSTRUMENT[]			= "ft_inst_%i";
-const char CChunkRenderText::LABEL_SONG[]				= "ft_song_%i";
-const char CChunkRenderText::LABEL_SONG_FRAMES[]		= "ft_s%i_frames";
-const char CChunkRenderText::LABEL_SONG_FRAME[]			= "ft_s%if%i";
-const char CChunkRenderText::LABEL_PATTERN[]			= "ft_s%ip%ic%i";
 
 // ---- libsamplerate ---------------------------------------------------------------------------------
 // CSoundGen resamples from the APU rate to the sound card rate. The web build renders at

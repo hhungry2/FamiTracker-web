@@ -607,9 +607,12 @@ void CChunkRenderText::StoreNSFStub(unsigned char Expansion, vibrato_t VibratoSt
 	str.Append("\n; path to NSF driver source\n");
 	str.Append(".include \"driver/driver.s\"\n");
 
-	std::string asmfile = m_pFile->GetFileName();
-	str.Append("; path to NSF export source\n");
-	str.AppendFormat(".include \"%s\"\n", asmfile.c_str());
+	// the BIN export renders this without a file of its own
+	if (m_pFile) {
+		std::string asmfile = m_pFile->GetFileName().GetString();
+		str.Append("; path to NSF export source\n");
+		str.AppendFormat(".include \"%s\"\n", asmfile.c_str());
+	}
 
 	WriteFileString(str, m_pFileNSFStub);
 }

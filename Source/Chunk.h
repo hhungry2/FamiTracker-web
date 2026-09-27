@@ -87,7 +87,7 @@ public:
 };
 
 
-enum chunk_type_t { 
+enum chunk_type_t : int { 
 	CHUNK_HEADER,
 	CHUNK_SEQUENCE, 
 	CHUNK_INSTRUMENT_LIST, 

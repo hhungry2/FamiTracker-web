@@ -47,6 +47,16 @@ public:
 	void StartPlayer(int Mode, int Track);
 	void HaltPlayer();
 
+	// The desktop's wave export (File > Create WAV): five silent ticks, Track from the
+	// top for EndParam passes (or EndParam seconds when ByTime), five more ticks. Ticks
+	// render it until IsRendering() turns false.
+	bool BeginExport(int Track, bool ByTime, int EndParam);
+	bool IsRendering() const;
+	// To call before each tick of an export: ends one whose song has halted
+	void EndExportIfHalted();
+	// How far the export is, 0 to 1, as the desktop's progress dialog counts it
+	double GetRenderProgress() const;
+
 	// One tick of the engine: reads rows, updates channels, clocks the APU. The audio
 	// produced goes to the sink.
 	void Tick();
@@ -68,7 +78,10 @@ public:
 	static const Sink &GetSink();
 
 private:
-	bool BeginRendering(int Track, bool loop);
+	// EndWhen and EndParam as CSoundGen keeps them (render_end_t, ticks or rows); the
+	// player starts DelayTicks ticks after rendering does, and rendering stops as long
+	// after the end
+	bool BeginRendering(int Track, int EndWhen, unsigned int EndParam, int DelayTicks);
 	void Configure();
 	void RenewAPU();
 
