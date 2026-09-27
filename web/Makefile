@@ -126,6 +126,8 @@ $(BUILD)/web/dnft_compat.o: $(BUILD)/generated/strings.inc
 # Source/drivers/asm by the script the desktop build runs (Source/drivers/build.cmd),
 # which calls ca65 and ld65. A build of cc65 made with emcc runs under node:
 #   make CA65="node <cc65>/bin/ca65" LD65="node <cc65>/bin/ld65"   (see tools/build_cc65.sh)
+# The script calls the tools by those names: commands by the names that run CA65 and
+# LD65, by their full paths, go first on its PATH.
 CA65 ?= ca65
 LD65 ?= ld65
 PYTHON ?= python3
@@ -134,13 +136,13 @@ DRIVER_SCRIPT := $(SRC)/drivers/asm/build/build_engine.py
 DRIVERS_BUILT := $(BUILD)/generated/drivers/.built
 
 $(DRIVERS_BUILT): $(DRIVER_ASM) $(DRIVER_SCRIPT)
-	@$(CA65) --version >/dev/null 2>&1 || { echo "The NSF drivers need ca65 and ld65 from cc65 (https://cc65.github.io); set CA65 and LD65 to run them from elsewhere." >&2; exit 1; }
+	@for tool in '$(CA65)' '$(LD65)'; do $$tool --version >/dev/null 2>&1 || { echo "The NSF drivers need ca65 and ld65 from cc65 (https://cc65.github.io); set CA65 and LD65 to run them from elsewhere." >&2; exit 1; }; done
 	rm -rf $(BUILD)/drivers $(dir $@)
 	mkdir -p $(BUILD)/drivers/asm/build $(BUILD)/drivers/bin $(dir $@)
 	cp $(DRIVER_ASM) $(BUILD)/drivers/asm/
 	cp $(DRIVER_SCRIPT) $(BUILD)/drivers/asm/build/
-	printf '#!/bin/sh\nexec %s "$$@"\n' '$(CA65)' > $(BUILD)/drivers/bin/ca65
-	printf '#!/bin/sh\nexec %s "$$@"\n' '$(LD65)' > $(BUILD)/drivers/bin/ld65
+	printf '#!/bin/sh\nexec %s %s "$$@"\n' "$$(command -v $(firstword $(CA65)))" '$(wordlist 2,$(words $(CA65)),$(CA65))' > $(BUILD)/drivers/bin/ca65
+	printf '#!/bin/sh\nexec %s %s "$$@"\n' "$$(command -v $(firstword $(LD65)))" '$(wordlist 2,$(words $(LD65)),$(LD65))' > $(BUILD)/drivers/bin/ld65
 	chmod +x $(BUILD)/drivers/bin/ca65 $(BUILD)/drivers/bin/ld65
 	cd $(BUILD)/drivers/asm/build && PATH="$(abspath $(BUILD)/drivers/bin):$$PATH" $(PYTHON) build_engine.py
 	cp $(BUILD)/drivers/asm/build/drivers/*.h $(dir $@)
