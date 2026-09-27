@@ -1,9 +1,11 @@
 // Checks the exports and imports of editing sessions: text, JSON, rows, the NSF export
-// dialog's kinds, the wave export, the text import and the import of another module.
+// dialog's kinds, the wave export, the text import and the import of another module;
+// and the zip files the editor puts exports of several files in.
 //
 //   node test/export.mjs
 
 import createDnFT from '../dist/dnft.mjs';
+import { zip, crc32 } from '../html/dnft-zip.mjs';
 import { readFileSync, readdirSync } from 'node:fs';
 import { strict as assert } from 'node:assert';
 import { fileURLToPath } from 'node:url';
@@ -406,6 +408,40 @@ check('an import can be called off', () => {
   assert.ok(equal(s.save(), before));
   s.delete();
 });
+
+// ---- zip files ---------------------------------------------------------------------------------
+
+try {
+  assert.equal(crc32(new TextEncoder().encode('123456789')), 0xCBF43926);
+  const files = [
+    { name: 'music.bin', data: Uint8Array.from({ length: 1000 }, (_, i) => i * 7) },
+    { name: 'samples.bin', data: new Uint8Array(0) },
+    { name: 'チャンネル.wav', data: new TextEncoder().encode('RIFF') },
+  ];
+  const bytes = new Uint8Array(await zip(files, new Date(2026, 8, 27, 12, 34, 56)).arrayBuffer());
+  const view = new DataView(bytes.buffer);
+  const end = bytes.length - 22;
+  assert.equal(view.getUint32(end, true), 0x06054B50);
+  assert.equal(view.getUint16(end + 10, true), files.length);
+  let at = view.getUint32(end + 16, true);
+  for (const file of files) {
+    // the central directory's entry, and the local header it points at
+    assert.equal(view.getUint32(at, true), 0x02014B50);
+    const nameLength = view.getUint16(at + 28, true);
+    assert.equal(new TextDecoder().decode(bytes.subarray(at + 46, at + 46 + nameLength)), file.name);
+    const local = view.getUint32(at + 42, true);
+    assert.equal(view.getUint32(local, true), 0x04034B50);
+    const data = bytes.subarray(local + 30 + nameLength, local + 30 + nameLength + file.data.length);
+    assert.ok(equal(data, file.data));
+    assert.equal(view.getUint32(at + 16, true), crc32(file.data));
+    assert.equal(view.getUint32(local + 14, true), crc32(file.data));
+    at += 46 + nameLength;
+  }
+  console.log('ok   zip files hold the files as they are');
+} catch (e) {
+  ++failures;
+  console.log(`FAIL zip files hold the files as they are\n     ${e.message}`);
+}
 
 console.log(failures ? `\n${failures} failed` : '\nall passed');
 process.exitCode = failures ? 1 : 0;

@@ -38,6 +38,8 @@ The audio engine follows the same interface conventions as [ZXTune Web](https://
 - **Song & Frame Organizer**: Reorder, insert, duplicate, and configure frame patterns, speed, tempo, rows, and highlight intervals.
 - **Instrument & Sequence Editor**: Visual bar graphs and text input for sequences (Volume, Arpeggio, Pitch, Hi-Pitch, Duty).
 - **Expansion Chips**: Toggle expansion audio chips on the fly, with channel-level mute and solo support.
+- **Exports**: WAV (by song passes or time, chosen channels, one file per channel, sample rate), NSF / NSFe / NSF2 / NES / BIN / PRG / ASM through the desktop's own NSF compiler and drivers, and text, JSON and CSV rows, as the desktop's File menu makes them.
+- **Imports**: Text exports, and the tracks, instruments, grooves and detune tables of another module.
 - **Bilingual Interface**: Native support for English and Japanese.
 
 ---
@@ -54,7 +56,11 @@ The audio engine follows the same interface conventions as [ZXTune Web](https://
 | **Web Player Demo** | ✅ Operational | Worker + AudioWorklet pipeline (`web/html/index.html`) |
 | **Web Tracker Editor** | ✅ Operational | Full interactive tracker UI (`web/html/editor.html`) |
 | **Save as `.dnm`** | ✅ Operational | Saved modules produce identical bit-for-bit audio output |
-| **WAV Export / FDS Wave Edit** | ⏳ Planned | Waveform editors and in-browser WAV export planned |
+| **WAV Export** | ✅ Operational | The desktop's render path, silent ticks included; matches the player sample for sample |
+| **NSF / NSFe / NSF2 / NES / BIN / PRG / ASM Export** | ✅ Operational | The desktop's NSF compiler and drivers; exported NSFs play in ZXTune, and an NSF assembled from ASM with extra data plays the same |
+| **Text / JSON / CSV Export, Text Import** | ✅ Operational | A text export read back exports the same text and plays the same |
+| **Import from Another Module** | ✅ Operational | Imported tracks play as they did in their module |
+| **FDS Wave Edit** | ⏳ Planned | Waveform editors planned |
 
 ---
 
@@ -64,6 +70,7 @@ The audio engine follows the same interface conventions as [ZXTune Web](https://
 - [Emscripten SDK (emsdk)](https://emscripten.org/) (tested with 4.0+ and 6.0.9)
 - GNU `make`
 - Python 3
+- `ca65` and `ld65` from [cc65](https://cc65.github.io), which assemble the NSF drivers (`web/tools/build_cc65.sh` builds them with emcc; see [web/README.md](web/README.md))
 
 #### Build Commands
 
@@ -84,6 +91,7 @@ python3 -m http.server -d web/dist
 ```sh
 node web/test/smoke.mjs                            # Interface checks against demo modules
 node web/test/session.mjs                          # Editing sessions and .dnm save/load verification
+node web/test/export.mjs                           # Exports and imports (WAV, NSF..., text, JSON, rows)
 node web/test/render.mjs <module> [output.wav]     # Render module to WAV
 node web/test/compare.mjs <module> <export.wav>    # Compare against desktop WAV export
 ```
@@ -207,6 +215,8 @@ JavaScript API やメッセージ構成は [ZXTune Web](https://github.com/hhung
 - **インストゥルメント & シーケンス編集**: 音量、アルペジオ、ピッチ、ハイピッチ、デューティ比を棒グラフまたはテキストで直感的に編集。音色の複製は、シーケンスを共有する複製と、シーケンスもコピーする複製（Deep Clone）の 2 種類。
 - **拡張音源の即時切り替え**: VRC6 / VRC7 / FDS / MMC5 / N163 / 5B の追加・変更、チャンネルごとのミュート / ソロに対応。
 - **モジュールの設定**: NTSC / PAL、エンジン速度、ビブラートの方式、ピッチモード（Linear pitch）。
+- **書き出し**: WAV（演奏回数または時間、チャンネルの選択、チャンネルごとのファイル、サンプリング周波数）、デスクトップ版の NSF コンパイラーとドライバーによる NSF / NSFe / NSF2 / NES / BIN / PRG / ASM、テキスト・JSON・行の一覧（CSV）。デスクトップ版の File メニューと同じ内容で書き出します。
+- **読み込み**: テキストで書き出した曲、別のモジュールの曲・音色・グルーヴ・デチューンの表。
 - **日英バイリンガル対応**: 日本語と英語の UI 切り替えに対応。
 
 ---
@@ -223,7 +233,11 @@ JavaScript API やメッセージ構成は [ZXTune Web](https://github.com/hhung
 | **ブラウザ再生（Web Player）** | ✅ 動作 | Worker + AudioWorklet デモページ（`web/html/index.html`） |
 | **ブラウザエディター（Web Editor）**| ✅ 動作 | パターン編集・試聴・保存画面（`web/html/editor.html`） |
 | **`.dnm` での再保存** | ✅ 動作 | 保存し直したファイルを再読み込みしても再生音が完全に一致 |
-| **WAV 書き出し / FDS 波形編集** | ⏳ 今後対応 | 波形エディタやブラウザからの WAV 書き出しを順次実装予定 |
+| **WAV 書き出し** | ✅ 動作 | デスクトップ版と同じ描画経路（前後の無音ティックを含む）。プレイヤーの音とサンプル単位で一致 |
+| **NSF / NSFe / NSF2 / NES / BIN / PRG / ASM 書き出し** | ✅ 動作 | デスクトップ版の NSF コンパイラーとドライバー。書き出した NSF は ZXTune で再生でき、補助データ付きの ASM から組み立てた NSF も同じように鳴る |
+| **テキスト / JSON / CSV 書き出し、テキスト読み込み** | ✅ 動作 | テキストで書き出して読み込み直すと、同じテキストになり同じ音で鳴る |
+| **別のモジュールからの取り込み** | ✅ 動作 | 取り込んだ曲は元のモジュールと同じ音で鳴る |
+| **FDS 波形編集** | ⏳ 今後対応 | 波形エディタを順次実装予定 |
 
 ---
 
@@ -233,6 +247,7 @@ JavaScript API やメッセージ構成は [ZXTune Web](https://github.com/hhung
 - [emsdk](https://emscripten.org/docs/getting_started/downloads.html) (Emscripten SDK 4.0+ / 6.0.9 推奨)
 - GNU `make`
 - Python 3
+- [cc65](https://cc65.github.io) の `ca65` と `ld65`（NSF ドライバーの組み立てに使用。`web/tools/build_cc65.sh` で emcc を使ってビルドすることもできます。詳しくは [web/README.md](web/README.md)）
 
 #### ビルド手順
 
@@ -253,6 +268,7 @@ python3 -m http.server -d web/dist
 ```sh
 node web/test/smoke.mjs                            # デモ曲を用いた動作検証
 node web/test/session.mjs                          # 編集セッション・保存・再読み込みの検証
+node web/test/export.mjs                           # 書き出しと読み込み（WAV・NSF など・テキスト・JSON・行）の検証
 node web/test/render.mjs <モジュール> [出力.wav]      # WAV への書き出しテスト
 node web/test/compare.mjs <モジュール> <書き出し.wav>  # デスクトップ版の WAV 出力との波形比較
 ```

@@ -4,7 +4,9 @@ FamiTracker-web
 The playback engine of Dn-FamiTracker compiled to WebAssembly: the tracker's own module
 loader, sound driver and chip emulation, taken unchanged from `Source/`, with a small
 layer that stands in for MFC and Windows. It plays `.dnm`, `.0cc` and `.ftm` modules,
-rendering them the way the desktop tracker's WAV export does.
+rendering them the way the desktop tracker's WAV export does, and edits them, with the
+desktop's exports (WAV, NSF and the other kinds of its NSF export, text, JSON, rows) and
+imports (text, the tracks and instruments of another module).
 
 The javascript interface follows the one of the [ZXTune web build](https://github.com/hhungry2/zxtune-web/tree/web/apps/zxtune-web),
 so a page can drive either engine the same way.
@@ -15,7 +17,9 @@ Building
 --------
 
 Needs [emsdk](https://emscripten.org/docs/getting_started/downloads.html) (tested with
-6.0.9), GNU make and python3.
+6.0.9), GNU make, python3, and `ca65` and `ld65` from [cc65](https://cc65.github.io) for
+the NSF drivers the NSF export puts around the music. The build assembles them from
+`Source/drivers/asm` with the desktop build's script, as `Source/drivers/build.cmd` does.
 
 ```sh
 source <emsdk>/emsdk_env.sh
@@ -24,7 +28,15 @@ make -C web site                # plus the demo page and the demo modules in dis
 python3 -m http.server -d web/dist
 ```
 
-`make debug=1` builds without optimizations and with assertions.
+`make debug=1` builds without optimizations and with assertions. `CA65` and `LD65` name
+other commands for cc65's tools. Where there is no C compiler besides emsdk's, cc65 can
+be built with emcc to run under node (the desktop build's CI uses cc65 at commit
+`2f4e2a34c32c679e4325652e461acce7f615a22e`):
+
+```sh
+web/tools/build_cc65.sh ~/cc65  # ~/cc65: cc65's source
+make -C web CA65="node $HOME/cc65/bin/ca65" LD65="node $HOME/cc65/bin/ld65"
+```
 
 Javascript interface
 --------------------
@@ -121,6 +133,38 @@ A comment comes with `\n` line breaks and is kept with the CR LF of the desktop'
 box. Changing the machine, the engine speed, the vibrato style or the pitch mode resets
 the sound generator, which stops playback.
 
+The desktop's File menu besides saving, run by the tracker's own exporters and importers:
+
+```js
+session.exportText();                // Uint8Array: File > Export Text
+session.exportJSON();                // File > Export JSON
+session.exportRows();                // File > Export Rows: a CSV table of the cells in use
+session.exportNSF('nsf', 0, false);  // File > Create NSF: {files: [{name, data}], log,
+                                     //  messages}, files empty when it failed. The kind:
+                                     //  'nsf', 'nsfe', 'nsf2', 'nes', 'bin', 'prg', 'asm';
+                                     //  0 NTSC, 1 PAL, 2 both; the extra data of BIN and ASM
+session.beginWave(track, passes, seconds, muted, 44100);  // File > Create WAV: `passes`
+                                     //  times through the song, or `seconds` when it is 0
+session.renderWave(44100);           // about that many samples more: {samples (mono
+                                     //  Int16Array), done, progress (0 to 1)}
+session.endWave();                   // after the export, or to abandon it
+session.beginImport(at, size);       // module properties > Import file: a module in the
+                                     //  heap, {tracks: [title], instruments, grooves, chips...}
+session.finishImport(tracks, instruments, grooves, detune);  // {imported, messages}
+                                     //  (or cancelImport()); tracks: a flag for each
+const imported = dnft.importText(at, size, 48000);  // File > Import Text: a new session
+imported.takeWarning();              // what the importer said about a file it still read
+```
+
+The wave export renders as the desktop's does: five silent ticks, the track, five more
+ticks, mono 16-bit, with the channels of `muted` silent; a song that halts before the
+time asked ends it. Meanwhile the session's own output is silent. The other exports run
+on a copy of the module, the one a save writes read back (saving clears the modified
+flag), so the one being edited stays as it is: the NSF compiler and the JSON export fill
+in every pattern they read. The NSF export takes the period and vibrato tables from the
+sound generator, so its session has to be the one playing. The module import gives both
+modules the expansion chips of either, as on the desktop, and stops playback.
+
 As with players, one session drives the sound generator at a time.
 
 ### The editor
@@ -133,9 +177,10 @@ As with players, one session drives the sound generator at a time.
   reached (from the worklet's position reports and `getOutputTimestamp()`)
 - `dnft-editor.mjs`: the editor; `dnft-pattern-view.mjs`: the pattern grid (a canvas);
   `dnft-song.mjs`: the page's copy of the module and the undo history;
-  `dnft-instrument-editor.mjs`: the sequence editor; `dnft-editor-strings.mjs`: its texts
-  (Japanese and English); `dnft-editor.css`: its look, in custom properties a page can
-  redefine
+  `dnft-instrument-editor.mjs`: the sequence editor; `dnft-files.mjs`: the Import and
+  Export menus and their dialogs; `dnft-zip.mjs`: zip files, for exports that write
+  several files; `dnft-editor-strings.mjs`: its texts (Japanese and English);
+  `dnft-editor.css`: its look, in custom properties a page can redefine
 
 ```js
 import { DnFTEditor } from './dnft-editor.mjs';
@@ -151,11 +196,18 @@ and redo, Ctrl+Up/Down transpose. Edits of patterns, frames and song settings ca
 undone; instruments, as on the desktop, cannot. The module is kept in the browser's
 localStorage as it changes and comes back when the page is opened again.
 
+The Import and Export menus next to Save hold what the desktop's File menu does besides
+New, Open and Save, with the options of its dialogs: Create WAV (with the sample rate,
+the progress and a cancel; the worker renders it in slices so the page and the audio
+keep going), the NSF export dialog, Export Text, JSON and Rows, Import Text (also by
+dropping a `.txt` file), and the import of another module's tracks and instruments from
+the module properties. What they write is downloaded; several files come in a zip file.
+
 How it works
 ------------
 
 The core (`Source/`) is an MFC application. The build compiles the part of it that
-loads and plays modules (see `CORE_SOURCES` in the Makefile) as it is, against:
+loads, plays and exports modules (see `CORE_SOURCES` in the Makefile) as it is, against:
 
 - `compat/`: the MFC and Win32 declarations the core uses. `CString` and `CFile` are
   real implementations (files live in memory, and so do the temporary file and the
@@ -171,7 +223,12 @@ loads and plays modules (see `CORE_SOURCES` in the Makefile) as it is, against:
 - `src/session.cpp`, `src/session_bindings.cpp`: editing sessions and theirs. A session
   keeps the host rendering with the player stopped (`CSoundGenHost::BeginStream()`),
   which is how the desktop's audio thread runs, and plays notes by hand the way the
-  desktop's note preview does.
+  desktop's note preview does. Its wave export is the desktop's
+  (`CSoundGenHost::BeginExport()`), the text and module imports its document's.
+- `src/export.cpp`: the other exports, by the desktop's `CCompiler`, `CTextExport` and
+  `CJsonExport` on a copy of the module; the rows export writes the lines of
+  `CTextExport::ExportRows()` without reading the empty patterns, which fills them in.
+- The NSF drivers `Source/Driver.h` includes are generated by the build (`CA65`, `LD65`).
 
 Every start of playback gets a new APU, so a track sounds the same however often it is
 played: some chip state survives a reset (the N163 keeps its channel registers in its
@@ -190,6 +247,11 @@ Small and meant to be harmless for the desktop build:
 | `APU/Mixer.h` | `Blip_Buffer.h` spelled as the file is named | case-sensitive file systems |
 | `SoundGen.h` | `friend class CSoundGenHost` under `DNFT_PORTABLE` | the host drives the private audio thread functions |
 | `SoundGen.cpp` | user interface includes replaced under `DNFT_PORTABLE` | see `src/portable/SoundGenUI.h` |
+| `Chunk.h`, `Compiler.h` | `enum chunk_type_t : int` | forward-declared enums need a fixed type outside MSVC |
+| `Compiler.cpp`, `TextExporter.cpp` | a `CString` returned by value kept in a variable, not pointed into | MFC's `CString` shares its text with the one it copies, which keeps it alive; other strings do not |
+| `TextExporter.h`, `TextExporter.cpp`, `ChunkRenderText.cpp` | `const` references to temporaries; `.GetString()` where a `CString` becomes a `std::string` | only MSVC binds temporaries to non-const references and makes that conversion |
+| `ChunkRenderText.cpp` | the NSF stub includes the exported file only when there is one | the BIN export with extra data writes the stub without one, and crashed (the desktop too) |
+| `TextExporter.cpp` | the text import reads a bookmark's highlight of -1 | the text export writes -1 for a bookmark that keeps the highlight, which the import refused (the desktop too) |
 
 Testing
 -------
@@ -197,13 +259,16 @@ Testing
 ```sh
 node web/test/smoke.mjs                          # interface checks on demo/
 node web/test/session.mjs                        # editing sessions, saving demo/ unchanged
+node web/test/export.mjs                         # the exports and imports of sessions
 node web/test/render.mjs <module> [out.wav]      # render and report
 node web/test/compare.mjs <module> <export.wav>  # against the desktop WAV export
 ```
 
 For `compare.mjs`, export with File > Create WAV..., "Play the song 1 time(s)", with
 default sound and mixer settings. Since both render through the same code path, the
-output is expected to match sample for sample; no export has been compared yet.
+output is expected to match sample for sample; no export has been compared yet. The
+web build's own wave export (`beginWave()`, the editor's Create WAV) has the desktop's
+silent ticks too, so its files can be compared with the desktop's as they are.
 
 Windows and the drives WSL mounts ignore the case of file names, a Linux checkout does
 not: `python3 web/tools/check_include_case.py` finds includes that only build on the
