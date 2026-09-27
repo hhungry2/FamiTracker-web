@@ -17,6 +17,7 @@
 #include "dnft_compat.h"
 #include "soundgen_host.h"
 #include "engine.h"
+#include "engine_internal.h"
 
 #include <algorithm>
 #include <cmath>
@@ -24,16 +25,7 @@
 
 namespace dnft {
 
-namespace {
-
-struct Engine {
-	CFamiTrackerView view;
-	std::unique_ptr<CSoundGenHost> host;
-	// the player allowed to drive the sound generator; older ones fall silent
-	unsigned currentPlayer = 0;
-	// where the sink puts rendered samples
-	std::vector<int16_t> *target = nullptr;
-};
+namespace detail {
 
 Engine &GetEngine() {
 	static Engine engine;
@@ -48,26 +40,27 @@ Engine &GetEngine() {
 	return engine;
 }
 
-// Collects what the core would show in message boxes while it is alive.
-class MessageCollector {
-public:
-	MessageCollector() {
-		dnft_compat::SetMessageHandler([this](const std::string &text, unsigned int type) {
-			if (!m_sText.empty())
-				m_sText += '\n';
-			m_sText += text;
-			// questions (such as whether to recover a file) are declined
-			return (type & 0xF) == MB_YESNO || (type & 0xF) == MB_YESNOCANCEL ? IDNO : IDOK;
-		});
-	}
-	~MessageCollector() {
-		dnft_compat::SetMessageHandler(nullptr);
-	}
-	const std::string &GetText() const { return m_sText; }
+MessageCollector::MessageCollector() {
+	dnft_compat::SetMessageHandler([this](const std::string &text, unsigned int type) {
+		if (!m_sText.empty())
+			m_sText += '\n';
+		m_sText += text;
+		// questions (such as whether to recover a file) are declined
+		return (type & 0xF) == MB_YESNO || (type & 0xF) == MB_YESNOCANCEL ? IDNO : IDOK;
+	});
+}
 
-private:
-	std::string m_sText;
-};
+MessageCollector::~MessageCollector() {
+	dnft_compat::SetMessageHandler(nullptr);
+}
+
+} // namespace detail
+
+using detail::Engine;
+using detail::GetEngine;
+using detail::ToUtf8;
+
+namespace {
 
 bool IsUtf8(const std::string &s) {
 	for (size_t i = 0; i < s.size();) {
@@ -82,34 +75,6 @@ bool IsUtf8(const std::string &s) {
 		i += n + 1;
 	}
 	return true;
-}
-
-// Module texts are in whatever code page the author's Windows used. Valid UTF-8 is
-// kept; anything else is read as Windows-1252, the most common case.
-std::string ToUtf8(const char *text, size_t maxLength) {
-	std::string raw(text, strnlen(text, maxLength));
-	if (IsUtf8(raw))
-		return raw;
-	static const char16_t CP1252_80[32] = {
-		0x20AC, 0xFFFD, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0xFFFD, 0x017D, 0xFFFD,
-		0xFFFD, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0xFFFD, 0x017E, 0x0178,
-	};
-	std::string out;
-	for (unsigned char c : raw) {
-		char32_t cp = c >= 0x80 && c < 0xA0 ? CP1252_80[c - 0x80] : c;
-		if (cp < 0x80)
-			out += static_cast<char>(cp);
-		else if (cp < 0x800) {
-			out += static_cast<char>(0xC0 | (cp >> 6));
-			out += static_cast<char>(0x80 | (cp & 0x3F));
-		}
-		else {
-			out += static_cast<char>(0xE0 | (cp >> 12));
-			out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-			out += static_cast<char>(0x80 | (cp & 0x3F));
-		}
-	}
-	return out;
 }
 
 // Names of the blocks in a module file: after the header string and a 32-bit version,
@@ -141,9 +106,35 @@ std::vector<std::string> ListBlocks(const uint8_t *data, size_t size) {
 
 } // namespace
 
-// ---- Module ------------------------------------------------------------------------------------------
+namespace detail {
 
-std::shared_ptr<Module> Module::Load(const uint8_t *data, size_t size) {
+std::string ToUtf8(const char *text, size_t maxLength) {
+	std::string raw(text, strnlen(text, maxLength));
+	if (IsUtf8(raw))
+		return raw;
+	static const char16_t CP1252_80[32] = {
+		0x20AC, 0xFFFD, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0xFFFD, 0x017D, 0xFFFD,
+		0xFFFD, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0xFFFD, 0x017E, 0x0178,
+	};
+	std::string out;
+	for (unsigned char c : raw) {
+		char32_t cp = c >= 0x80 && c < 0xA0 ? CP1252_80[c - 0x80] : c;
+		if (cp < 0x80)
+			out += static_cast<char>(cp);
+		else if (cp < 0x800) {
+			out += static_cast<char>(0xC0 | (cp >> 6));
+			out += static_cast<char>(0x80 | (cp & 0x3F));
+		}
+		else {
+			out += static_cast<char>(0xE0 | (cp >> 12));
+			out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+			out += static_cast<char>(0x80 | (cp & 0x3F));
+		}
+	}
+	return out;
+}
+
+LoadedDocument LoadDocument(const uint8_t *data, size_t size) {
 	Engine &engine = GetEngine();
 	CSoundGen &soundGen = *theApp.GetSoundGenerator();
 
@@ -153,7 +144,7 @@ std::shared_ptr<Module> Module::Load(const uint8_t *data, size_t size) {
 
 	// The loader of the desktop build's module import, which leaves the playing document
 	// alone. A new document still offers itself to the sound generator when nothing is
-	// assigned; players attach theirs explicitly, so take it back.
+	// assigned; players and sessions attach theirs explicitly, so take it back.
 	MessageCollector messages;
 	const bool hadDocument = soundGen.GetDocument() != nullptr;
 	std::unique_ptr<CFamiTrackerDoc> pDoc(CFamiTrackerDoc::LoadImportFile(path.c_str()));
@@ -163,8 +154,8 @@ std::shared_ptr<Module> Module::Load(const uint8_t *data, size_t size) {
 	if (!pDoc)
 		throw LoadError(messages.GetText().empty() ? "unsupported or malformed module" : messages.GetText());
 
-	auto module = std::shared_ptr<Module>(new Module());
-	module->m_pDocument = std::move(pDoc);
+	LoadedDocument loaded;
+	loaded.document = std::move(pDoc);
 
 	// Dn-FamiTracker writes its own header since 0.5.0.0; older versions, 0CC-FamiTracker
 	// and FamiTracker share one. The blocks tell them apart.
@@ -175,13 +166,26 @@ std::shared_ptr<Module> Module::Load(const uint8_t *data, size_t size) {
 			return std::find(blocks.begin(), blocks.end(), name) != blocks.end();
 		});
 	};
-	module->m_sType = dnHeader ? "DNM" : "FTM";
+	loaded.type = dnHeader ? "DNM" : "FTM";
 	if (dnHeader || has({"JSON", "PARAMS_EMU"}))
-		module->m_sProgram = "Dn-FamiTracker";
+		loaded.program = "Dn-FamiTracker";
 	else if (has({"PARAMS_EXTRA", "DETUNETABLES", "GROOVES", "BOOKMARKS"}))
-		module->m_sProgram = "0CC-FamiTracker";
+		loaded.program = "0CC-FamiTracker";
 	else
-		module->m_sProgram = "FamiTracker";
+		loaded.program = "FamiTracker";
+	return loaded;
+}
+
+} // namespace detail
+
+// ---- Module ------------------------------------------------------------------------------------------
+
+std::shared_ptr<Module> Module::Load(const uint8_t *data, size_t size) {
+	detail::LoadedDocument loaded = detail::LoadDocument(data, size);
+	auto module = std::shared_ptr<Module>(new Module());
+	module->m_pDocument = std::move(loaded.document);
+	module->m_sType = std::move(loaded.type);
+	module->m_sProgram = std::move(loaded.program);
 	return module;
 }
 
@@ -276,7 +280,7 @@ Player::Player(std::shared_ptr<Module> module, int track, uint32_t sampleRate) :
 	m_iSampleRate(sampleRate)
 {
 	Engine &engine = GetEngine();
-	m_iSerial = ++engine.currentPlayer;
+	m_iSerial = ++engine.current;
 
 	// The APU renders at the rate from the settings (the wave export rate on the desktop)
 	theApp.GetSettings()->Sound.iSampleRate = static_cast<int>(sampleRate);
@@ -291,7 +295,7 @@ Player::~Player() {
 }
 
 bool Player::IsCurrent() const {
-	return GetEngine().currentPlayer == m_iSerial;
+	return GetEngine().current == m_iSerial;
 }
 
 void Player::Restart() {

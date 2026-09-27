@@ -1,0 +1,108 @@
+/*
+** Dn-FamiTracker web port
+**
+** This program is free software: you can redistribute it and/or modify
+** it under the terms of the GNU General Public License as published by
+** the Free Software Foundation, either version 3 of the License, or
+** (at your option) any later version.
+*/
+
+// A module open for editing, with the sound generator playing it. Unlike a Player, a
+// session renders without end, as the desktop tracker's audio runs while it is open:
+// the output carries the song while it plays, and the notes played by hand (NoteOn)
+// at any time. The document is the tracker's own, edited through GetDocument(); edits
+// are heard the next time the player reads the row, as on the desktop.
+//
+// Like players, one session drives the sound generator at a time: the last one made
+// (or player created) plays, the others render silence.
+
+#pragma once
+
+#include "engine.h"
+
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
+class CFamiTrackerDoc;
+
+namespace dnft {
+
+// A row the player read, at the output frame its audio begins at. A frame of -1 marks
+// where playback stopped by itself (the end of a Cxx row).
+struct RowEvent {
+	uint64_t at;
+	int frame;
+	int row;
+};
+
+class Session {
+public:
+	// The desktop tracker's new module: 2A03 only, one instrument, one frame of 64 rows.
+	static std::shared_ptr<Session> Create(uint32_t sampleRate);
+	// Parses a .dnm, .0cc or .ftm file. Throws LoadError.
+	static std::shared_ptr<Session> Open(const uint8_t *data, size_t size, uint32_t sampleRate);
+	~Session();
+	Session(const Session &) = delete;
+	Session &operator=(const Session &) = delete;
+
+	CFamiTrackerDoc &GetDocument() const { return *m_pDocument; }
+	// For opened files: "DNM" or "FTM", and the tracker that wrote it. Empty otherwise.
+	const std::string &GetType() const { return m_sType; }
+	const std::string &GetProgram() const { return m_sProgram; }
+
+	// The module the way the desktop tracker saves it (a .dnm file). Clears the modified
+	// flag. Throws std::runtime_error with the tracker's message when that fails.
+	std::vector<uint8_t> Save();
+	bool IsModified() const;
+
+	// Interleaved stereo 16-bit output. It never ends.
+	void Render(int16_t *out, uint32_t frames);
+	// Output frames handed out so far
+	uint64_t GetPosition() const { return m_iRendered; }
+	// The rows read since the last call, in order.
+	std::vector<RowEvent> TakeRowEvents();
+
+	enum PlayMode {
+		PLAY_SONG,		// from the top of the song
+		PLAY_FRAME,		// from the top of the frame
+		PLAY_CURSOR,	// from the row of the frame
+		PLAY_PATTERN,	// the frame's patterns over and over
+	};
+	void Play(int track, PlayMode mode, int frame, int row);
+	void Stop();
+	bool IsPlaying() const;
+	PlayerState GetState() const;
+
+	// A note played by hand on a channel, as the desktop tracker plays the keys of its
+	// note preview. Instrument 0-63 (or none), volume 0-15 or 16 for none.
+	void NoteOn(int channel, int note, int octave, int instrument, int volume);
+	// Releases the channel's note (release) or cuts it.
+	void NoteOff(int channel, bool release);
+	// Bit n mutes channel n. Muting cuts what the channel plays.
+	void SetMutedChannels(uint64_t mask);
+
+	// To call after changing what the sound generator sets up from the document: expansion
+	// chips, machine, engine speed, vibrato style, linear pitch. Stops playback.
+	void ApplyDocumentProperties();
+
+private:
+	Session(std::unique_ptr<CFamiTrackerDoc> document, uint32_t sampleRate);
+	bool IsCurrent() const;
+	void Pump();
+
+	std::unique_ptr<CFamiTrackerDoc> m_pDocument;
+	std::string m_sType;
+	std::string m_sProgram;
+	uint32_t m_iSampleRate;
+	unsigned m_iSerial;
+	int m_iTrack = 0;
+	uint64_t m_iMutedChannels = 0;
+	uint64_t m_iRendered = 0;		// frames handed out
+	std::vector<int16_t> m_Pending;	// mono samples rendered but not handed out yet
+	size_t m_iPendingPos = 0;
+	std::vector<RowEvent> m_RowEvents;
+};
+
+} // namespace dnft

@@ -40,9 +40,9 @@ CORE_SOURCES := \
 CORE_C_SOURCES := \
 	APU/digital-sound-antiques/emu2149 APU/digital-sound-antiques/emu2413
 
-# The port itself: compatibility layer, stand-ins for the user interface, the player
-# and its javascript bindings.
-WEB_SOURCES := dnft_compat app standins soundgen_host engine bindings
+# The port itself: compatibility layer, stand-ins for the user interface, the player,
+# the editing session and their javascript bindings.
+WEB_SOURCES := dnft_compat app standins soundgen_host engine bindings session session_bindings
 
 CORE_OBJECTS := \
 	$(addprefix $(BUILD)/core/,$(addsuffix .o,$(CORE_SOURCES))) \

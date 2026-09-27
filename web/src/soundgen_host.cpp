@@ -117,11 +117,11 @@ void CSoundGenHost::Detach() {
 	g.OnRemoveDocument(0, 0);
 }
 
-void CSoundGenHost::Start(int Track, bool loop) {
+bool CSoundGenHost::BeginRendering(int Track, bool loop) {
 	CSoundGen &g = m_Gen;
 	Stop();
 	if (!g.m_pDocument || !g.m_pDocument->IsFileLoaded())
-		return;
+		return false;
 
 	// CSoundGen::RenderToFile() and OnStartRender(), without the wave file and without
 	// the five silent ticks the export waits before playing.
@@ -146,8 +146,29 @@ void CSoundGenHost::Start(int Track, bool loop) {
 	g.m_bRendering = true;
 	g.m_iDelayedStart = 0;
 	g.m_iDelayedEnd = 0;
+	return true;
+}
 
-	g.OnStartPlayer(MODE_PLAY_START, Track);
+void CSoundGenHost::Start(int Track, bool loop) {
+	if (BeginRendering(Track, loop))
+		m_Gen.OnStartPlayer(MODE_PLAY_START, Track);
+}
+
+void CSoundGenHost::BeginStream() {
+	// The time limit is never reached: rendering only ends when asked to.
+	BeginRendering(0, true);
+}
+
+void CSoundGenHost::StartPlayer(int Mode, int Track) {
+	CSoundGen &g = m_Gen;
+	if (g.m_bRendering)
+		g.OnStartPlayer(static_cast<play_mode_t>(Mode), Track);
+}
+
+void CSoundGenHost::HaltPlayer() {
+	CSoundGen &g = m_Gen;
+	if (g.m_bPlaying)
+		g.OnStopPlayer(0, 0);
 }
 
 void CSoundGenHost::Stop() {
@@ -167,6 +188,15 @@ void CSoundGenHost::Tick() {
 
 bool CSoundGenHost::IsPlaying() const {
 	return m_Gen.m_bRendering && m_Gen.IsPlaying();
+}
+
+bool CSoundGenHost::IsPlayerRunning() const {
+	return m_Gen.IsPlaying();
+}
+
+bool CSoundGenHost::RowWasRead() const {
+	// RunFrame() sets it for every tick it plays, true when it read a row
+	return m_Gen.m_bUpdateRow;
 }
 
 int CSoundGenHost::GetFrame() const {

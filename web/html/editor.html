@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FamiTracker-web editor</title>
+<link rel="stylesheet" href="dnft-editor.css">
+<style>
+  html, body { height: 100%; margin: 0; }
+  body { background: #101218; }
+  #editor { height: 100vh; }
+</style>
+</head>
+<body>
+<div id="editor"></div>
+<script type="module">
+import { DnFTEditor } from './dnft-editor.mjs';
+
+// ?lang=ja or ?lang=en; the browser's language otherwise
+const lang = new URLSearchParams(location.search).get('lang') ?? undefined;
+document.documentElement.lang = lang ?? (navigator.language?.startsWith('ja') ? 'ja' : 'en');
+// demo/index.json lists the modules `make site` puts next to the page
+window.editor = await DnFTEditor.create(document.getElementById('editor'), { base: '.', lang, demos: 'demo/index.json' });
+</script>
+</body>
+</html>
