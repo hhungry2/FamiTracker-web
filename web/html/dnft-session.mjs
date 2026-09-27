@@ -74,6 +74,8 @@ export class DnFTSession {
   onWorker(message) {
     if (message.type === 'rows') {
       this.rows.push(...message.events);
+    } else if (message.type === 'progress') {
+      this.pending.get(message.id)?.onprogress?.(message.value);
     } else if (message.type === 'result' || message.type === 'error') {
       const call = this.pending.get(message.id);
       this.pending.delete(message.id);
@@ -86,11 +88,18 @@ export class DnFTSession {
 
   // Resolves with what the method returns (see dnft-session-engine.mjs).
   call(method, ...args) {
+    return this.task(method, args).promise;
+  }
+
+  // A call that reports its progress (0 to 1) as it goes, and can be called off:
+  // {promise, cancel()}. A call called off fails with 'cancelled'.
+  task(method, args, onprogress = null) {
     const id = this.nextId++;
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+    const promise = new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject, onprogress });
       this.worker.postMessage({ type: 'call', id, method, args });
     });
+    return { promise, cancel: () => this.worker.postMessage({ type: 'cancel', id }) };
   }
 
   // For changes whose result nobody waits for; failures go to onerror.

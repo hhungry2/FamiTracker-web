@@ -884,3 +884,143 @@
     gap: 6px 10px;
   }
 }
+
+/* ---- the file menus and the dialogs of the exports and imports (dnft-files.mjs) ---- */
+
+.dnft-menu-wrap {
+  position: relative;
+}
+
+.dnft-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  display: grid;
+  min-width: 220px;
+  padding: 4px;
+  border: 1px solid var(--dnft-line);
+  border-radius: 8px;
+  background: var(--dnft-surface);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+
+.dnft-menu-item {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--dnft-text);
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dnft-menu-item:hover,
+.dnft-menu-item:focus-visible {
+  background: var(--dnft-accent-soft);
+  outline: none;
+}
+
+.dnft-menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--dnft-line);
+}
+
+.dnft-dialog--narrow {
+  width: min(480px, calc(100vw - 32px));
+}
+
+.dnft-dialog--narrow[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.dnft-dialog-body {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+  padding: 12px 14px;
+  overflow-y: auto;
+}
+
+.dnft-dialog-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--dnft-line);
+}
+
+.dnft-fieldset {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 6px 10px 10px;
+  border: 1px solid var(--dnft-line);
+  border-radius: 8px;
+}
+
+.dnft-fieldset legend {
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--dnft-muted);
+}
+
+.dnft-fieldset .dnft-check {
+  flex-wrap: wrap;
+}
+
+.dnft-fieldset .dnft-check input[type="number"] {
+  width: 64px;
+}
+
+.dnft-fieldset .dnft-check input[type="text"] {
+  width: 72px;
+  font-family: var(--dnft-mono);
+}
+
+.dnft-channel-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 4px 12px;
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+.dnft-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.dnft-progress {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--dnft-muted);
+}
+
+.dnft-progress progress {
+  width: 100%;
+  accent-color: var(--dnft-accent);
+}
+
+.dnft-log {
+  max-height: 220px;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid var(--dnft-line);
+  border-radius: 6px;
+  background: var(--dnft-surface-2);
+  font: 12px/1.4 var(--dnft-mono);
+  white-space: pre-wrap;
+}
+
+.dnft-log:empty {
+  display: none;
+}

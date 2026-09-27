@@ -18,6 +18,7 @@ import {
 } from './dnft-song.mjs';
 import { PatternView, columnCount, columnKind } from './dnft-pattern-view.mjs';
 import { InstrumentEditor } from './dnft-instrument-editor.mjs';
+import { FileMenu } from './dnft-files.mjs';
 import { STRINGS } from './dnft-editor-strings.mjs';
 
 const AUTOSAVE_KEY = 'dnft-editor.autosave';
@@ -352,6 +353,7 @@ export class DnFTEditor {
     this.view = new PatternView(this.els.pattern, this);
     this.view.scroller.setAttribute('aria-label', t.pattern);
     this.instrumentEditor = new InstrumentEditor(this);
+    this.files = new FileMenu(this);
     this.buildPiano();
     this.wire();
     if (this.demos)
@@ -600,6 +602,9 @@ export class DnFTEditor {
   }
 
   async openFile(file) {
+    // a text export (File > Import Text)
+    if (/\.txt$/i.test(file.name))
+      return this.files.importText(file);
     if (this.dirty && !confirm(this.strings.confirmOpen))
       return;
     const bytes = new Uint8Array(await file.arrayBuffer());
@@ -619,6 +624,11 @@ export class DnFTEditor {
       this.openComment();
   }
 
+  // The name the module's files get, without an extension
+  fileBase() {
+    return (this.fileName || this.song.info.title || 'untitled').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim() || 'untitled';
+  }
+
   async saveFile() {
     // Ctrl+S while the comment is being written
     if (this.els.commentDialog.open)
@@ -630,7 +640,7 @@ export class DnFTEditor {
       this.message(this.strings.failed + e.message, true);
       return;
     }
-    const base = (this.fileName || this.song.info.title || 'untitled').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim() || 'untitled';
+    const base = this.fileBase();
     const name = `${base}.dnm`;
     const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
     const a = document.createElement('a');
