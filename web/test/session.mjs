@@ -251,8 +251,9 @@ check('song settings', () => {
   s.setEffColumns(0, 1, 3);
   s.setHighlight(0, 8, 32);
   const info = s.info();
-  // 31 bytes of UTF-8 at most, cut where a character ends
-  assert.equal(info.title, 'チップチューン ラボ ');
+  // 31 bytes at most, in code page 932 as the desktop keeps Japanese, cut where a
+  // character ends
+  assert.equal(info.title, 'チップチューン ラボ の テスト曲');
   assert.equal(info.artist, 'ZXTUNE LAB');
   const t = s.track(0);
   assert.deepEqual([t.speed, t.tempo, t.rows, t.effColumns[1], ...t.highlight], [3, 180, 32, 3, 8, 32]);

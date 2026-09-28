@@ -12,17 +12,20 @@
 #include "FamiTrackerDoc.h"
 #include "PatternNote.h"
 #include "TextExporter.h"
-#include "JsonExporter.h"
 #include "Compiler.h"
 #include "dnft_compat.h"
 #include "engine_internal.h"
 #include "export.h"
+#include "text_encoding.h"
 
 #include <algorithm>
 #include <cstdio>
 #include <memory>
 #include <set>
 #include <stdexcept>
+
+// JsonExporter.cpp: the module as CJsonExport writes it
+void to_json(json &j, const CFamiTrackerDoc &modfile);
 
 namespace dnft {
 
@@ -58,7 +61,6 @@ std::vector<uint8_t> ExportTextFile(CFamiTrackerDoc &doc, const char *name, Expo
 			error = exporter(path.c_str(), copy.get());
 		}
 		catch (const std::exception &e) {
-			// the JSON library refuses texts that are not UTF-8
 			error = e.what();
 		}
 		if (error.empty() && !messages.GetText().empty())
@@ -68,6 +70,16 @@ std::vector<uint8_t> ExportTextFile(CFamiTrackerDoc &doc, const char *name, Expo
 	if (!error.empty())
 		throw std::runtime_error(error);
 	return bytes;
+}
+
+// The texts of a JSON value as UTF-8: a module keeps them in the code page of the
+// Windows they were written on (text_encoding.h), which JSON does not take
+void TextsToUtf8(json &value) {
+	if (value.is_string())
+		value = text::ToUtf8(value.get_ref<const std::string &>());
+	else if (value.is_structured())
+		for (json &item : value)
+			TextsToUtf8(item);
 }
 
 // The compiler's log, for its output box on the desktop
@@ -92,8 +104,13 @@ std::vector<uint8_t> ExportText(CFamiTrackerDoc &doc) {
 
 std::vector<uint8_t> ExportJson(CFamiTrackerDoc &doc) {
 	return ExportTextFile(doc, "export.json", [](const char *path, CFamiTrackerDoc *pDoc) {
-		CJsonExport exporter;
-		return std::string(exporter.ExportFile(path, pDoc).GetString());
+		// CJsonExport::ExportFile(), with the module's texts as UTF-8: the JSON library
+		// refuses anything else, as it does on the desktop for texts beyond ASCII
+		json module = *pDoc;
+		TextsToUtf8(module);
+		const std::string text = module.dump();
+		dnft_compat::PutFile(path, std::vector<uint8_t>(text.begin(), text.end()));
+		return std::string();
 	});
 }
 

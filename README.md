@@ -60,6 +60,7 @@ The audio engine follows the same interface conventions as [ZXTune Web](https://
 | **NSF / NSFe / NSF2 / NES / BIN / PRG / ASM Export** | ✅ Operational | The desktop's NSF compiler and drivers; exported NSFs play in ZXTune, and an NSF assembled from ASM with extra data plays the same |
 | **Text / JSON / CSV Export, Text Import** | ✅ Operational | A text export read back exports the same text and plays the same |
 | **Import from Another Module** | ✅ Operational | Imported tracks play as they did in their module |
+| **Titles, Comments and Names** | ✅ Operational | Read in Windows-1252, Shift-JIS (code page 932) or UTF-8; written in the code page the desktop shows them in, else UTF-8 |
 | **FDS Wave Edit** | ⏳ Planned | Waveform editors planned |
 
 ---
@@ -92,6 +93,7 @@ python3 -m http.server -d web/dist
 node web/test/smoke.mjs                            # Interface checks against demo modules
 node web/test/session.mjs                          # Editing sessions and .dnm save/load verification
 node web/test/export.mjs                           # Exports and imports (WAV, NSF..., text, JSON, rows)
+node web/test/text.mjs                             # Module texts: Windows-1252, Shift-JIS and UTF-8
 node web/test/render.mjs <module> [output.wav]     # Render module to WAV
 node web/test/compare.mjs <module> <export.wav>    # Compare against desktop WAV export
 ```
@@ -237,6 +239,7 @@ JavaScript API やメッセージ構成は [ZXTune Web](https://github.com/hhung
 | **NSF / NSFe / NSF2 / NES / BIN / PRG / ASM 書き出し** | ✅ 動作 | デスクトップ版の NSF コンパイラーとドライバー。書き出した NSF は ZXTune で再生でき、補助データ付きの ASM から組み立てた NSF も同じように鳴る |
 | **テキスト / JSON / CSV 書き出し、テキスト読み込み** | ✅ 動作 | テキストで書き出して読み込み直すと、同じテキストになり同じ音で鳴る |
 | **別のモジュールからの取り込み** | ✅ 動作 | 取り込んだ曲は元のモジュールと同じ音で鳴る |
+| **曲名・コメント・音色名などの文字** | ✅ 動作 | Windows-1252・Shift-JIS（コードページ 932）・UTF-8 を読める。保存はデスクトップ版で表示できるコードページで行い、収まらない文字は UTF-8 |
 | **FDS 波形編集** | ⏳ 今後対応 | 波形エディタを順次実装予定 |
 
 ---
@@ -269,6 +272,7 @@ python3 -m http.server -d web/dist
 node web/test/smoke.mjs                            # デモ曲を用いた動作検証
 node web/test/session.mjs                          # 編集セッション・保存・再読み込みの検証
 node web/test/export.mjs                           # 書き出しと読み込み（WAV・NSF など・テキスト・JSON・行）の検証
+node web/test/text.mjs                             # 曲名などの文字コード（Windows-1252・Shift-JIS・UTF-8）の検証
 node web/test/render.mjs <モジュール> [出力.wav]      # WAV への書き出しテスト
 node web/test/compare.mjs <モジュール> <書き出し.wav>  # デスクトップ版の WAV 出力との波形比較
 ```

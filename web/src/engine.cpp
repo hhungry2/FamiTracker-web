@@ -18,6 +18,7 @@
 #include "soundgen_host.h"
 #include "engine.h"
 #include "engine_internal.h"
+#include "text_encoding.h"
 
 #include <algorithm>
 #include <cmath>
@@ -62,21 +63,6 @@ using detail::ToUtf8;
 
 namespace {
 
-bool IsUtf8(const std::string &s) {
-	for (size_t i = 0; i < s.size();) {
-		const unsigned char c = static_cast<unsigned char>(s[i]);
-		// continuation bytes that follow the lead byte
-		const size_t n = c < 0x80 ? 0 : (c & 0xE0) == 0xC0 ? 1 : (c & 0xF0) == 0xE0 ? 2 : (c & 0xF8) == 0xF0 ? 3 : 4;
-		if (n == 4 || s.size() - i <= n)
-			return false;
-		for (size_t k = 1; k <= n; ++k)
-			if ((static_cast<unsigned char>(s[i + k]) & 0xC0) != 0x80)
-				return false;
-		i += n + 1;
-	}
-	return true;
-}
-
 // Names of the blocks in a module file: after the header string and a 32-bit version,
 // each block is a 16-byte name, a 32-bit version and a 32-bit size, then its data.
 std::vector<std::string> ListBlocks(const uint8_t *data, size_t size) {
@@ -109,29 +95,7 @@ std::vector<std::string> ListBlocks(const uint8_t *data, size_t size) {
 namespace detail {
 
 std::string ToUtf8(const char *text, size_t maxLength) {
-	std::string raw(text, strnlen(text, maxLength));
-	if (IsUtf8(raw))
-		return raw;
-	static const char16_t CP1252_80[32] = {
-		0x20AC, 0xFFFD, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0xFFFD, 0x017D, 0xFFFD,
-		0xFFFD, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0xFFFD, 0x017E, 0x0178,
-	};
-	std::string out;
-	for (unsigned char c : raw) {
-		char32_t cp = c >= 0x80 && c < 0xA0 ? CP1252_80[c - 0x80] : c;
-		if (cp < 0x80)
-			out += static_cast<char>(cp);
-		else if (cp < 0x800) {
-			out += static_cast<char>(0xC0 | (cp >> 6));
-			out += static_cast<char>(0x80 | (cp & 0x3F));
-		}
-		else {
-			out += static_cast<char>(0xE0 | (cp >> 12));
-			out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-			out += static_cast<char>(0x80 | (cp & 0x3F));
-		}
-	}
-	return out;
+	return text::ToUtf8(std::string_view(text, strnlen(text, maxLength)));
 }
 
 LoadedDocument LoadDocument(const uint8_t *data, size_t size) {

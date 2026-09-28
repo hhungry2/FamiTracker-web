@@ -32,6 +32,7 @@
 #include "engine_internal.h"
 #include "session.h"
 #include "export.h"
+#include "text_encoding.h"
 
 #include <emscripten/bind.h>
 
@@ -63,15 +64,10 @@ std::vector<uint8_t> FromJs(const val &array) {
 	return emscripten::convertJSArrayToNumberVector<uint8_t>(array);
 }
 
-// The document keeps texts in fixed buffers of bytes: cut UTF-8 where a character ends.
-std::string Truncate(std::string text, size_t maxBytes) {
-	if (text.size() <= maxBytes)
-		return text;
-	size_t end = maxBytes;
-	while (end > 0 && (static_cast<unsigned char>(text[end]) & 0xC0) == 0x80)
-		--end;
-	text.resize(end);
-	return text;
+// Text for the document, in at most maxBytes (some texts live in fixed buffers): in the
+// code page the desktop tracker reads it in, or UTF-8 (text_encoding.h)
+std::string ToDocument(const std::string &text, size_t maxBytes) {
+	return dnft::text::FromUtf8(text, maxBytes);
 }
 
 // The longest string CDocumentFile::ReadString() reads back whole
@@ -240,21 +236,21 @@ public:
 	}
 
 	void setTitle(const std::string &text) {
-		Doc().SetSongName(Truncate(text, 31).c_str());
+		Doc().SetSongName(ToDocument(text, 31).c_str());
 	}
 
 	void setArtist(const std::string &text) {
-		Doc().SetSongArtist(Truncate(text, 31).c_str());
+		Doc().SetSongArtist(ToDocument(text, 31).c_str());
 	}
 
 	void setCopyright(const std::string &text) {
-		Doc().SetSongCopyright(Truncate(text, 31).c_str());
+		Doc().SetSongCopyright(ToDocument(text, 31).c_str());
 	}
 
 	//! Kept with the line breaks of the desktop's comment box (CR LF); showOnOpen: the
 	//! desktop shows the comment when the file is opened
 	void setComment(const std::string &text, bool showOnOpen) {
-		CString comment(Truncate(WithLineBreaks(text, "\r\n"), MAX_FILE_STRING).c_str());
+		CString comment(ToDocument(WithLineBreaks(text, "\r\n"), MAX_FILE_STRING).c_str());
 		Doc().SetComment(comment, showOnOpen);
 	}
 
@@ -309,7 +305,7 @@ public:
 
 	void setTrackTitle(int track, const std::string &title) {
 		CheckTrack(track);
-		Doc().SetTrackTitle(track, CString(Truncate(title, MAX_FILE_STRING).c_str()));
+		Doc().SetTrackTitle(track, CString(ToDocument(title, MAX_FILE_STRING).c_str()));
 	}
 
 	void setPatternLength(int track, int rows) {
@@ -503,7 +499,7 @@ public:
 
 	//! A new instrument for the chip (SNDCHIP_*); its index, or -1 when all slots are taken
 	int addInstrument(int chip, const std::string &name) {
-		return Doc().AddInstrument(Truncate(name, CInstrument::INST_NAME_MAX - 1).c_str(), chip);
+		return Doc().AddInstrument(ToDocument(name, CInstrument::INST_NAME_MAX - 1).c_str(), chip);
 	}
 
 	void removeInstrument(int index) {
@@ -525,7 +521,7 @@ public:
 
 	void setInstrumentName(int index, const std::string &name) {
 		GetInstrument(index);
-		Doc().SetInstrumentName(index, Truncate(name, CInstrument::INST_NAME_MAX - 1).c_str());
+		Doc().SetInstrumentName(index, ToDocument(name, CInstrument::INST_NAME_MAX - 1).c_str());
 	}
 
 	void setInstrumentSequence(int index, int seqType, bool enabled, int seqIndex) {
@@ -858,6 +854,18 @@ val effectTable() {
 	return result;
 }
 
+//! How sessions read the bytes of a module's text (Uint8Array): text_encoding.h
+std::string decodeText(const val &bytes) {
+	const std::vector<uint8_t> data = FromJs(bytes);
+	return dnft::text::ToUtf8(std::string_view(reinterpret_cast<const char *>(data.data()), data.size()));
+}
+
+//! How sessions write text into a module, in at most maxBytes (Uint8Array)
+val encodeText(const std::string &text, uint32_t maxBytes) {
+	const std::string bytes = dnft::text::FromUtf8(text, maxBytes);
+	return CopyToJs(reinterpret_cast<const uint8_t *>(bytes.data()), bytes.size());
+}
+
 } // namespace
 
 EMSCRIPTEN_BINDINGS(dnft_session) {
@@ -932,6 +940,8 @@ EMSCRIPTEN_BINDINGS(dnft_session) {
 	emscripten::function("openSession", &openSession);
 	emscripten::function("importText", &importText);
 	emscripten::function("effects", &effectTable);
+	emscripten::function("decodeText", &decodeText);
+	emscripten::function("encodeText", &encodeText);
 
 	emscripten::constant("PLAY_SONG", static_cast<int>(dnft::Session::PLAY_SONG));
 	emscripten::constant("PLAY_FRAME", static_cast<int>(dnft::Session::PLAY_FRAME));

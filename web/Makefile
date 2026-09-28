@@ -44,7 +44,7 @@ CORE_C_SOURCES := \
 
 # The port itself: compatibility layer, stand-ins for the user interface, the player,
 # the editing session, the exports and their javascript bindings.
-WEB_SOURCES := dnft_compat app standins soundgen_host engine bindings session export session_bindings
+WEB_SOURCES := dnft_compat app standins soundgen_host engine bindings session export session_bindings text_encoding
 
 CORE_OBJECTS := \
 	$(addprefix $(BUILD)/core/,$(addsuffix .o,$(CORE_SOURCES))) \

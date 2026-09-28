@@ -51,8 +51,8 @@ private:
 	dnft_compat::MessageHandler m_Previous;
 };
 
-// Module texts are in whatever code page the author's Windows used. Valid UTF-8 is
-// kept; anything else is read as Windows-1252, the most common case.
+// A module's text, at most maxLength bytes up to its NUL, as UTF-8 (text::ToUtf8(): the
+// code page of the author's Windows, or UTF-8)
 std::string ToUtf8(const char *text, size_t maxLength);
 
 // A module file parsed by the tracker's loader, with what the file tells about the
