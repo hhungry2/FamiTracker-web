@@ -326,8 +326,19 @@
 }
 
 .dnft-track {
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: 1fr auto auto auto auto;
   align-items: center;
+}
+
+.dnft-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.dnft-mini-check {
+  font-size: 11px;
 }
 
 .dnft-track > span {
@@ -1023,4 +1034,171 @@
 
 .dnft-log:empty {
   display: none;
+}
+
+/* ---- the dialogs of the Song and Module menus (dnft-song-menu.mjs) ---- */
+
+.dnft-dialog--narrow.dnft-detune-dialog,
+.dnft-dialog--narrow.dnft-groove-dialog,
+.dnft-dialog--narrow.dnft-opll-dialog {
+  width: min(760px, calc(100vw - 32px));
+}
+
+.dnft-detune-grid {
+  overflow-x: auto;
+}
+
+.dnft-detune-grid table,
+.dnft-opll table {
+  border-collapse: collapse;
+}
+
+.dnft-detune-grid th,
+.dnft-opll th {
+  padding: 2px 4px;
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--dnft-muted);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.dnft-detune-grid td {
+  padding: 1px;
+}
+
+.dnft-detune-grid input[type="number"] {
+  width: 4.2em;
+  padding: 2px 3px;
+  font-family: var(--dnft-mono);
+  text-align: right;
+}
+
+.dnft-groove {
+  display: grid;
+  grid-template-columns: minmax(120px, 160px) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.dnft-groove-list {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 2px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.dnft-groove-item {
+  padding: 3px 6px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: none;
+  color: var(--dnft-text);
+  font: 12px var(--dnft-mono);
+  text-align: left;
+  cursor: pointer;
+}
+
+.dnft-groove-item:hover {
+  border-color: var(--dnft-line);
+}
+
+.dnft-groove-item.is-current {
+  background: var(--dnft-accent-soft);
+  border-color: var(--dnft-accent);
+}
+
+.dnft-groove-edit {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-width: 0;
+}
+
+.dnft-groove-edit input[type="text"] {
+  font-family: var(--dnft-mono);
+}
+
+.dnft-groove-edit .dnft-choices {
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.dnft-groove-edit input[type="number"] {
+  width: 64px;
+}
+
+.dnft-groove-info {
+  margin: 0;
+  font-size: 12px;
+}
+
+.dnft-groove-info.is-error {
+  color: var(--dnft-error);
+}
+
+.dnft-mixer {
+  display: grid;
+  gap: 6px;
+}
+
+.dnft-mixer-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(90px, 160px) 70px auto;
+  align-items: center;
+  gap: 8px;
+  color: var(--dnft-text);
+}
+
+.dnft-mixer-row input[type="range"] {
+  width: 100%;
+  accent-color: var(--dnft-accent);
+}
+
+.dnft-mixer-row input[type="number"] {
+  width: 100%;
+  font-family: var(--dnft-mono);
+  text-align: right;
+}
+
+.dnft-opll {
+  overflow-x: auto;
+}
+
+.dnft-opll td {
+  padding: 1px 2px;
+}
+
+.dnft-opll input[type="text"] {
+  width: 100%;
+  padding: 2px 4px;
+}
+
+.dnft-opll input[data-field="bytes"] {
+  min-width: 25em;
+  font-family: var(--dnft-mono);
+}
+
+.dnft-opll input[data-field="name"] {
+  min-width: 10em;
+}
+
+@media (max-width: 560px) {
+  .dnft-groove {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dnft-groove-list {
+    grid-template-columns: repeat(4, 1fr);
+    max-height: 140px;
+  }
+
+  .dnft-mixer-row {
+    grid-template-columns: minmax(0, 1fr) 70px auto;
+  }
+
+  .dnft-mixer-row input[type="range"] {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
 }

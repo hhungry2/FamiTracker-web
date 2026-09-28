@@ -46,6 +46,16 @@ namespace {
 
 const int CELL_SIZE = 12;
 
+// The detune tables: NTSC and PAL 2A03, VRC6 sawtooth, VRC7, FDS, N163 (CDetuneDlg)
+const int DETUNE_CHIPS = 6;
+// The devices of the mix offsets, and how far they go: 12 dB in tenths
+// (CModulePropertiesDlg)
+const int MIX_DEVICES = 8;
+const int MAX_LEVEL_OFFSET = 120;
+// The VRC7's patches: 0 the instrument's own, 1-15 the built-in ones, 16-18 the drums'
+const int OPLL_PATCHES = 19;
+const size_t MAX_PATCH_NAME = 255;
+
 const void *HeapPointer(uint32_t offset) {
 	return reinterpret_cast<const void *>(static_cast<uintptr_t>(offset));
 }
@@ -460,6 +470,69 @@ public:
 		return static_cast<int>(Doc().GetFirstFreePattern(track, channel));
 	}
 
+	// ---- the Song menu and Module > Cleanup --------------------------------------------
+
+	//! Song > Clear Patterns: every pattern of the track empty, and one frame
+	void clearPatterns(int track) {
+		CheckTrack(track);
+		Doc().ClearPatterns(track);
+	}
+
+	//! Song > Populate Unique Patterns: each frame plays patterns of its own, copies of
+	//! what it played
+	void populateUniquePatterns(int track) {
+		CheckTrack(track);
+		CFamiTrackerDoc &doc = Doc();
+		// the desktop's makes the track anew and leaves its row highlight behind
+		const stHighlight highlight = doc.GetHighlight(track);
+		doc.PopulateUniquePatterns(track);
+		doc.SetHighlight(track, highlight);
+	}
+
+	//! Module > Cleanup: the instruments no pattern plays (and the sequences no instrument
+	//! uses), the patterns no frame plays, the DPCM samples and assignments no note plays
+	void removeUnusedInstruments() {
+		Doc().RemoveUnusedInstruments();
+	}
+
+	void removeUnusedPatterns() {
+		Doc().RemoveUnusedPatterns();
+	}
+
+	void removeUnusedSamples() {
+		Doc().RemoveUnusedSamples();
+	}
+
+	//! Module properties > Move up / Move down: the track changes places with the one
+	//! before or after it; false when there is none. Stops playback.
+	bool moveTrack(int track, bool up) {
+		CheckTrack(track);
+		const int other = up ? track - 1 : track + 1;
+		if (other < 0 || other >= static_cast<int>(Doc().GetTrackCount()))
+			return false;
+		m_pSession->Stop();
+		if (up)
+			Doc().MoveTrackUp(track);
+		else
+			Doc().MoveTrackDown(track);
+		return true;
+	}
+
+	//! Song > Estimate Song Length: {intro, loop} in seconds (loop 0 for a song that halts)
+	//! and the frame rate, for the ticks
+	val songLength(int track) const {
+		CheckTrack(track);
+		const CFamiTrackerDoc &doc = Doc();
+		// CMainFrame::OnModuleEstimateSongLength()
+		const double once = doc.GetStandardLength(track, 0);
+		const double loop = doc.GetStandardLength(track, 1) - once;
+		val result = val::object();
+		result.set("intro", once - loop);
+		result.set("loop", loop);
+		result.set("frameRate", doc.GetFrameRate());
+		return result;
+	}
+
 	// ---- instruments -------------------------------------------------------------------
 
 	//! [{index, type, name}] for the slots in use
@@ -603,6 +676,183 @@ public:
 
 	void setLinearPitch(bool enable) {
 		Doc().SetLinearPitch(enable);
+		m_pSession->ApplyDocumentProperties();
+	}
+
+	//! {offsets: Int16Array(6 * 96), the period offset of each note (octave * 12 + note)
+	//!  for the NTSC and PAL 2A03, VRC6 sawtooth, VRC7, FDS and N163, one table after the
+	//!  other; semitone, cent: the tuning of the whole}
+	val detune() const {
+		const CFamiTrackerDoc &doc = Doc();
+		std::vector<int16_t> offsets(DETUNE_CHIPS * NOTE_COUNT);
+		for (int chip = 0; chip < DETUNE_CHIPS; ++chip)
+			for (int note = 0; note < NOTE_COUNT; ++note)
+				offsets[chip * NOTE_COUNT + note] = static_cast<int16_t>(doc.GetDetuneOffset(chip, note));
+		val array = val::global("Int16Array").new_(offsets.size());
+		array.call<void>("set", val(emscripten::typed_memory_view(offsets.size(), offsets.data())));
+		val result = val::object();
+		result.set("offsets", array);
+		result.set("semitone", doc.GetTuningSemitone());
+		result.set("cent", doc.GetTuningCent());
+		return result;
+	}
+
+	//! Module > Detune Settings: offsets as detune() gives them, semitone -12 to 12, cent
+	//! -100 to 100. Playback goes on with the new pitches.
+	void setDetune(const val &offsets, int semitone, int cent) {
+		const std::vector<int> values = emscripten::convertJSArrayToNumberVector<int>(offsets);
+		CFamiTrackerDoc &doc = Doc();
+		for (int chip = 0; chip < DETUNE_CHIPS; ++chip)
+			for (int note = 0; note < NOTE_COUNT; ++note) {
+				const size_t at = chip * NOTE_COUNT + note;
+				if (at < values.size())
+					doc.SetDetuneOffset(chip, note, std::clamp(values[at], -32768, 32767));
+			}
+		doc.SetTuning(std::clamp(semitone, -NOTE_RANGE, NOTE_RANGE), std::clamp(cent, -100, 100));
+		// CFamiTrackerView::OnTrackerDetune(), CDetuneDlg::OnBnClickedOk()
+		doc.ModifyIrreversible();
+		theApp.GetSoundGenerator()->DocumentPropertiesChanged(&doc);
+	}
+
+	//! The 32 grooves: the entries of each (Uint8Array), null for the ones not set
+	val grooves() const {
+		const CFamiTrackerDoc &doc = Doc();
+		val list = val::array();
+		for (int i = 0; i < MAX_GROOVE; ++i) {
+			const CGroove *pGroove = doc.GetGroove(i);
+			if (!pGroove || !pGroove->GetSize()) {
+				list.call<void>("push", val::null());
+				continue;
+			}
+			std::vector<uint8_t> entries(pGroove->GetSize());
+			for (size_t k = 0; k < entries.size(); ++k)
+				entries[k] = pGroove->GetEntry(static_cast<int>(k));
+			list.call<void>("push", CopyToJs(entries.data(), entries.size()));
+		}
+		return list;
+	}
+
+	//! Module > Groove Settings: the 32 grooves as grooves() gives them (an empty one or
+	//! null: not set), entries 1-255, at most 128 of them. A module has room for 255 bytes
+	//! of grooves (the entries and two more for each), or this throws. Tracks that played a
+	//! groove that goes get speed 6 back, as the dialog does.
+	void setGrooves(const val &list) {
+		const unsigned count = list["length"].as<unsigned>();
+		std::vector<std::vector<uint8_t>> grooves(MAX_GROOVE);
+		int total = 0;
+		for (unsigned i = 0; i < count && i < static_cast<unsigned>(MAX_GROOVE); ++i) {
+			const val entries = list[i];
+			if (entries.isNull() || entries.isUndefined())
+				continue;
+			for (const int entry : emscripten::convertJSArrayToNumberVector<int>(entries))
+				grooves[i].push_back(static_cast<uint8_t>(std::clamp(entry, 1, 255)));
+			if (grooves[i].size() > MAX_GROOVE_SIZE)
+				throw std::out_of_range("groove " + std::to_string(i) + " has more than " + std::to_string(MAX_GROOVE_SIZE) + " entries");
+			if (!grooves[i].empty())
+				total += static_cast<int>(grooves[i].size()) + 2;
+		}
+		// CGrooveDlg::UpdateIndicators()
+		if (total > 255)
+			throw std::out_of_range("the grooves take " + std::to_string(total) + " bytes, more than 255");
+		// CGrooveDlg::OnBnClickedApply()
+		CFamiTrackerDoc &doc = Doc();
+		for (int i = 0; i < MAX_GROOVE; ++i) {
+			if (!grooves[i].empty()) {
+				CGroove groove;
+				groove.SetSize(static_cast<unsigned char>(grooves[i].size()));
+				for (size_t k = 0; k < grooves[i].size(); ++k)
+					groove.SetEntry(static_cast<unsigned char>(k), grooves[i][k]);
+				doc.SetGroove(i, &groove);
+				continue;
+			}
+			doc.SetGroove(i, nullptr);
+			for (unsigned track = 0; track < doc.GetTrackCount(); ++track)
+				if (doc.GetSongGroove(track) && doc.GetSongSpeed(track) == static_cast<unsigned>(i)) {
+					doc.SetSongSpeed(track, DEFAULT_SPEED);
+					doc.SetSongGroove(track, false);
+					ResetTempo(track);
+				}
+		}
+		doc.ModifyIrreversible();
+	}
+
+	//! The control panel's Speed / Groove button: the track's speed is a groove number
+	//! (0-31) or ticks per row
+	void setGrooveMode(int track, bool groove) {
+		CheckTrack(track);
+		CFamiTrackerDoc &doc = Doc();
+		// CMainFrame::OnToggleGroove(), OnUpdateGrooveEdit()
+		doc.SetSongGroove(track, groove);
+		const int speed = static_cast<int>(doc.GetSongSpeed(track));
+		doc.SetSongSpeed(track, groove ? std::clamp(speed, 0, MAX_GROOVE - 1) :
+			std::clamp(speed, MIN_SPEED, doc.GetSongTempo(track) ? doc.GetSpeedSplitPoint() - 1 : 0xFF));
+		doc.SetModifiedFlag();
+		ResetTempo(track);
+	}
+
+	//! {levels: the level of each device in tenths of a dB (2A03 pulse, 2A03 triangle,
+	//!  noise and DPCM, VRC6, VRC7, FDS, MMC5, N163, 5B), hardwareMixing}
+	val mixing() const {
+		const CFamiTrackerDoc &doc = Doc();
+		val levels = val::array();
+		for (int i = 0; i < MIX_DEVICES; ++i)
+			levels.call<void>("push", doc.GetLevelOffset(i));
+		val result = val::object();
+		result.set("levels", levels);
+		result.set("hardwareMixing", doc.GetSurveyMixCheck());
+		return result;
+	}
+
+	//! Module properties: the device mix offsets, -12 to 12 dB, and hardware-based mixing.
+	//! Resets the sound generator, which stops playback.
+	void setMixing(const val &levels, bool hardwareMixing) {
+		const std::vector<int> values = emscripten::convertJSArrayToNumberVector<int>(levels);
+		CFamiTrackerDoc &doc = Doc();
+		for (int i = 0; i < MIX_DEVICES && i < static_cast<int>(values.size()); ++i)
+			doc.SetLevelOffset(i, static_cast<int16_t>(std::clamp(values[i], -MAX_LEVEL_OFFSET, MAX_LEVEL_OFFSET)));
+		doc.SetSurveyMixCheck(hardwareMixing);
+		m_pSession->ApplyDocumentProperties();
+	}
+
+	//! {external, patches: Uint8Array(19 * 8), names: [19]}: the VRC7's patches, the
+	//! module's own when it has an external OPLL, otherwise the default set (which the
+	//! module properties put in the module as they open). Patch 0 is each instrument's own.
+	val opll() {
+		CFamiTrackerDoc &doc = Doc();
+		const bool external = doc.GetExternalOPLLChipCheck();
+		// CModulePropertiesDlg::OnInitDialog()
+		if (!external)
+			doc.SetOPLLPatchSet(theApp.GetSettings()->Emulation.iVRC7Patch);
+		std::vector<uint8_t> patches(OPLL_PATCHES * 8);
+		for (size_t i = 0; i < patches.size(); ++i)
+			patches[i] = doc.GetOPLLPatchByte(static_cast<int>(i));
+		val names = val::array();
+		for (int i = 0; i < OPLL_PATCHES; ++i)
+			names.call<void>("push", dnft::text::ToUtf8(doc.GetOPLLPatchName(i)));
+		val result = val::object();
+		result.set("external", external);
+		result.set("patches", CopyToJs(patches.data(), patches.size()));
+		result.set("names", names);
+		return result;
+	}
+
+	//! Module properties > External OPLL: the module's own patches 1-18 (8 register bytes
+	//! each, patch 0's are left alone) and their names, or, with external false, the
+	//! default set. Resets the sound generator, which stops playback.
+	void setOpll(bool external, const val &patches, const val &names) {
+		CFamiTrackerDoc &doc = Doc();
+		// CModulePropertiesDlg::OnBnClickedOk()
+		doc.SetExternalOPLLChipCheck(external);
+		if (external) {
+			const std::vector<uint8_t> bytes = FromJs(patches);
+			for (size_t i = 8; i < bytes.size() && i < OPLL_PATCHES * 8; ++i)
+				doc.SetOPLLPatchByte(static_cast<int>(i), bytes[i]);
+			const unsigned count = names["length"].as<unsigned>();
+			for (unsigned i = 1; i < count && i < static_cast<unsigned>(OPLL_PATCHES); ++i)
+				doc.SetOPLLPatchName(i, ToDocument(names[i].as<std::string>(), MAX_PATCH_NAME));
+		}
+		else
+			doc.SetOPLLPatchSet(theApp.GetSettings()->Emulation.iVRC7Patch);
 		m_pSession->ApplyDocumentProperties();
 	}
 
@@ -908,6 +1158,13 @@ EMSCRIPTEN_BINDINGS(dnft_session) {
 		.function("cloneFrame", &EditSession::cloneFrame)
 		.function("moveFrame", &EditSession::moveFrame)
 		.function("freePattern", &EditSession::freePattern)
+		.function("clearPatterns", &EditSession::clearPatterns)
+		.function("populateUniquePatterns", &EditSession::populateUniquePatterns)
+		.function("removeUnusedInstruments", &EditSession::removeUnusedInstruments)
+		.function("removeUnusedPatterns", &EditSession::removeUnusedPatterns)
+		.function("removeUnusedSamples", &EditSession::removeUnusedSamples)
+		.function("moveTrack", &EditSession::moveTrack)
+		.function("songLength", &EditSession::songLength)
 		.function("instruments", &EditSession::instruments)
 		.function("instrument", &EditSession::instrument)
 		.function("addInstrument", &EditSession::addInstrument)
@@ -924,6 +1181,15 @@ EMSCRIPTEN_BINDINGS(dnft_session) {
 		.function("setEngineSpeed", &EditSession::setEngineSpeed)
 		.function("setVibratoStyle", &EditSession::setVibratoStyle)
 		.function("setLinearPitch", &EditSession::setLinearPitch)
+		.function("detune", &EditSession::detune)
+		.function("setDetune", &EditSession::setDetune)
+		.function("grooves", &EditSession::grooves)
+		.function("setGrooves", &EditSession::setGrooves)
+		.function("setGrooveMode", &EditSession::setGrooveMode)
+		.function("mixing", &EditSession::mixing)
+		.function("setMixing", &EditSession::setMixing)
+		.function("opll", &EditSession::opll)
+		.function("setOpll", &EditSession::setOpll)
 		.function("exportText", &EditSession::exportText)
 		.function("exportJSON", &EditSession::exportJSON)
 		.function("exportRows", &EditSession::exportRows)

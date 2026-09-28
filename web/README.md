@@ -118,9 +118,9 @@ The document is read and changed through the tracker's own functions:
 
 | | |
 | --- | --- |
-| module | `info()` (title, chips, channels, tracks, comment, engineSpeed...), `setTitle`, `setArtist`, `setCopyright`, `setComment(text, showOnOpen)`, `setExpansion(chips, n163Channels)`, `setMachine(pal)`, `setEngineSpeed(hz)` (0: the machine's), `setVibratoStyle(newStyle)`, `setLinearPitch(enable)` |
-| tracks | `track(t)` (frames, rows, speed, tempo, highlight, effColumns, frameList), `addTrack`, `removeTrack`, `setTrackTitle`, `setPatternLength`, `setFrameCount`, `setSpeed`, `setTempo`, `setHighlight`, `setEffColumns` |
-| patterns | `pattern(t, channel, pattern)`, `patterns(t)` (every one with something in it), `setCells(t, channel, pattern, row, cells)` |
+| module | `info()` (title, chips, channels, tracks, comment, engineSpeed...), `setTitle`, `setArtist`, `setCopyright`, `setComment(text, showOnOpen)`, `setExpansion(chips, n163Channels)`, `setMachine(pal)`, `setEngineSpeed(hz)` (0: the machine's), `setVibratoStyle(newStyle)`, `setLinearPitch(enable)`, `detune()`, `setDetune(offsets, semitone, cent)` (Detune Settings), `grooves()`, `setGrooves(list)` (Groove Settings), `mixing()`, `setMixing(levels, hardwareMixing)` (the device mix offsets), `opll()`, `setOpll(external, patches, names)` (the VRC7's patches), `removeUnusedInstruments`, `removeUnusedPatterns`, `removeUnusedSamples` (Cleanup) |
+| tracks | `track(t)` (frames, rows, speed, tempo, highlight, effColumns, frameList), `addTrack`, `removeTrack`, `setTrackTitle`, `setPatternLength`, `setFrameCount`, `setSpeed`, `setTempo`, `setHighlight`, `setEffColumns`, `setGrooveMode(t, groove)`, `moveTrack(t, up)`, `songLength(t)` (intro and loop, in seconds) |
+| patterns | `pattern(t, channel, pattern)`, `patterns(t)` (every one with something in it), `setCells(t, channel, pattern, row, cells)`, `clearPatterns(t)`, `populateUniquePatterns(t)` |
 | frames | `setFramePattern`, `setFrameList`, `insertFrame`, `removeFrame`, `duplicateFrame`, `cloneFrame`, `moveFrame`, `freePattern` |
 | instruments | `instruments()`, `instrument(i)`, `addInstrument(chip, name)`, `removeInstrument`, `cloneInstrument`, `deepCloneInstrument`, `setInstrumentName`, `setInstrumentSequence(i, type, enabled, index)`, `sequence(instType, type, index)`, `setSequence(...)`, `freeSequence` |
 
@@ -130,8 +130,18 @@ effect letters, the parameter an effect starts with, and which letter means whic
 on each chip. Indices are checked, and what is out of range throws.
 
 A comment comes with `\n` line breaks and is kept with the CR LF of the desktop's comment
-box. Changing the machine, the engine speed, the vibrato style or the pitch mode resets
-the sound generator, which stops playback.
+box. Changing the machine, the engine speed, the vibrato style, the pitch mode, the
+device mix offsets or the VRC7's patches resets the sound generator, which stops
+playback; the detune tables and the grooves change what plays as it goes.
+
+The detune tables come as one `Int16Array` of 6 × 96 period offsets, by chip (NTSC and
+PAL 2A03, VRC6 sawtooth, VRC7, FDS, N163) and note (octave × 12 + note); higher values
+sound higher, and the VRC7's first octave counts for all. Grooves come as 32 entries, the
+ticks of each row (`Uint8Array`) or null; a module has room for 255 bytes of them (the
+entries, and two more a groove), and a track whose groove goes gets speed 6 back, as on
+the desktop. The mix offsets are tenths of a dB, -12 to 12 dB, for the 2A03's pulse
+channels, its other channels, VRC6, VRC7, FDS, MMC5, N163 and 5B. `opll()` gives the
+module's own VRC7 patches when it has an external OPLL, the default set otherwise.
 
 Texts (the title, the comment, the names of tracks and instruments) are kept the way the
 desktop tracker keeps them: as bytes of the ANSI code page of its Windows, which for the
@@ -187,9 +197,10 @@ As with players, one session drives the sound generator at a time.
 - `dnft-editor.mjs`: the editor; `dnft-pattern-view.mjs`: the pattern grid (a canvas);
   `dnft-song.mjs`: the page's copy of the module and the undo history;
   `dnft-instrument-editor.mjs`: the sequence editor; `dnft-files.mjs`: the Import and
-  Export menus and their dialogs; `dnft-zip.mjs`: zip files, for exports that write
-  several files; `dnft-editor-strings.mjs`: its texts (Japanese and English);
-  `dnft-editor.css`: its look, in custom properties a page can redefine
+  Export menus and their dialogs; `dnft-song-menu.mjs`: the Song and Module menus and
+  their dialogs; `dnft-zip.mjs`: zip files, for exports that write several files;
+  `dnft-editor-strings.mjs`: its texts (Japanese and English); `dnft-editor.css`: its
+  look, in custom properties a page can redefine
 
 ```js
 import { DnFTEditor } from './dnft-editor.mjs';
@@ -211,6 +222,16 @@ the progress and a cancel; the worker renders it in slices so the page and the a
 keep going), the NSF export dialog, Export Text, JSON and Rows, Import Text (also by
 dropping a `.txt` file), and the import of another module's tracks and instruments from
 the module properties. What they write is downloaded; several files come in a zip file.
+
+The Song menu after them does what the desktop's does to the track: Clone Patterns (the
+pattern at the cursor), Merge Duplicated Patterns, Populate Unique Patterns, Clear
+Patterns and Estimate Song Length; the first two can be undone, the others, as on the
+desktop, cannot, nor what was done before them. Populate Unique Patterns keeps the
+track's row highlight, which the desktop's leaves behind. The Module menu opens Detune Settings
+(with the desktop's CSV files of the tables), Groove Settings (with its tools, and a
+copy as Fxx effects to paste), the device mix offsets with hardware-based mixing, and
+the VRC7's patches (external OPLL) of the module properties, and runs Module > Cleanup.
+The song panel moves tracks up and down, and switches the speed of a track to grooves.
 
 How it works
 ------------

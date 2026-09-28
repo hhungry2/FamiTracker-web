@@ -19,6 +19,7 @@ import {
 import { PatternView, columnCount, columnKind } from './dnft-pattern-view.mjs';
 import { InstrumentEditor } from './dnft-instrument-editor.mjs';
 import { FileMenu } from './dnft-files.mjs';
+import { SongMenu } from './dnft-song-menu.mjs';
 import { STRINGS } from './dnft-editor-strings.mjs';
 
 const AUTOSAVE_KEY = 'dnft-editor.autosave';
@@ -176,10 +177,15 @@ export class DnFTEditor {
                 <select data-role="track"></select>
                 <button type="button" class="dnft-icon-button" data-action="add-track">+</button>
                 <button type="button" class="dnft-icon-button" data-action="remove-track">−</button>
+                <button type="button" class="dnft-icon-button" data-action="track-up">↑</button>
+                <button type="button" class="dnft-icon-button" data-action="track-down">↓</button>
               </div>
               <label class="dnft-field"><span data-text="trackTitle"></span><input type="text" data-role="track-title" spellcheck="false"></label>
               <div class="dnft-grid">
-                <label class="dnft-field"><span data-text="speed"></span><input type="number" data-setting="speed" min="1" max="255"></label>
+                <div class="dnft-field">
+                  <span class="dnft-field-head"><span data-text="speed"></span><label class="dnft-check dnft-mini-check"><input type="checkbox" data-role="groove-mode"> <span data-text="grooveMode"></span></label></span>
+                  <input type="number" data-setting="speed" min="1" max="255">
+                </div>
                 <label class="dnft-field"><span data-text="tempo"></span><input type="number" data-setting="tempo" min="32" max="255"></label>
                 <label class="dnft-field"><span data-text="rows"></span><input type="number" data-setting="rows" min="1" max="${MAX_ROWS}"></label>
                 <label class="dnft-field"><span data-text="frames"></span><input type="number" data-setting="frames" min="1" max="${MAX_FRAMES}"></label>
@@ -295,6 +301,8 @@ export class DnFTEditor {
     label('edit-instrument', '✎', t.editInstrument);
     label('add-track', '+', t.addTrack);
     label('remove-track', '−', t.removeTrack);
+    label('track-up', '↑', t.trackUp);
+    label('track-down', '↓', t.trackDown);
     label('note-cut', '---', t.noteCutHint);
     label('note-release', '===', t.noteReleaseHint);
     label('clear', t.clearField, t.clearFieldHint);
@@ -308,6 +316,8 @@ export class DnFTEditor {
     $('.dnft-volume .dnft-label').textContent = t.volume;
     root.querySelectorAll('[data-text]').forEach(el => { el.textContent = t[el.dataset.text]; });
     $('[data-setting="speed"]').title = t.speedHint;
+    $('[data-setting="speed"]').setAttribute('aria-label', t.speed);
+    $('[data-role="groove-mode"]').closest('label').title = t.grooveModeHint;
     $('[data-setting="rows"]').title = t.rowsHint;
     $('[data-setting="beat"]').title = t.highlightHint;
     $('[data-setting="bar"]').title = t.highlightHint;
@@ -339,7 +349,7 @@ export class DnFTEditor {
       toolbar: $('.dnft-toolbar'), file: $('.dnft-file'), dirty: $('.dnft-dirty'),
       octave: $('[data-spin="octave"] output'), step: $('[data-spin="step"] output'),
       instrument: $('[data-role="instrument"]'), volume: $('[data-role="volume"]'),
-      track: $('[data-role="track"]'), trackTitle: $('[data-role="track-title"]'),
+      track: $('[data-role="track"]'), trackTitle: $('[data-role="track-title"]'), grooveMode: $('[data-role="groove-mode"]'),
       n163: $('[data-role="n163"]'), machine: $('[data-role="machine"]'),
       engineMode: $('[data-role="engine-mode"]'), engineRate: $('[data-role="engine-rate"]'),
       vibrato: $('[data-role="vibrato"]'), linearPitch: $('[data-role="linear-pitch"]'),
@@ -354,6 +364,7 @@ export class DnFTEditor {
     this.view.scroller.setAttribute('aria-label', t.pattern);
     this.instrumentEditor = new InstrumentEditor(this);
     this.files = new FileMenu(this);
+    this.songMenu = new SongMenu(this);
     this.buildPiano();
     this.wire();
     if (this.demos)
@@ -459,6 +470,7 @@ export class DnFTEditor {
     els.n163.addEventListener('change', () => this.setExpansion());
     els.machine.addEventListener('change', () => this.setMachine(els.machine.value === '1'));
     els.trackTitle.addEventListener('change', () => this.setTrackTitle(els.trackTitle.value));
+    els.grooveMode.addEventListener('change', () => this.setGrooveMode(els.grooveMode.checked));
     els.engineMode.addEventListener('change', async () => {
       const custom = els.engineMode.value === '1';
       // a custom speed starts from the one playing now, as the desktop's dialog does
@@ -1323,6 +1335,26 @@ export class DnFTEditor {
     this.record({ undo: () => apply(current[name]), redo: () => apply(applied) });
   }
 
+  // The control panel's Speed / Groove button: the speed is then a groove's number. The
+  // speed goes into the range of the other kind; undoing brings it back.
+  async setGrooveMode(on) {
+    const track = this.track;
+    const before = { groove: this.tr.groove, speed: this.tr.speed };
+    if (before.groove === on)
+      return;
+    const apply = async ({ groove, speed }) => {
+      await this.session.call('setGrooveMode', track, groove);
+      if (speed !== undefined)
+        await this.session.call('setSpeed', track, speed);
+      await this.reloadTrack(track);
+      this.showTrack(track);
+      this.renderSongPanel();
+    };
+    await apply({ groove: on });
+    const after = { groove: on, speed: this.song.track(track).speed };
+    this.record({ undo: () => apply(before), redo: () => apply(after) });
+  }
+
   async setEffColumns(channel, count) {
     count = Math.max(1, Math.min(4, count));
     const track = this.track;
@@ -1453,6 +1485,33 @@ export class DnFTEditor {
     this.edited();
   }
 
+  // Module properties > Move up / Move down, with the track shown
+  async moveTrack(up) {
+    const track = this.track;
+    const other = up ? track - 1 : track + 1;
+    this.stopPlaying();
+    if (!await this.session.call('moveTrack', track, up))
+      return;
+    const tracks = this.song.tracks;
+    [tracks[track], tracks[other]] = [tracks[other], tracks[track]];
+    this.song.info = await this.session.call('info');
+    this.track = other;
+    // what can be undone knows the tracks by number
+    this.history.clear();
+    this.renderAll();
+    this.edited();
+  }
+
+  // After what changes tracks besides the one shown: the page forgets its copies of them,
+  // and reads each again when it shows it
+  async reloadTracks() {
+    this.song.info = await this.session.call('info');
+    this.song.tracks = [];
+    await this.reloadTrack(this.track);
+    this.renderAll();
+    this.setCursor(this.cursor);
+  }
+
   // ---- channels ---------------------------------------------------------------------------
 
   toggleMute(channel, solo) {
@@ -1545,6 +1604,8 @@ export class DnFTEditor {
       case 'comment': return this.openComment();
       case 'add-track': return this.addTrack();
       case 'remove-track': return this.removeTrack();
+      case 'track-up': return this.moveTrack(true);
+      case 'track-down': return this.moveTrack(false);
       case 'insert-frame': return this.frameOp('insert');
       case 'duplicate-frame': return this.frameOp('duplicate');
       case 'clone-frame': return this.frameOp('clone');
@@ -1816,7 +1877,11 @@ export class DnFTEditor {
     const values = { speed: tr.speed, tempo: tr.tempo, rows: tr.rows, frames: tr.frames, beat: tr.highlight[0], bar: tr.highlight[1] };
     for (const input of root.querySelectorAll('[data-setting]'))
       input.value = values[input.dataset.setting];
-    root.querySelector('[data-setting="speed"]').max = tr.groove ? 31 : tr.tempo ? info.speedSplitPoint - 1 : 255;
+    const speed = root.querySelector('[data-setting="speed"]');
+    speed.min = tr.groove ? 0 : 1;
+    speed.max = tr.groove ? 31 : tr.tempo ? info.speedSplitPoint - 1 : 255;
+    speed.title = tr.groove ? this.strings.grooveModeHint : this.strings.speedHint;
+    els.grooveMode.checked = tr.groove;
     root.querySelector('[data-setting="tempo"]').min = info.speedSplitPoint;
     const commentLine = info.comment.split('\n').find(line => line.trim()) ?? '';
     els.comment.textContent = commentLine || this.strings.noComment;
@@ -1826,6 +1891,8 @@ export class DnFTEditor {
     if (document.activeElement !== els.trackTitle)
       els.trackTitle.value = info.tracks[this.track] ?? '';
     root.querySelector('[data-action="remove-track"]').disabled = info.tracks.length < 2;
+    root.querySelector('[data-action="track-up"]').disabled = this.track === 0;
+    root.querySelector('[data-action="track-down"]').disabled = this.track >= info.tracks.length - 1;
     for (const box of els.chips.querySelectorAll('input'))
       box.checked = (info.chips & Number(box.value)) !== 0;
     els.n163.value = info.namcoChannels || 1;

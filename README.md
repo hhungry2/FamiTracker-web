@@ -35,7 +35,9 @@ The audio engine follows the same interface conventions as [ZXTune Web](https://
 - **Pattern Grid**: Smooth Canvas-rendered pattern view tracking the playback row, with neighbouring frames dimmed.
 - **Editing Tools**: Multi-cell selection, copy/cut/paste, row insertion/deletion, transposition, and multi-level Undo/Redo.
 - **Live Preview**: Play from current frame, start of song, pattern loop, or cursor position (`Enter`, `F5`-`F8`), with live interactive piano keyboard.
-- **Song & Frame Organizer**: Reorder, insert, duplicate, and configure frame patterns, speed, tempo, rows, and highlight intervals.
+- **Song & Frame Organizer**: Reorder, insert, duplicate, and configure frame patterns, speed, tempo, rows, and highlight intervals; reorder tracks.
+- **Song Menu**: Clone and merge duplicated patterns, populate unique patterns, clear patterns, and estimate the song length.
+- **Module Menu**: Detune settings (with their CSV files), grooves (with the desktop's tools), device mix offsets and hardware-based mixing, the VRC7's patches (external OPLL), and removing unused instruments, patterns and DPCM samples.
 - **Instrument & Sequence Editor**: Visual bar graphs and text input for sequences (Volume, Arpeggio, Pitch, Hi-Pitch, Duty).
 - **Expansion Chips**: Toggle expansion audio chips on the fly, with channel-level mute and solo support.
 - **Exports**: WAV (by song passes or time, chosen channels, one file per channel, sample rate), NSF / NSFe / NSF2 / NES / BIN / PRG / ASM through the desktop's own NSF compiler and drivers, and text, JSON and CSV rows, as the desktop's File menu makes them.
@@ -213,10 +215,12 @@ JavaScript API やメッセージ構成は [ZXTune Web](https://github.com/hhung
   - 範囲選択、コピー、切り取り、貼り付け、行挿入・削除、移調（トランスポーズ）、アンドゥ・リドゥ。
 - **キャンバス描画パターンビュー**: 再生行への滑らかな自動追従、近隣フレームの半透明プレビュー表示。
 - **手弾きプレビュー & 画面鍵盤**: キーボードや画面上のピアノ鍵盤をクリックしていつでも音色を試聴可能。
-- **ソング & フレームマネージャー**: フレームの追加・削除・複製・並べ替え、スピード・テンポ・行数・強調間隔の設定、トラック名とコメント（ファイルを開いたときの表示を含む）の編集。
+- **ソング & フレームマネージャー**: フレームの追加・削除・複製・並べ替え、スピード・テンポ・行数・強調間隔の設定、トラック名とコメント（ファイルを開いたときの表示を含む）の編集、トラックの並べ替え。
+- **曲メニュー**: パターンの複製、同じ内容のパターンの統合、フレームごとの別パターン化、パターンの一括消去、曲の長さの見積もり。
+- **モジュールメニュー**: デチューンの設定（CSV の読み込み・書き出しを含む）、グルーヴの設定（デスクトップ版と同じ道具つき）、音源ごとの音量の補正と実機に基づくミキシング、VRC7 のパッチ（External OPLL）、使っていない音色・パターン・DPCM サンプルの削除。
 - **インストゥルメント & シーケンス編集**: 音量、アルペジオ、ピッチ、ハイピッチ、デューティ比を棒グラフまたはテキストで直感的に編集。音色の複製は、シーケンスを共有する複製と、シーケンスもコピーする複製（Deep Clone）の 2 種類。
 - **拡張音源の即時切り替え**: VRC6 / VRC7 / FDS / MMC5 / N163 / 5B の追加・変更、チャンネルごとのミュート / ソロに対応。
-- **モジュールの設定**: NTSC / PAL、エンジン速度、ビブラートの方式、ピッチモード（Linear pitch）。
+- **モジュールの設定**: NTSC / PAL、エンジン速度、ビブラートの方式、ピッチモード（Linear pitch）、スピードとグルーヴの切り替え。
 - **書き出し**: WAV（演奏回数または時間、チャンネルの選択、チャンネルごとのファイル、サンプリング周波数）、デスクトップ版の NSF コンパイラーとドライバーによる NSF / NSFe / NSF2 / NES / BIN / PRG / ASM、テキスト・JSON・行の一覧（CSV）。デスクトップ版の File メニューと同じ内容で書き出します。
 - **読み込み**: テキストで書き出した曲、別のモジュールの曲・音色・グルーヴ・デチューンの表。
 - **日英バイリンガル対応**: 日本語と英語の UI 切り替えに対応。

@@ -16,10 +16,10 @@ const CHUNK = 1024;
 
 // The tracker's values (FamiTrackerTypes.h, APU/Types.h, Instrument.h)
 const NOTE_C = 1, NOTE_E = 5, NOTE_G = 8, HALT = 14;
-const EF_HALT = 4;
+const EF_JUMP = 2, EF_HALT = 4;
 const INST_2A03 = 1;
 const SEQ_VOLUME = 0;
-const SNDCHIP_VRC6 = 1;
+const SNDCHIP_VRC6 = 1, SNDCHIP_VRC7 = 2;
 const EMPTY = [0, 0, 16, 64, 0, 0, 0, 0, 0, 0, 0, 0];
 
 const dnft = await createDnFT();
@@ -334,6 +334,181 @@ check('an expansion chip adds its channels and keeps the patterns', () => {
   assert.deepEqual([...s.pattern(0, 2, 0).subarray(0, 12)], cell(NOTE_C, 3));
   s.noteOn(7, NOTE_C, 3, s.addInstrument(SNDCHIP_VRC6, 'Saw'), 16);
   assert.ok(energy(render(s, 300)) > 1000, 'the sawtooth is silent');
+  s.delete();
+});
+
+check('the Song menu: populate unique patterns, estimate the length, clear patterns', () => {
+  const s = dnft.createSession(RATE);
+  s.setHighlight(0, 8, 32);
+  s.setCells(0, 0, 0, 0, new Uint8Array(cell(NOTE_C, 4)));
+  assert.ok(s.duplicateFrame(0, 0));
+  s.populateUniquePatterns(0);
+  const t = s.track(0);
+  // each frame plays patterns of its own, copies of what it played
+  assert.deepEqual([...t.frameList], [0, 0, 0, 0, 0, 1, 1, 1, 1, 1]);
+  assert.deepEqual([...s.pattern(0, 0, 1).subarray(0, 12)], cell(NOTE_C, 4));
+  assert.deepEqual(t.highlight, [8, 32]);
+
+  // rows of 6 ticks at 60 Hz: a frame of 64 rows takes 6.4 s. The second frame jumps to
+  // itself, so the first is the intro.
+  s.setCells(0, 0, 1, 63, new Uint8Array(cell(0, 0, 64, [[EF_JUMP, 1]])));
+  const length = s.songLength(0);
+  assert.ok(Math.abs(length.intro - 6.4) < 0.01 && Math.abs(length.loop - 6.4) < 0.01, JSON.stringify(length));
+  assert.equal(length.frameRate, 60);
+
+  s.clearPatterns(0);
+  assert.equal(s.track(0).frames, 1);
+  assert.deepEqual(s.patterns(0), []);
+  s.delete();
+});
+
+check('Module > Cleanup removes what nothing uses', () => {
+  const s = dnft.createSession(RATE);
+  s.setCells(0, 0, 0, 0, new Uint8Array(cell(NOTE_C, 4, 0)));
+  const unused = s.addInstrument(0, 'Unused');
+  // a pattern no frame plays
+  s.setCells(0, 1, 5, 0, new Uint8Array(cell(NOTE_E, 4, 0)));
+  assert.deepEqual(s.instruments().map(i => i.index), [0, unused]);
+  s.removeUnusedInstruments();
+  assert.deepEqual(s.instruments().map(i => i.index), [0]);
+  assert.deepEqual(s.patterns(0).map(p => [p.channel, p.pattern]), [[0, 0], [1, 5]]);
+  s.removeUnusedPatterns();
+  assert.deepEqual(s.patterns(0).map(p => [p.channel, p.pattern]), [[0, 0]]);
+  s.removeUnusedSamples();
+  assert.deepEqual(s.instruments().map(i => i.index), [0]);
+  s.delete();
+});
+
+check('tracks change places', () => {
+  const s = dnft.createSession(RATE);
+  s.addTrack();
+  s.setTrackTitle(0, 'First');
+  s.setTrackTitle(1, 'Second');
+  s.setSpeed(1, 3);
+  assert.equal(s.moveTrack(1, true), true);
+  assert.deepEqual(s.info().tracks, ['Second', 'First']);
+  assert.equal(s.track(0).speed, 3);
+  assert.equal(s.moveTrack(0, true), false);
+  assert.equal(s.moveTrack(1, false), false);
+  assert.equal(s.moveTrack(0, false), true);
+  assert.deepEqual(s.info().tracks, ['First', 'Second']);
+  s.delete();
+});
+
+check('grooves: rows take the groove\'s ticks, and a groove that goes gives its tracks speed 6', () => {
+  const s = dnft.createSession(RATE);
+  assert.deepEqual(s.grooves(), new Array(32).fill(null));
+  s.setGrooves([Uint8Array.of(4, 2)]);
+  assert.deepEqual(s.grooves().map(g => g && [...g]), [[4, 2], ...new Array(31).fill(null)]);
+  s.setGrooveMode(0, true);
+  s.setSpeed(0, 0);
+  assert.deepEqual([s.track(0).groove, s.track(0).speed], [true, 0]);
+  // 4 and 2 ticks in turn, of about 800 frames at 60 Hz
+  s.play(0, dnft.PLAY_SONG, 0, 0);
+  render(s, 1000);
+  const rows = s.takeRowEvents();
+  assert.deepEqual(rows.slice(1, 7).map((e, i) => Math.round((e.at - rows[i].at) / (RATE / 60))), [4, 2, 4, 2, 4, 2]);
+  s.stop();
+  // 255 bytes of grooves at most: an entry each, and two more a groove
+  assert.throws(() => rethrow(() => s.setGrooves([new Uint8Array(128).fill(6), new Uint8Array(126).fill(6)])), /255/);
+  const bytes = rethrow(() => s.save());
+  s.setGrooves([]);
+  assert.deepEqual([s.track(0).groove, s.track(0).speed], [false, 6]);
+  s.setGrooveMode(0, true);
+  s.setSpeed(0, 40);
+  assert.equal(s.track(0).speed, 31);
+  s.setGrooveMode(0, false);
+  assert.deepEqual([s.track(0).groove, s.track(0).speed], [false, 31]);
+  s.delete();
+
+  const again = openSession(bytes);
+  assert.deepEqual([...again.grooves()[0]], [4, 2]);
+  assert.deepEqual([again.track(0).groove, again.track(0).speed], [true, 0]);
+  again.delete();
+});
+
+check('detune: the tables and the tuning change the pitch, and are saved', () => {
+  const s = dnft.createSession(RATE);
+  const d = s.detune();
+  assert.equal(d.offsets.length, 6 * 96);
+  assert.ok(d.offsets.every(v => v === 0));
+  assert.deepEqual([d.semitone, d.cent], [0, 0]);
+  const crossings = () => {
+    s.noteOn(0, NOTE_C, 4, 0, 16);
+    const pcm = render(s, 500).subarray(RATE / 10);
+    let n = 0;
+    for (let i = 1; i < pcm.length; ++i)
+      if ((pcm[i - 1] < 0) !== (pcm[i] < 0))
+        ++n;
+    return n;
+  };
+  const before = crossings();
+  // an octave up
+  s.setDetune(new Int16Array(6 * 96), 12, 0);
+  const after = crossings();
+  assert.ok(Math.abs(after / before - 2) < 0.03, `${before} -> ${after}`);
+
+  const offsets = new Int16Array(6 * 96);
+  offsets[48] = 5;              // NTSC, C-4
+  offsets[5 * 96 + 50] = -3;    // N163, D-4
+  s.setDetune(offsets, 40, -300);
+  const got = s.detune();
+  assert.deepEqual([got.offsets[48], got.offsets[5 * 96 + 50], got.semitone, got.cent], [5, -3, 12, -100]);
+  const again = openSession(rethrow(() => s.save()));
+  const loaded = again.detune();
+  assert.deepEqual([loaded.offsets[48], loaded.offsets[5 * 96 + 50], loaded.semitone, loaded.cent], [5, -3, 12, -100]);
+  again.delete();
+  s.delete();
+});
+
+check('mixing: the level of each device, and hardware-based mixing', () => {
+  const s = dnft.createSession(RATE);
+  assert.deepEqual(s.mixing(), { levels: [0, 0, 0, 0, 0, 0, 0, 0], hardwareMixing: false });
+  const heard = () => {
+    s.noteOn(0, NOTE_C, 4, 0, 16);
+    return energy(render(s, 300).subarray(RATE / 10));
+  };
+  const loud = heard();
+  // 12 dB less: a sixteenth of the energy
+  s.setMixing([-120, 0, 0, 0, 0, 0, 0, 0], false);
+  const quiet = heard();
+  assert.ok(quiet / loud > 0.04 && quiet / loud < 0.1, `${loud} -> ${quiet}`);
+  s.setMixing([500, -500, 0, 0, 0, 0, 0, 0], true);
+  assert.deepEqual(s.mixing(), { levels: [120, -120, 0, 0, 0, 0, 0, 0], hardwareMixing: true });
+  const again = openSession(rethrow(() => s.save()));
+  assert.deepEqual(again.mixing(), { levels: [120, -120, 0, 0, 0, 0, 0, 0], hardwareMixing: true });
+  again.delete();
+  s.delete();
+});
+
+check('VRC7 patches: the module\'s own with an external OPLL, the default set without', () => {
+  const s = dnft.createSession(RATE);
+  s.setExpansion(SNDCHIP_VRC7, 0);
+  const defaults = s.opll();
+  assert.equal(defaults.external, false);
+  assert.equal(defaults.patches.length, 19 * 8);
+  assert.ok(defaults.patches.subarray(0, 8).every(b => b === 0));
+  assert.ok(defaults.patches.subarray(8).some(b => b !== 0));
+  assert.equal(defaults.names.length, 19);
+
+  const patches = Uint8Array.from(defaults.patches);
+  patches.set([0x01, 0x21, 0x00, 0x00, 0xF0, 0xF0, 0x0F, 0x0F], 8);
+  const names = [...defaults.names];
+  names[1] = 'ベル';
+  s.setOpll(true, patches, names);
+  const own = s.opll();
+  assert.equal(own.external, true);
+  assert.deepEqual([...own.patches], [...patches]);
+  assert.equal(own.names[1], 'ベル');
+  s.noteOn(5, NOTE_C, 4, s.addInstrument(SNDCHIP_VRC7, 'FM'), 16);
+  assert.ok(energy(render(s, 300)) > 100, 'the VRC7 is silent');
+
+  const again = openSession(rethrow(() => s.save()));
+  assert.deepEqual([...again.opll().patches], [...patches]);
+  assert.equal(again.opll().names[1], 'ベル');
+  again.setOpll(false, patches, names);
+  assert.deepEqual(again.opll(), defaults);
+  again.delete();
   s.delete();
 });
 
