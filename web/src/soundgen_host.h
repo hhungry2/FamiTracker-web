@@ -61,6 +61,11 @@ public:
 	// produced goes to the sink.
 	void Tick();
 
+	// For playing up to a position without listening (CSoundChip::SetSkipping()): the
+	// ticks go faster, and their audio is not to be used. The setting belongs to the
+	// APU, which every Start() renews: set it after that.
+	void SetSkipping(bool skip);
+
 	// Rendering and playing (Start()); IsPlayerRunning() is about the player alone
 	bool IsPlaying() const;
 	bool IsPlayerRunning() const;

@@ -195,6 +195,13 @@ void OPLL_writeReg(OPLL *opll, uint32_t reg, uint8_t val);
 int16_t OPLL_calc(OPLL *opll);
 
 /**
+ * Go on by one sample without its value, which nobody looks at: the chip and the rate
+ * converter end in the state OPLL_calc() leaves them in, but the sample is not
+ * resampled, and the volumes OPLL_getchanvol() reports are not followed.
+ */
+void OPLL_calcSkip(OPLL *opll);
+
+/**
  * Calulate stereo sample
  */
 void OPLL_calcStereo(OPLL *opll, int32_t out[2]);

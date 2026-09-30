@@ -63,6 +63,9 @@ using detail::ToUtf8;
 
 namespace {
 
+// What Seek() plays exactly before the position it lands on, in milliseconds
+constexpr uint32_t SEEK_EXACT_MS = 300;
+
 // Names of the blocks in a module file: after the header string and a 32-bit version,
 // each block is a 16-byte name, a 32-bit version and a 32-bit size, then its data.
 std::vector<std::string> ListBlocks(const uint8_t *data, size_t size) {
@@ -331,19 +334,41 @@ bool Player::Render(int16_t *out, uint32_t frames) {
 }
 
 void Player::Seek(uint32_t ms) {
-	if (!IsCurrent())
-		return;
-	const uint64_t target = static_cast<uint64_t>(ms) * m_iSampleRate / 1000;
-	Restart();
-	// The engine has no shortcut to a position: play up to it without keeping the audio
-	while (!m_bEnded && m_iRendered + m_Pending.size() <= target) {
-		m_iRendered += m_Pending.size();
+	if (IsCurrent())
+		SeekTo(static_cast<uint64_t>(ms) * m_iSampleRate / 1000, false);
+}
+
+void Player::SeekTo(uint64_t target, bool restart) {
+	// The engine has no shortcut to a position: play up to it without keeping the audio.
+	// From where it is, when that is before the position; a restart otherwise.
+	if (restart || m_bEnded || target < m_iRendered)
+		Restart();
+
+	// Far from the position nobody listens, so the chips take long steps instead of
+	// following every change of level, which is several times faster. They end in the
+	// state exact steps would leave them in, but the filters that smooth the sound (the
+	// integrator of the Blip_Buffer above all) come out of the skipped part in another
+	// one. Playing the last stretch exactly lets them settle: from the position on the
+	// sound is the same, sample for sample but for the last bit with the N163.
+	const uint64_t lead = static_cast<uint64_t>(m_iSampleRate) * SEEK_EXACT_MS / 1000;
+	CSoundGenHost &host = *GetEngine().host;
+	struct Guard {
+		CSoundGenHost &host;
+		~Guard() { host.SetSkipping(false); }
+	} guard {host};
+
+	uint64_t end = m_iRendered + (m_Pending.size() - m_iPendingPos);
+	while (!m_bEnded && end <= target) {
+		m_iRendered = end;
 		m_Pending.clear();
+		m_iPendingPos = 0;
+		host.SetSkipping(end + lead < target);
 		if (!Pump())
 			m_bEnded = true;
+		end = m_iRendered + m_Pending.size();
 	}
-	const size_t skip = static_cast<size_t>(std::min<uint64_t>(target - m_iRendered, m_Pending.size()));
-	m_iPendingPos = skip;
+	const size_t skip = static_cast<size_t>(std::min<uint64_t>(target - m_iRendered, m_Pending.size() - m_iPendingPos));
+	m_iPendingPos += skip;
 	m_iRendered += skip;
 }
 
@@ -374,7 +399,7 @@ void Player::SetLoop(bool loop) {
 	m_bLoop = loop;
 	// The loop limit is set up when playback starts: restart where we are
 	if (IsCurrent())
-		Seek(GetPositionMs());
+		SeekTo(m_iRendered, true);
 }
 
 void Player::SetMutedChannels(uint64_t mask) {

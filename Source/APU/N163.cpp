@@ -94,6 +94,19 @@ void CN163::Process(uint32_t Time, Blip_Buffer& Output)
 
 	uint32_t now = 0;
 
+	if (m_bSkipping) {
+		// Nothing is heard: the channels go on to where the time takes them in one step,
+		// and the synth is told the level the last clock has
+		if (Time > 0) {
+			m_N163.SkipAudio(Time);
+			m_SynthN163.update(m_iTime + Time - 1, m_N163.UpdateOutputLevel() * -1, &m_BlipN163);
+			for (int i = 0; i < 8; i++)
+				m_ChannelLevels[i].update((int32_t) m_N163._channelOutput[7 - i]);
+		}
+		m_iTime += Time;
+		return;
+	}
+
 	while (true) {
 		assert(now <= Time);
 		if (now >= Time)

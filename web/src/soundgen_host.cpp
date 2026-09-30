@@ -227,6 +227,11 @@ void CSoundGenHost::Tick() {
 	g.OnIdle();
 }
 
+void CSoundGenHost::SetSkipping(bool skip) {
+	if (m_Gen.m_pAPU)
+		m_Gen.m_pAPU->SetSkipping(skip);
+}
+
 bool CSoundGenHost::IsPlaying() const {
 	return m_Gen.m_bRendering && m_Gen.IsPlaying();
 }

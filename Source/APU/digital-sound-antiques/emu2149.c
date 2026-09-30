@@ -218,11 +218,13 @@ PSG_writeIO (PSG * psg, uint32_t adr, uint32_t val)
     psg->adr = val & 0x1f;
 }
 
+/* Advances the envelope, the noise and the tone counters by one call. The output of
+ * the channels follows from the state this leaves, in update_output(). */
 static inline void
-update_output (PSG * psg)
+update_state (PSG * psg)
 {
 
-  int i, noise;
+  int i;
   uint8_t incr;
 
   psg->base_count += psg->base_incr;
@@ -280,7 +282,6 @@ update_output (PSG * psg)
     else
       psg->noise_count = 0;
   }
-  noise = psg->noise_seed & 1;
 
   /* Tone */
   for (i = 0; i < 3; i++)
@@ -290,13 +291,26 @@ update_output (PSG * psg)
     {
       psg->edge[i] = !psg->edge[i];
 
-      if (psg->freq[i] >= incr) 
+      if (psg->freq[i] >= incr)
         psg->count[i] -= psg->freq[i];
       else
         psg->count[i] = 0;
     }
+  }
+}
 
-    if (0 < psg->freq_limit && psg->freq[i] <= psg->freq_limit && psg->nmask[i]) 
+/* One call: the state moves on, and the channels put out what it makes of them. */
+static inline void
+update_output (PSG * psg)
+{
+  int i, noise;
+
+  update_state(psg);
+  noise = psg->noise_seed & 1;
+
+  for (i = 0; i < 3; i++)
+  {
+    if (0 < psg->freq_limit && psg->freq[i] <= psg->freq_limit && psg->nmask[i])
     {
       /* Mute the channel if the pitch is higher than the Nyquist frequency at the current sample rate, 
        * to prevent aliased or broken tones from being generated. Of course, this logic doesn't exist 
@@ -426,6 +440,16 @@ void
 Tick(PSG *psg, uint32_t clocks)
 {
   if (clocks <= 1) return;
+
+  /* The output of the channels is only used after the last call, which PSG_calc() makes:
+   * the ones before only have to move the state. A muted channel (freq_limit) keeps
+   * what it put out last, so then every call has to do it. */
+  if (psg->freq_limit)
+  {
+    while (--clocks > 0)
+      update_output(psg);
+    return;
+  }
   while (--clocks > 0)
-    update_output(psg);
+    update_state(psg);
 }

@@ -90,6 +90,9 @@ public:
 		return m_iSoundBufferSamples;
 	}
 
+	/// Playing up to a position without listening: see CSoundChip::SetSkipping().
+	void	SetSkipping(bool Skip);
+
 private:
 	void	SetExternalSound(uint8_t Chip);
 	// End configuration methods.

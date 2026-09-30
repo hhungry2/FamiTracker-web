@@ -358,6 +358,12 @@ bool CAPU::SetupSound(int SampleRate, int NrChannels, int Machine)		// // //
 	return true;
 }
 
+void CAPU::SetSkipping(bool Skip)
+{
+	for (auto Chip : m_SoundChips)
+		Chip->SetSkipping(Skip);
+}
+
 void CAPU::AddCycles(int32_t Cycles)
 {
 	if (Cycles < 0)

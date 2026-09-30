@@ -66,7 +66,8 @@ const buffer = dnft._malloc(4096 * 4);
 player.render(buffer, 4096);    // 4096 frames of interleaved int16 stereo;
                                 // false once the track is over
 player.getPosition();           // ms
-player.seek(30000);
+player.seek(30000);             // plays up to there without the audio: from where the
+                                //  player is when that is before, else from the start
 player.state();                 // where the engine is: {track, position (frame),
                                 //  pattern (of the first channel), line (row),
                                 //  tempo (ticks per row, FamiTracker's speed),
@@ -271,6 +272,34 @@ played: some chip state survives a reset (the N163 keeps its channel registers i
 wave RAM), which on the desktop is hidden by the five silent ticks the export starts
 with.
 
+### Seeking
+
+The core has no way to jump to a position, so `Player.seek()` plays up to it and keeps
+none of the audio: from where the player is when that is before the position, from the
+start otherwise. So that this is not as slow as playing, the chips skip most of the way
+(`CSoundChip::SetSkipping()`, set through `CSoundGenHost::SetSkipping()`). While nobody
+listens, the 2A03, VRC6 and MMC5 count their clocks in long steps instead of following
+every change of level (the 2A03 stops only where its frame sequencer acts on the
+channels), the N163 works out the turns of its channels at once, and the VRC7 goes on
+without resampling its samples. They end in the state exact steps leave them in. The
+last 300 ms before the position are played exactly, so that the filters (the integrator
+of the Blip_Buffer above all) settle: the audio from the position on is the audio of
+playing to it, sample for sample.
+
+A seek to nine tenths of a demo module takes 0.3 to 1.1 s now (1.5 to 6.8 s before), and
+0.1 to 0.3 s in a 100 s module with VRC6, MMC5, N163 or FDS. The VRC7 and the Sunsoft 5B
+are emulated sample by sample and clock by clock, which only the leaving out of what
+nobody uses (the resampling, the outputs) speeds up: a seek to the end of a 100 s module
+takes 2 to 3 s with either. The FDS is not skipped, and does not need to be.
+
+One thing is different. Playing a Namco 163 module straight adds the rounding of the
+steps of its own Blip_Buffer up (it keeps no high-pass, and the multiplexed output makes
+a step every 15 clocks): the level of Hellpath's N163 drifts into clipping, so that its
+channels are gone at 28 s; Kot's fade from 40 s on and are gone at 63 s. A seek starts without that error, so it
+lands on the sound the module has there, not on the one playing from the start has
+come to, and the audio matches that of playing to within one bit of a sample where the
+drift is still small (`test/seek.mjs` looks at the first seconds of such modules).
+
 ### Changes to Source/
 
 Small and meant to be harmless for the desktop build:
@@ -288,6 +317,15 @@ Small and meant to be harmless for the desktop build:
 | `TextExporter.h`, `TextExporter.cpp`, `ChunkRenderText.cpp` | `const` references to temporaries; `.GetString()` where a `CString` becomes a `std::string` | only MSVC binds temporaries to non-const references and makes that conversion |
 | `ChunkRenderText.cpp` | the NSF stub includes the exported file only when there is one | the BIN export with extra data writes the stub without one, and crashed (the desktop too) |
 | `TextExporter.cpp` | the text import reads a bookmark's highlight of -1 | the text export writes -1 for a bookmark that keeps the highlight, which the import refused (the desktop too) |
+| `APU/SoundChip.h`, `APU/APU.h`, `APU/APU.cpp` | `SetSkipping()` on the chips and the APU, off by default | a chip that is told nobody listens can take shortcuts (see Seeking) |
+| `APU/2A03.cpp`, `nsfplay/.../nes_dmc.cpp`, `nes_dmc.h` | while skipping, steps as long as the frame sequencer allows (`NES_DMC::ClocksUntilFrameSequence()`, the part of `ClocksUntilLevelChange()` that is not about the level) | the counters count clocks the same in long steps |
+| `APU/VRC6.cpp`, `APU/MMC5.cpp` | while skipping, one step for all the time of a call | as above |
+| `APU/N163.cpp`, `mesen/Namco163Audio.h` | while skipping, `Namco163Audio::SkipAudio()` moves the channels one update for every 15 clocks at once; `UpdateChannel()` takes a number of updates | what `ClockAudio()` does for each clock, without the output of each |
+| `APU/VRC7.cpp`, `digital-sound-antiques/emu2413.c`, `emu2413.h` | while skipping, `OPLL_calcSkip()` for `OPLL_calc()`: the chip and its rate converter go on, the sum of the resampling and the volumes are left out | the samples are not used |
+| `digital-sound-antiques/emu2149.c` | `update_output()` split into `update_state()` and the outputs of the channels; `Tick()` only moves the state | the outputs of the calls before the last one are not used: the 5B plays twice as fast, sample for sample the same |
+
+None of them changes the audio of playing: the first 20 to 30 seconds of every demo
+module, and of a module of each chip, are the same as before, sample for sample.
 
 Testing
 -------
@@ -297,6 +335,7 @@ node web/test/smoke.mjs                          # interface checks on demo/
 node web/test/session.mjs                        # editing sessions, saving demo/ unchanged
 node web/test/export.mjs                         # the exports and imports of sessions
 node web/test/text.mjs                           # module texts: code pages and UTF-8
+node web/test/seek.mjs                           # seeking: the audio, and the speed
 node web/test/render.mjs <module> [out.wav]      # render and report
 node web/test/compare.mjs <module> <export.wav>  # against the desktop WAV export
 ```

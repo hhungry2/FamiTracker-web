@@ -1440,6 +1440,31 @@ int16_t OPLL_calc(OPLL *opll) {
   return opll->mix_out[0];
 }
 
+void OPLL_calcSkip(OPLL *opll) {
+  while (opll->out_step > opll->out_time) {
+    int16_t out = 0;
+    int i;
+    opll->out_time += opll->inp_step;
+    update_output(opll);
+    /* mix_output() without the volumes */
+    for (i = 0; i < 14; i++)
+      out += opll->ch_out[i];
+    if (opll->conv) {
+      OPLL_RateConv_putData(opll->conv, 0, out);
+    } else {
+      opll->mix_out[0] = out;
+    }
+  }
+  opll->out_time -= opll->out_step;
+  if (opll->conv) {
+    /* OPLL_RateConv_getData() without the sum */
+    double dn;
+    opll->conv->timer += opll->conv->f_ratio;
+    dn = opll->conv->timer - floor(opll->conv->timer);
+    opll->conv->timer = dn;
+  }
+}
+
 void OPLL_calcStereo(OPLL *opll, int32_t out[2]) {
   while (opll->out_step > opll->out_time) {
     opll->out_time += opll->inp_step;
