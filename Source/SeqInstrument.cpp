@@ -122,12 +122,13 @@ void CSeqInstrument::SaveFile(CInstrumentFile *pFile)
 bool CSeqInstrument::LoadFile(CInstrumentFile *pFile, int iVersion)
 {
 	// Sequences
-	CSequence *pSeq;
+	CSequence *pSeq = nullptr;
 
 	unsigned char SeqCount = CModuleException::AssertRangeFmt(pFile->ReadChar(), 0, SEQ_COUNT, "Sequence count", "%i");
 
 	// Loop through all instrument effects
 	for (unsigned i = 0; i < SeqCount; ++i) try {
+		pSeq = nullptr;		// the one of the last round belongs to the instrument manager
 		if (pFile->ReadChar() != 1) {
 			SetSeqEnable(i, false);
 			SetSeqIndex(i, 0);

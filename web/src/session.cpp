@@ -12,6 +12,7 @@
 #include "FamiTrackerDoc.h"
 #include "Settings.h"
 #include "SoundGen.h"
+#include "DSample.h"
 #include "TrackerChannel.h"
 #include "TextExporter.h"
 #include "portable/SoundGenUI.h"
@@ -233,6 +234,26 @@ void Session::NoteOff(int channel, bool release) {
 	stChanNote NoteData {};
 	NoteData.Note = release ? RELEASE : HALT;
 	theApp.GetSoundGenerator()->QueueNote(channel, NoteData, NOTE_PRIO_2);
+}
+
+void Session::PreviewSample(const std::vector<uint8_t> &data, int offset, int pitch, bool deltaStart) {
+	if (!IsCurrent() || m_bWave || data.empty())
+		return;
+	CSoundGenHost &host = *GetEngine().host;
+	// The sample has no name: the sound generator deletes it when it has played.
+	CDSample *sample = new CDSample(static_cast<unsigned>(std::min<size_t>(data.size(), CDSample::MAX_SIZE)));
+	std::copy_n(data.begin(), sample->GetSize(), reinterpret_cast<uint8_t *>(sample->GetData()));
+	// the start has to leave something to play (CSoundGen::PlaySample())
+	offset = std::clamp(offset, 0, static_cast<int>(((sample->GetSize() - 1) >> 4) >> 2));
+	// CSampleEditorDlg::OnBnClickedPlay()
+	host.WriteAPU(0x4011, deltaStart ? 64 : 0);
+	if (!host.PreviewSample(sample, offset, std::clamp(pitch, 0, 15)))
+		delete sample;
+}
+
+void Session::ReleaseSamples() {
+	if (IsCurrent())
+		GetEngine().host->CancelPreview();
 }
 
 void Session::SetMutedChannels(uint64_t mask) {

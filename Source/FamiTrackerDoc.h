@@ -593,7 +593,7 @@ private:
 	// Things below are for compability with older files
 	std::vector<COldSequence> m_vTmpSequences;		// // //
 
-	mutable CDocumentFile *m_pCurrentDocument;		// // //
+	mutable CDocumentFile *m_pCurrentDocument = nullptr;		// // // only while a file is being read
 
 	//
 	// End of document data

@@ -123,7 +123,9 @@ The document is read and changed through the tracker's own functions:
 | tracks | `track(t)` (frames, rows, speed, tempo, highlight, effColumns, frameList), `addTrack`, `removeTrack`, `setTrackTitle`, `setPatternLength`, `setFrameCount`, `setSpeed`, `setTempo`, `setHighlight`, `setEffColumns`, `setGrooveMode(t, groove)`, `moveTrack(t, up)`, `songLength(t)` (intro and loop, in seconds) |
 | patterns | `pattern(t, channel, pattern)`, `patterns(t)` (every one with something in it), `setCells(t, channel, pattern, row, cells)`, `clearPatterns(t)`, `populateUniquePatterns(t)` |
 | frames | `setFramePattern`, `setFrameList`, `insertFrame`, `removeFrame`, `duplicateFrame`, `cloneFrame`, `moveFrame`, `freePattern` |
-| instruments | `instruments()`, `instrument(i)`, `addInstrument(chip, name)`, `removeInstrument`, `cloneInstrument`, `deepCloneInstrument`, `setInstrumentName`, `setInstrumentSequence(i, type, enabled, index)`, `sequence(instType, type, index)`, `setSequence(...)`, `freeSequence` |
+| instruments | `instruments()`, `instrument(i)` (also the DPCM keys, the FDS's wave, modulation and sequences, the N163's waves, the VRC7's patch and registers, by the kind), `addInstrument(chip, name)`, `removeInstrument`, `cloneInstrument`, `deepCloneInstrument`, `setInstrumentName`, `setInstrumentSequence(i, type, enabled, index)`, `sequence(instType, type, index)`, `setSequence(...)`, `freeSequence`, `nextFreeSequence(i, type)` ("Select next empty slot"), `cloneSequence(i, type)` ("Clone sequence"), `saveInstrument(i)` and `loadInstrument(bytes)` (.fti files) |
+| instrument settings | `setDpcmKey(i, key, sample, pitch, loop, delta)`, `setFdsWave`, `setFdsModulation`, `setFdsParams(i, speed, depth, delay)`, `setFdsSequence(i, type, items, loop, release, setting)`, `setN163(i, size, pos, count, waves)`, `setN163Wave(i, wave, samples)`, `setVrc7(i, patch, registers)`, `vrc7Patches()` |
+| DPCM samples | `samples()`, `sample(slot)`, `setSample(slot or -1, name, bytes)`, `removeSample(slot)`, `previewSample(bytes, offset, pitch, deltaStart)`, `stopPreview()` |
 
 A pattern cell is 12 bytes, the fields of the tracker's `stChanNote`: note, octave, volume,
 instrument, four effect numbers, four effect parameters. `dnft.effects()` gives the
@@ -143,6 +145,23 @@ entries, and two more a groove), and a track whose groove goes gets speed 6 back
 the desktop. The mix offsets are tenths of a dB, -12 to 12 dB, for the 2A03's pulse
 channels, its other channels, VRC6, VRC7, FDS, MMC5, N163 and 5B. `opll()` gives the
 module's own VRC7 patches when it has an external OPLL, the default set otherwise.
+
+`instrument(i)` says what an instrument of the kind holds besides its name. The 2A03's
+`dpcm` has, for each of the 96 keys (octave × 12 + semitone), the sample it plays (0: none,
+else the slot + 1), the pitch 0-15 (0x80 added for looping) and the delta counter it starts
+at (-1: as it is). The samples are the module's, not the instrument's: `samples()` lists
+the slots in use, at most 64 and 256 KB, each up to 4081 bytes. `setSample()` puts a
+sample in a slot, or in the first free one for -1, and throws when there is no room. The
+FDS keeps three sequences (volume 0-32, arpeggio, pitch) in the instrument, where the
+others use numbered ones that instruments share. The N163's `waves` are `waveCount` waves
+of `waveSize` steps (a multiple of 4, up to 240), 0-15 each, one after the other, at
+`wavePos`. The VRC7's `patch` is 0 for its own `registers` (8 bytes), 1-15 for the chip's.
+An `.fti` file is what the desktop's Save Instrument writes (FTI2.4, with the DPCM samples
+of a 2A03 instrument). `loadInstrument()` puts one in the first free slot, and adds the
+samples that the module does not have yet; a file that is cut short or damaged is refused
+and leaves the module as it was. `previewSample()` plays bytes that need not be in the
+module, from the 64 byte step `offset`. An edited FDS or N163 wave changes what a note
+held plays; the other settings are read when a note starts.
 
 Texts (the title, the comment, the names of tracks and instruments) are kept the way the
 desktop tracker keeps them: as bytes of the ANSI code page of its Windows, which for the
@@ -197,7 +216,10 @@ As with players, one session drives the sound generator at a time.
   reached (from the worklet's position reports and `getOutputTimestamp()`)
 - `dnft-editor.mjs`: the editor; `dnft-pattern-view.mjs`: the pattern grid (a canvas);
   `dnft-song.mjs`: the page's copy of the module and the undo history;
-  `dnft-instrument-editor.mjs`: the sequence editor; `dnft-files.mjs`: the Import and
+  `dnft-instrument-editor.mjs`: the instrument editor's dialog and the sequences;
+  `dnft-instrument-panels.mjs`: its wave editors and the FDS, N163 and VRC7 panels;
+  `dnft-dpcm.mjs`: the DPCM panel, the sample editor and the import of WAV files;
+  `dnft-files.mjs`: the Import and
   Export menus and their dialogs; `dnft-song-menu.mjs`: the Song and Module menus and
   their dialogs; `dnft-zip.mjs`: zip files, for exports that write several files;
   `dnft-editor-strings.mjs`: its texts (Japanese and English); `dnft-editor.css`: its
@@ -216,6 +238,33 @@ and pull up; Shift with the arrows selects, Ctrl+C/X/V copy, cut and paste, Ctrl
 and redo, Ctrl+Up/Down transpose. Edits of patterns, frames and song settings can be
 undone; instruments, as on the desktop, cannot. The module is kept in the browser's
 localStorage as it changes and comes back when the page is opened again.
+
+The instrument editor (double-click an instrument, or its edit button) has the panels
+of the desktop's, by the kind of instrument. The sequences (2A03, VRC6, N163, 5B) are bars
+to draw with the mouse and the desktop's text form (`15 12 | 10 8 / 4 0`: what follows `|`
+loops, what follows `/` plays on release); the number of a sequence is chosen with
+"Select next empty slot" (the lowest number nothing uses and that has nothing in it), and
+"Clone sequence" (the button, or the right button on the list of sequences or the graph)
+copies the sequence into the next empty number, which the instrument then uses. The FDS has a
+wave (64 steps of 0-63) and a modulation table (32 steps of 8 kinds) to draw, with the
+desktop's presets and its rate, depth and delay, and three sequences of its own. The
+N163 has its waves in a list (add, remove, up to 64) with the size and position, presets
+made as the desktop makes them, and the waves as text, which is also how they are copied
+and pasted. The VRC7 chooses one of the chip's 15 patches or edits the 8 registers of its
+own, with sliders or as text. The 2A03's DPCM panel says, by octave, which sample each key
+plays, at which pitch, looping or not, and from which delta counter; the samples of the
+module are listed with their names, sizes and the space they take, and are loaded from
+`.dmc` files, made of WAV files (a dialog with the pitch to convert to and the gain; as the
+desktop's Import does, a windowed sinc brings the wave down to that rate and the delta counter
+is made to follow it), saved as `.dmc` files, and
+edited in the sample editor: the wave a sample's bits draw, a selection by 16 bytes to
+delete or tilt, bit reverse, and a preview from where the dashed line is, at a pitch, from
+the middle of the delta counter or not. The Z-M and Q-U rows of the keyboard, and the keys
+below the panels, play the instrument being edited on its chip's channel (the DPCM channel
+in the DPCM panel). Every change is made at once, so a note held while drawing changes as it
+plays. Instruments can be loaded from `.fti` files (the button in the instrument list, or by
+dropping the files anywhere on the editor; several at a time) and saved as `.fti` files
+(the button in the list, or in the editor's title bar).
 
 The Import and Export menus next to Save hold what the desktop's File menu does besides
 New, Open and Save, with the options of its dialogs: Create WAV (with the sample rate,
@@ -323,6 +372,10 @@ Small and meant to be harmless for the desktop build:
 | `APU/N163.cpp`, `mesen/Namco163Audio.h` | while skipping, `Namco163Audio::SkipAudio()` moves the channels one update for every 15 clocks at once; `UpdateChannel()` takes a number of updates | what `ClockAudio()` does for each clock, without the output of each |
 | `APU/VRC7.cpp`, `digital-sound-antiques/emu2413.c`, `emu2413.h` | while skipping, `OPLL_calcSkip()` for `OPLL_calc()`: the chip and its rate converter go on, the sum of the resampling and the volumes are left out | the samples are not used |
 | `digital-sound-antiques/emu2149.c` | `update_output()` split into `update_state()` and the outputs of the channels; `Tick()` only moves the state | the outputs of the calls before the last one are not used: the 5B plays twice as fast, sample for sample the same |
+| `Instrument.cpp` | `CInstrumentFile::ReadInt()` and `ReadChar()` raise a `CModuleException` when the file ends inside the value (they returned what the variable held) | a cut-short `.fti` was read with whatever the variable held, a sample count included |
+| `SeqInstrument.cpp` | `pSeq` starts at null in every round of `LoadFile()` | a damaged `.fti` made the handler delete the sequence of the round before, which the instrument manager owns (a double free) |
+| `Instrument2A03.cpp` | `SaveFile()` leaves out the keys whose sample the module does not have; `LoadFile()` checks the size of a sample against the module's DPCM space before taking memory, refuses a name or sample that the file ends inside, reads on when the file lists fewer samples than it counts, and gives a key whose sample the file does not carry none | the file counted the samples of such keys but did not list them (Hellpath's DPCM instrument is one), so it could not be read back; a damaged size asked for gigabytes; a cut-short sample was read with what the memory held; a key kept the number of whichever sample the module has there |
+| `FamiTrackerDoc.h` | `m_pCurrentDocument` starts at null | it was never set for a document that is not reading a file, and the range check of an `.fti` file that fails calls through it (a crash on the desktop too) |
 
 None of them changes the audio of playing: the first 20 to 30 seconds of every demo
 module, and of a module of each chip, are the same as before, sample for sample.
@@ -336,6 +389,8 @@ node web/test/session.mjs                        # editing sessions, saving demo
 node web/test/export.mjs                         # the exports and imports of sessions
 node web/test/text.mjs                           # module texts: code pages and UTF-8
 node web/test/seek.mjs                           # seeking: the audio, and the speed
+node web/test/instrument.mjs                     # instruments: DPCM samples, FDS, N163, VRC7, .fti files
+node web/test/dpcm.mjs                           # the editor's page code that works on numbers
 node web/test/render.mjs <module> [out.wav]      # render and report
 node web/test/compare.mjs <module> <export.wav>  # against the desktop WAV export
 ```

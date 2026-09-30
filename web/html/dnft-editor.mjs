@@ -14,7 +14,7 @@
 import { DnFTSession, PLAY, unsupportedReason } from './dnft-session.mjs';
 import {
   Song, History, CELL, NOTE, MAX_VOLUME, NO_INSTRUMENT, HOLD_INSTRUMENT, MAX_INSTRUMENTS, MAX_FRAMES,
-  MAX_PATTERNS, MAX_ROWS, OCTAVES, CHIP, CHANNEL_ID, EMPTY_CELL,
+  MAX_PATTERNS, MAX_ROWS, OCTAVES, CHIP, CHANNEL_ID, EMPTY_CELL, NOTE_KEYS, INSTRUMENT_CHIP,
 } from './dnft-song.mjs';
 import { PatternView, columnCount, columnKind } from './dnft-pattern-view.mjs';
 import { InstrumentEditor } from './dnft-instrument-editor.mjs';
@@ -30,17 +30,6 @@ const ENGINE_RATE_MIN = 16;
 const ENGINE_RATE_MAX = 400;
 // Characters of a comment, well within what a module file holds (session_bindings.cpp)
 const COMMENT_MAX = 20000;
-
-// The desktop's note keys, by the key's place on the keyboard: [semitone, octave offset]
-const NOTE_KEYS = {
-  KeyZ: [0, 0], KeyS: [1, 0], KeyX: [2, 0], KeyD: [3, 0], KeyC: [4, 0], KeyV: [5, 0], KeyG: [6, 0],
-  KeyB: [7, 0], KeyH: [8, 0], KeyN: [9, 0], KeyJ: [10, 0], KeyM: [11, 0],
-  Comma: [0, 1], KeyL: [1, 1], Period: [2, 1], Semicolon: [3, 1], Slash: [4, 1],
-  KeyQ: [0, 1], Digit2: [1, 1], KeyW: [2, 1], Digit3: [3, 1], KeyE: [4, 1], KeyR: [5, 1], Digit5: [6, 1],
-  KeyT: [7, 1], Digit6: [8, 1], KeyY: [9, 1], Digit7: [10, 1], KeyU: [11, 1],
-  KeyI: [0, 2], Digit9: [1, 2], KeyO: [2, 2], Digit0: [3, 2], KeyP: [4, 2],
-  BracketLeft: [5, 2], Equal: [6, 2], BracketRight: [7, 2],
-};
 
 const CHIPS = [['VRC6', CHIP.VRC6], ['VRC7', CHIP.VRC7], ['FDS', CHIP.FDS], ['MMC5', CHIP.MMC5], ['N163', CHIP.N163], ['5B', CHIP.S5B]];
 
@@ -141,6 +130,7 @@ export class DnFTEditor {
           <button type="button" class="dnft-button" data-action="open"></button>
           <button type="button" class="dnft-button" data-action="save"><span></span><i class="dnft-dirty" hidden></i></button>
           <input type="file" class="dnft-file" accept=".dnm,.0cc,.ftm" hidden>
+          <input type="file" class="dnft-instrument-file" accept=".fti" multiple hidden>
           <select class="dnft-demos" hidden></select>
         </div>
         <div class="dnft-group">
@@ -232,6 +222,8 @@ export class DnFTEditor {
                 <button type="button" class="dnft-icon-button" data-action="deep-clone-instrument"></button>
                 <button type="button" class="dnft-icon-button" data-action="remove-instrument"></button>
                 <button type="button" class="dnft-icon-button" data-action="edit-instrument"></button>
+                <button type="button" class="dnft-icon-button" data-action="load-instrument"></button>
+                <button type="button" class="dnft-icon-button" data-action="save-instrument"></button>
               </span>
             </header>
             <ul class="dnft-instrument-list" role="listbox"></ul>
@@ -299,6 +291,8 @@ export class DnFTEditor {
     label('deep-clone-instrument', '⎘', t.deepCloneInstrumentHint);
     label('remove-instrument', '✕', t.removeInstrument);
     label('edit-instrument', '✎', t.editInstrument);
+    label('load-instrument', '⤓', t.loadInstrumentHint);
+    label('save-instrument', '⤒', t.saveInstrumentHint);
     label('add-track', '+', t.addTrack);
     label('remove-track', '−', t.removeTrack);
     label('track-up', '↑', t.trackUp);
@@ -346,7 +340,7 @@ export class DnFTEditor {
     }));
 
     this.els = {
-      toolbar: $('.dnft-toolbar'), file: $('.dnft-file'), dirty: $('.dnft-dirty'),
+      toolbar: $('.dnft-toolbar'), file: $('.dnft-file'), instrumentFile: $('.dnft-instrument-file'), dirty: $('.dnft-dirty'),
       octave: $('[data-spin="octave"] output'), step: $('[data-spin="step"] output'),
       instrument: $('[data-role="instrument"]'), volume: $('[data-role="volume"]'),
       track: $('[data-role="track"]'), trackTitle: $('[data-role="track-title"]'), grooveMode: $('[data-role="groove-mode"]'),
@@ -446,12 +440,21 @@ export class DnFTEditor {
       if (!root.contains(e.relatedTarget))
         els.drop.hidden = true;
     });
+    els.instrumentFile.addEventListener('change', () => {
+      const files = [...els.instrumentFile.files];
+      els.instrumentFile.value = '';
+      if (files.length)
+        this.loadInstruments(files);
+    });
     root.addEventListener('drop', e => {
       e.preventDefault();
       els.drop.hidden = true;
-      const file = e.dataTransfer.files[0];
-      if (file)
-        this.openFile(file);
+      const files = [...e.dataTransfer.files];
+      // instrument files are added to the module; anything else is a module to open
+      if (files.length && files.every(file => /\.fti$/i.test(file.name)))
+        this.loadInstruments(files);
+      else if (files[0])
+        this.openFile(files[0]);
     });
 
     els.instrument.addEventListener('change', () => this.selectInstrument(Number(els.instrument.value)));
@@ -617,6 +620,8 @@ export class DnFTEditor {
     // a text export (File > Import Text)
     if (/\.txt$/i.test(file.name))
       return this.files.importText(file);
+    if (/\.fti$/i.test(file.name))
+      return this.loadInstruments([file]);
     if (this.dirty && !confirm(this.strings.confirmOpen))
       return;
     const bytes = new Uint8Array(await file.arrayBuffer());
@@ -1581,6 +1586,57 @@ export class DnFTEditor {
     this.changedInstruments();
   }
 
+  // Instrument files (.fti) become instruments of the module, each in the next free number
+  // (with the DPCM samples they carry); the last one is the instrument in use
+  async loadInstruments(files) {
+    const t = this.strings;
+    const chips = this.song.info.chips;
+    let last = -1, count = 0, missingChip = null, failure = null;
+    for (const file of files) {
+      try {
+        const index = await this.session.call('loadInstrument', new Uint8Array(await file.arrayBuffer()));
+        last = index;
+        ++count;
+        const info = await this.session.call('instrument', index);
+        const chip = INSTRUMENT_CHIP[info.type];
+        if (chip && !(chips & chip))
+          missingChip = CHIPS.find(([, bit]) => bit === chip)?.[0] ?? null;
+      } catch (e) {
+        // the ones before it stay
+        failure = `${file.name}: ${e.message}`;
+        break;
+      }
+    }
+    let done = '';
+    if (last >= 0) {
+      await this.refreshInstruments();
+      this.selectInstrument(last, { quiet: true });
+      this.changedInstruments();
+      const named = count === 1 ? files[0].name : t.instrumentsLoaded.replace('%1', count);
+      done = t.instrumentLoaded + named + (missingChip ? t.instrumentChipMissing.replace('%1', missingChip) : '');
+    }
+    if (failure)
+      this.message(done ? `${done} — ${failure}` : failure, true);
+    else
+      this.message(done, !!missingChip);
+  }
+
+  // The instrument as an .fti file
+  async saveInstrumentFile(index = this.instrument) {
+    const t = this.strings;
+    const info = this.song.instrument(index);
+    if (!info)
+      return;
+    try {
+      const bytes = await this.session.call('saveInstrument', index);
+      const name = `${info.name.replace(/[\/:*?"<>|\u0000-\u001f]/g, ' ').trim() || t.instrumentFileName}.fti`;
+      this.files.download(name, new Blob([bytes], { type: 'application/octet-stream' }));
+      this.message(t.saved + name);
+    } catch (e) {
+      this.message(t.failed + e.message, true);
+    }
+  }
+
   // ---- actions and keys ---------------------------------------------------------------------
 
   action(name, event) {
@@ -1619,6 +1675,8 @@ export class DnFTEditor {
       case 'deep-clone-instrument': return this.cloneInstrument({ deep: true });
       case 'remove-instrument': return this.removeInstrument();
       case 'edit-instrument': return this.song.instrument(this.instrument) && this.instrumentEditor.open(this.instrument);
+      case 'load-instrument': return this.els.instrumentFile.click();
+      case 'save-instrument': return this.saveInstrumentFile();
       case 'note-cut': return this.editMode && this.enterNote(NOTE.HALT, 0);
       case 'note-release': return this.editMode && this.enterNote(NOTE.RELEASE, 0);
       case 'clear': return this.editMode && this.clear();
@@ -1976,6 +2034,8 @@ export class DnFTEditor {
     for (const action of ['clone-instrument', 'deep-clone-instrument'])
       panel.querySelector(`[data-action="${action}"]`).disabled = !exists || song.instruments.length >= MAX_INSTRUMENTS;
     panel.querySelector('[data-action="edit-instrument"]').disabled = !exists;
+    panel.querySelector('[data-action="save-instrument"]').disabled = !exists;
+    panel.querySelector('[data-action="load-instrument"]').disabled = song.instruments.length >= MAX_INSTRUMENTS;
     panel.querySelector('[data-action="add-instrument"]').disabled = song.instruments.length >= MAX_INSTRUMENTS;
   }
 

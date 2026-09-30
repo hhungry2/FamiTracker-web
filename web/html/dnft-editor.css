@@ -769,14 +769,8 @@
   font-size: 14px;
 }
 
-.dnft-instrument-name,
-.dnft-instrument-note,
-.dnft-sequences {
+.dnft-instrument-name {
   margin: 12px 14px;
-}
-
-.dnft-instrument-note {
-  color: var(--dnft-muted);
 }
 
 .dnft-tabs {
@@ -1200,5 +1194,488 @@
   .dnft-mixer-row input[type="range"] {
     grid-column: 1 / -1;
     grid-row: 2;
+  }
+}
+
+/* ---- the instrument editor: its panels, wave editors and DPCM samples (dnft-instrument-editor.mjs) ---- */
+
+.dnft-instrument-dialog {
+  width: min(940px, calc(100vw - 32px));
+  overflow-y: auto;
+}
+
+.dnft-dialog-tools {
+  display: flex;
+  gap: 6px;
+}
+
+.dnft-panel-tabs {
+  margin: 0 14px;
+}
+
+.dnft-instrument-body {
+  margin: 12px 14px;
+}
+
+.dnft-inst-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.dnft-inst-section {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dnft-inst-section h4 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dnft-muted);
+}
+
+.dnft-audition {
+  display: grid;
+  gap: 4px;
+  margin: 0 14px 14px;
+}
+
+.dnft-audition .dnft-piano {
+  flex: none;
+  width: 100%;
+  min-width: 0;
+  max-width: 520px;
+  height: 44px;
+}
+
+.dnft-audition-hint.is-error {
+  color: var(--dnft-error);
+}
+
+.dnft-context-menu {
+  position: fixed;
+  z-index: 40;
+  display: grid;
+  min-width: 190px;
+  padding: 4px;
+  border: 1px solid var(--dnft-line);
+  border-radius: 8px;
+  background: var(--dnft-surface);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+
+.dnft-menu-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* waves */
+
+.dnft-wavebox {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dnft-wave-canvas,
+.dnft-mod-canvas {
+  display: block;
+  width: 100%;
+  height: 210px;
+  border: 1px solid var(--dnft-line);
+  border-radius: 6px;
+  background: var(--dnft-pe-bg);
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.dnft-mod-canvas {
+  height: 128px;
+}
+
+.dnft-wave-tools {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 12px;
+}
+
+.dnft-wave-presets,
+.dnft-wave-ops {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.dnft-wave-text {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.dnft-wave-text input[type="text"] {
+  flex: 1;
+  font-family: var(--dnft-mono);
+  font-size: 12px;
+}
+
+.dnft-fds {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+.dnft-fds-params {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dnft-n163 {
+  grid-template-columns: minmax(150px, 190px) minmax(0, 1fr);
+  align-items: start;
+}
+
+.dnft-n163-list {
+  display: grid;
+  gap: 6px;
+}
+
+.dnft-n163-waves {
+  display: grid;
+  gap: 2px;
+  max-height: 320px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--dnft-line);
+  border-radius: 6px;
+  background: var(--dnft-pe-bg);
+}
+
+.dnft-n163-wave {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  color: var(--dnft-pe-row-number);
+  font: 12px var(--dnft-mono);
+  cursor: pointer;
+}
+
+.dnft-n163-wave:hover {
+  background: var(--dnft-pe-beat);
+}
+
+.dnft-n163-wave.is-current {
+  background: var(--dnft-pe-cursor-row);
+  color: var(--dnft-pe-instrument);
+}
+
+.dnft-n163-wave canvas {
+  width: 96px;
+  height: 24px;
+  border-radius: 3px;
+}
+
+.dnft-n163-params {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+
+.dnft-n163-params input[type="number"] {
+  width: 90px;
+}
+
+/* VRC7 */
+
+.dnft-vrc7-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+
+.dnft-vrc7-head .dnft-wave-text {
+  flex: 1;
+  min-width: 260px;
+}
+
+.dnft-vrc7-operators {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dnft-vrc7-operators .dnft-fieldset,
+.dnft-vrc7-fieldset-common {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 14px;
+}
+
+.dnft-vrc7-control {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 8px;
+  color: var(--dnft-text);
+  font-size: 12px;
+}
+
+.dnft-vrc7-control.dnft-check {
+  display: flex;
+}
+
+.dnft-vrc7-control input[type="range"] {
+  width: 100%;
+  accent-color: var(--dnft-accent);
+}
+
+.dnft-vrc7-control output {
+  text-align: right;
+  font-family: var(--dnft-mono);
+}
+
+.dnft-vrc7-control input:disabled {
+  opacity: 0.6;
+}
+
+/* DPCM */
+
+.dnft-dpcm {
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  align-items: start;
+}
+
+.dnft-octaves {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.dnft-octaves .dnft-tab {
+  min-width: 34px;
+  border-bottom: 1px solid transparent;
+  border-radius: 6px;
+  text-align: center;
+}
+
+.dnft-dpcm-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.dnft-dpcm-table th {
+  padding: 2px 4px;
+  font-weight: 500;
+  text-align: left;
+  color: var(--dnft-muted);
+}
+
+.dnft-dpcm-table td {
+  padding: 2px 3px;
+}
+
+.dnft-dpcm-table select {
+  width: 100%;
+}
+
+.dnft-dpcm-table input[type="number"] {
+  width: 68px;
+}
+
+.dnft-dpcm-keyname {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-family: var(--dnft-mono);
+}
+
+.dnft-dpcm-table tr.is-assigned .dnft-dpcm-keyname span {
+  color: var(--dnft-accent);
+  font-weight: 600;
+}
+
+.dnft-dpcm-keyname .is-down {
+  background: var(--dnft-accent);
+  color: var(--dnft-accent-text);
+}
+
+.dnft-sample-list {
+  display: grid;
+  gap: 3px;
+  max-height: 340px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.dnft-sample {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto auto auto auto auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.dnft-sample-index,
+.dnft-sample-size {
+  font: 12px var(--dnft-mono);
+  color: var(--dnft-muted);
+}
+
+.dnft-sample-empty {
+  color: var(--dnft-muted);
+  font-size: 12px;
+}
+
+.dnft-dpcm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+
+/* the sample editor */
+
+.dnft-sample-dialog {
+  width: min(980px, calc(100vw - 32px));
+}
+
+.dnft-sample-body {
+  display: grid;
+  gap: 10px;
+  margin: 12px 14px 14px;
+}
+
+.dnft-sample-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.dnft-sample-canvas {
+  display: block;
+  width: 100%;
+  height: 240px;
+  border: 1px solid var(--dnft-line);
+  border-radius: 6px;
+  background: var(--dnft-pe-bg);
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.dnft-sample-view {
+  display: grid;
+  grid-template-columns: minmax(200px, 280px) minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.dnft-editor input[type="range"] {
+  accent-color: var(--dnft-accent);
+}
+
+.dnft-sample-zoom input {
+  width: 100px;
+}
+
+.dnft-sample-scroll {
+  width: 100%;
+}
+
+.dnft-sample-status {
+  margin: 0;
+  font: 12px var(--dnft-mono);
+  color: var(--dnft-muted);
+}
+
+.dnft-dpcm-loop-label {
+  display: none;
+  font-size: 12px;
+}
+
+@media (max-width: 560px) {
+  /* a key is two lines: the key and its sample, then the pitch, loop and delta counter */
+  .dnft-dpcm-table thead {
+    display: none;
+  }
+
+  .dnft-dpcm-table,
+  .dnft-dpcm-table tbody {
+    display: block;
+  }
+
+  .dnft-dpcm-table tr {
+    display: grid;
+    grid-template-columns: 76px minmax(128px, 1.7fr) auto minmax(0, 1fr);
+    gap: 4px 8px;
+    align-items: center;
+    padding: 6px 0;
+    border-top: 1px solid var(--dnft-line);
+  }
+
+  .dnft-dpcm-table td {
+    min-width: 0;
+    padding: 0;
+  }
+
+  .dnft-dpcm-table td:nth-child(1) {
+    grid-row: 1 / span 2;
+  }
+
+  .dnft-dpcm-table td:nth-child(2) {
+    grid-column: 2 / -1;
+  }
+
+  .dnft-dpcm-table td:nth-child(3) {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .dnft-dpcm-table td:nth-child(4) {
+    grid-column: 3;
+    grid-row: 2;
+  }
+
+  .dnft-dpcm-table td:nth-child(5) {
+    grid-column: 4;
+    grid-row: 2;
+  }
+
+  .dnft-dpcm-table input[type="number"] {
+    width: 100%;
+  }
+
+  .dnft-dpcm-loop-label {
+    display: inline;
+  }
+}
+
+@media (max-width: 760px) {
+  .dnft-fds,
+  .dnft-dpcm,
+  .dnft-n163,
+  .dnft-vrc7-operators {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dnft-sample-view {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dnft-sample {
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+  }
+
+  .dnft-sample-name {
+    grid-column: 2 / -1;
   }
 }

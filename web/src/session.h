@@ -87,6 +87,15 @@ public:
 	// Bit n mutes channel n. Muting cuts what the channel plays.
 	void SetMutedChannels(uint64_t mask);
 
+	// The DPCM sample editor's preview (CSoundGen::PreviewSample()): plays the bytes as a
+	// sample at pitch 0-15 from the 64 byte step `offset`, with the delta counter starting
+	// at 64 or at 0 ("delta start"). Nothing plays when another player or session has the
+	// sound generator.
+	void PreviewSample(const std::vector<uint8_t> &data, int offset, int pitch, bool deltaStart);
+	// Stops the preview, and lets go of the samples of the document, which the DPCM plays
+	// from: to call before one of them is removed or replaced.
+	void ReleaseSamples();
+
 	// To call after changing what the sound generator sets up from the document: expansion
 	// chips, machine, engine speed, vibrato style, linear pitch. Stops playback.
 	void ApplyDocumentProperties();

@@ -232,6 +232,23 @@ void CSoundGenHost::SetSkipping(bool skip) {
 		m_Gen.m_pAPU->SetSkipping(skip);
 }
 
+bool CSoundGenHost::PreviewSample(const CDSample *sample, int offset, int pitch) {
+	if (!m_Gen.m_pAPU)
+		return false;
+	m_Gen.PlaySample(sample, offset, pitch);
+	return true;
+}
+
+void CSoundGenHost::CancelPreview() {
+	if (m_Gen.m_pAPU)
+		m_Gen.CancelPreviewSample();
+}
+
+void CSoundGenHost::WriteAPU(int address, uint8_t value) {
+	if (m_Gen.m_pAPU)
+		m_Gen.m_pAPU->Write(static_cast<uint16_t>(address), value);
+}
+
 bool CSoundGenHost::IsPlaying() const {
 	return m_Gen.m_bRendering && m_Gen.IsPlaying();
 }

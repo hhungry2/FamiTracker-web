@@ -27,6 +27,11 @@
 #include "TrackerChannel.h"
 #include "Instrument.h"
 #include "SeqInstrument.h"
+#include "Instrument2A03.h"
+#include "InstrumentFDS.h"
+#include "InstrumentN163.h"
+#include "InstrumentVRC7.h"
+#include "DSample.h"
 #include "Sequence.h"
 #include "InstrumentManager.h"
 #include "engine_internal.h"
@@ -97,6 +102,42 @@ std::string WithLineBreaks(const std::string &text, const char *lineBreak) {
 			out += text[i];
 	}
 	return out;
+}
+
+// {items: Int8Array, loop, release, setting}; loop and release are -1 when unset
+val SequenceToJs(const CSequence *pSeq) {
+	val result = val::object();
+	const unsigned count = pSeq->GetItemCount();
+	val items = val::global("Int8Array").new_(count);
+	for (unsigned i = 0; i < count; ++i)
+		items.set(i, static_cast<int>(pSeq->GetItem(i)));
+	result.set("items", items);
+	result.set("loop", static_cast<int>(pSeq->GetLoopPoint()));
+	result.set("release", static_cast<int>(pSeq->GetReleasePoint()));
+	result.set("setting", static_cast<int>(pSeq->GetSetting()));
+	return result;
+}
+
+// The other way: the items are at most MAX_SEQUENCE_ITEMS, the setting one the kind of sequence has
+void WriteSequence(CSequence *pSeq, int seqType, const val &items, int loop, int release, int setting) {
+	const std::vector<int8_t> values = emscripten::convertJSArrayToNumberVector<int8_t>(items);
+	const int count = std::min<int>(static_cast<int>(values.size()), MAX_SEQUENCE_ITEMS);
+	pSeq->SetItemCount(count);
+	for (int i = 0; i < count; ++i)
+		pSeq->SetItem(i, values[i]);
+	pSeq->SetLoopPoint(loop >= 0 && loop < count ? loop : -1);
+	pSeq->SetReleasePoint(release >= 0 && release < count ? release : -1);
+	pSeq->SetSetting(static_cast<seq_setting_t>(std::clamp(setting, 0, static_cast<int>(SEQ_SETTING_COUNT[seqType]) - 1)));
+}
+
+// Values of an array from the page, at most `count` of them, each within [min, max]; the
+// rest of the count is `fill`
+std::vector<int> BoundedValues(const val &array, size_t count, int min, int max, int fill = 0) {
+	std::vector<int> values = emscripten::convertJSArrayToNumberVector<int>(array);
+	values.resize(count, fill);
+	for (int &value : values)
+		value = std::clamp(value, min, max);
+	return values;
 }
 
 void PackCell(const stChanNote &note, uint8_t *out) {
@@ -500,6 +541,8 @@ public:
 	}
 
 	void removeUnusedSamples() {
+		// the DPCM may be playing from one of them
+		m_pSession->ReleaseSamples();
 		Doc().RemoveUnusedSamples();
 	}
 
@@ -550,14 +593,41 @@ public:
 		return list;
 	}
 
-	//! {index, type, name, sequences: [{enabled, index}] for the 5 kinds when it has them}
+	//! {index, type, name, and by the kind of instrument:
+	//!  sequences: [{enabled, index}] for the 5 kinds (2A03, VRC6, N163, 5B: the sequences
+	//!   are the module's, numbered, and shared between instruments),
+	//!  dpcm: {samples, pitches, deltas} of the 96 notes (octave * 12 + semitone) for the 2A03:
+	//!   the sample number (0: none, else the slot + 1), the pitch 0-15 with 0x80 for looping,
+	//!   the initial delta counter (-1: off),
+	//!  n163: {waveSize, wavePos, waveCount, waves: Uint8Array(waveCount * waveSize)},
+	//!  fds: {wave: Uint8Array(64), modulation: Uint8Array(32), speed, depth, delay,
+	//!   sequences: [sequence()] volume, arpeggio and pitch, which the instrument owns},
+	//!  vrc7: {patch, registers: Uint8Array(8)} (0: the instrument's own patch)}
 	val instrument(int index) const {
 		const auto pInst = GetInstrument(index);
 		val result = val::object();
 		result.set("index", index);
 		result.set("type", static_cast<int>(pInst->GetType()));
 		result.set("name", dnft::detail::ToUtf8(pInst->GetName(), CInstrument::INST_NAME_MAX));
-		if (auto pSeqInst = std::dynamic_pointer_cast<CSeqInstrument>(pInst)) {
+		if (auto pFds = std::dynamic_pointer_cast<CInstrumentFDS>(pInst)) {
+			val fds = val::object();
+			std::vector<uint8_t> wave(CInstrumentFDS::WAVE_SIZE), modulation(CInstrumentFDS::MOD_SIZE);
+			for (size_t i = 0; i < wave.size(); ++i)
+				wave[i] = pFds->GetSample(static_cast<int>(i));
+			for (size_t i = 0; i < modulation.size(); ++i)
+				modulation[i] = static_cast<uint8_t>(pFds->GetModulation(static_cast<int>(i)));
+			fds.set("wave", CopyToJs(wave));
+			fds.set("modulation", CopyToJs(modulation));
+			fds.set("speed", pFds->GetModulationSpeed());
+			fds.set("depth", pFds->GetModulationDepth());
+			fds.set("delay", pFds->GetModulationDelay());
+			val sequences = val::array();
+			for (int i = 0; i < CInstrumentFDS::SEQUENCE_COUNT; ++i)
+				sequences.call<void>("push", SequenceToJs(pFds->GetSequence(i)));
+			fds.set("sequences", sequences);
+			result.set("fds", fds);
+		}
+		else if (auto pSeqInst = std::dynamic_pointer_cast<CSeqInstrument>(pInst)) {
 			val sequences = val::array();
 			for (int i = 0; i < SEQ_COUNT; ++i) {
 				val entry = val::object();
@@ -566,6 +636,45 @@ public:
 				sequences.call<void>("push", entry);
 			}
 			result.set("sequences", sequences);
+		}
+		if (auto p2A03 = std::dynamic_pointer_cast<CInstrument2A03>(pInst)) {
+			val samples = val::global("Uint8Array").new_(NOTE_COUNT);
+			val pitches = val::global("Uint8Array").new_(NOTE_COUNT);
+			val deltas = val::global("Int8Array").new_(NOTE_COUNT);
+			for (int octave = 0; octave < OCTAVE_RANGE; ++octave)
+				for (int note = 0; note < NOTE_RANGE; ++note) {
+					const int key = octave * NOTE_RANGE + note;
+					samples.set(key, static_cast<int>(static_cast<uint8_t>(p2A03->GetSampleIndex(octave, note))));
+					pitches.set(key, static_cast<int>(static_cast<uint8_t>(p2A03->GetSamplePitch(octave, note))));
+					deltas.set(key, static_cast<int>(p2A03->GetSampleDeltaValue(octave, note)));
+				}
+			val dpcm = val::object();
+			dpcm.set("samples", samples);
+			dpcm.set("pitches", pitches);
+			dpcm.set("deltas", deltas);
+			result.set("dpcm", dpcm);
+		}
+		else if (auto pN163 = std::dynamic_pointer_cast<CInstrumentN163>(pInst)) {
+			const int size = pN163->GetWaveSize(), count = pN163->GetWaveCount();
+			std::vector<uint8_t> waves(static_cast<size_t>(size) * count);
+			for (int wave = 0; wave < count; ++wave)
+				for (int i = 0; i < size; ++i)
+					waves[static_cast<size_t>(wave) * size + i] = static_cast<uint8_t>(pN163->GetSample(wave, i));
+			val n163 = val::object();
+			n163.set("waveSize", size);
+			n163.set("wavePos", pN163->GetWavePos());
+			n163.set("waveCount", count);
+			n163.set("waves", CopyToJs(waves));
+			result.set("n163", n163);
+		}
+		else if (auto pVrc7 = std::dynamic_pointer_cast<CInstrumentVRC7>(pInst)) {
+			std::vector<uint8_t> registers(8);
+			for (int i = 0; i < 8; ++i)
+				registers[i] = pVrc7->GetCustomReg(i);
+			val vrc7 = val::object();
+			vrc7.set("patch", static_cast<int>(pVrc7->GetPatch()));
+			vrc7.set("registers", CopyToJs(registers));
+			result.set("vrc7", vrc7);
 		}
 		return result;
 	}
@@ -598,9 +707,7 @@ public:
 	}
 
 	void setInstrumentSequence(int index, int seqType, bool enabled, int seqIndex) {
-		auto pInst = std::dynamic_pointer_cast<CSeqInstrument>(GetInstrument(index));
-		if (!pInst)
-			throw std::runtime_error("instrument " + std::to_string(index) + " has no sequences");
+		auto pInst = GetSequenceInstrument(index, seqType);
 		CheckSequence(seqType, seqIndex);
 		pInst->SetSeqEnable(seqType, enabled ? 1 : 0);
 		pInst->SetSeqIndex(seqType, seqIndex);
@@ -609,29 +716,11 @@ public:
 
 	//! {items: Int8Array, loop, release, setting}; loop and release are -1 when unset
 	val sequence(int instType, int seqType, int index) const {
-		const CSequence *pSeq = GetSequence(instType, seqType, index);
-		val result = val::object();
-		const unsigned count = pSeq->GetItemCount();
-		val items = val::global("Int8Array").new_(count);
-		for (unsigned i = 0; i < count; ++i)
-			items.set(i, static_cast<int>(pSeq->GetItem(i)));
-		result.set("items", items);
-		result.set("loop", static_cast<int>(pSeq->GetLoopPoint()));
-		result.set("release", static_cast<int>(pSeq->GetReleasePoint()));
-		result.set("setting", static_cast<int>(pSeq->GetSetting()));
-		return result;
+		return SequenceToJs(GetSequence(instType, seqType, index));
 	}
 
 	void setSequence(int instType, int seqType, int index, const val &items, int loop, int release, int setting) {
-		CSequence *pSeq = GetSequence(instType, seqType, index);
-		const std::vector<int8_t> values = emscripten::convertJSArrayToNumberVector<int8_t>(items);
-		const int count = std::min<int>(static_cast<int>(values.size()), MAX_SEQUENCE_ITEMS);
-		pSeq->SetItemCount(count);
-		for (int i = 0; i < count; ++i)
-			pSeq->SetItem(i, values[i]);
-		pSeq->SetLoopPoint(loop >= 0 && loop < count ? loop : -1);
-		pSeq->SetReleasePoint(release >= 0 && release < count ? release : -1);
-		pSeq->SetSetting(static_cast<seq_setting_t>(std::clamp(setting, 0, static_cast<int>(SEQ_SETTING_COUNT[seqType]) - 1)));
+		WriteSequence(GetSequence(instType, seqType, index), seqType, items, loop, release, setting);
 		Doc().SetModifiedFlag();
 	}
 
@@ -639,6 +728,281 @@ public:
 	int freeSequence(int instType, int seqType) const {
 		CheckSequence(seqType, 0);
 		return Doc().GetFreeSequence(static_cast<inst_type_t>(instType), seqType);
+	}
+
+	//! The number the instrument's "Select next empty slot" button picks for the kind of
+	//! sequence: the lowest one no other instrument uses that has nothing in it (the
+	//! instrument's own may be it), or -1. The instrument then uses it: see
+	//! setInstrumentSequence().
+	int nextFreeSequence(int index, int seqType) const {
+		const auto pInst = GetSequenceInstrument(index, seqType);
+		return Doc().GetFreeSequence(pInst->GetType(), seqType, pInst.get());
+	}
+
+	//! "Clone sequence": the instrument's sequence of the kind is copied into the lowest free
+	//! number, which the instrument takes; that number, or -1 when there is none
+	int cloneSequence(int index, int seqType) {
+		const auto pInst = GetSequenceInstrument(index, seqType);
+		CFamiTrackerDoc &doc = Doc();
+		const inst_type_t type = pInst->GetType();
+		const int free = doc.GetFreeSequence(type, seqType, pInst.get());
+		if (free < 0)
+			return -1;
+		doc.GetSequence(type, free, seqType)->Copy(pInst->GetSequence(seqType));
+		pInst->SetSeqIndex(seqType, free);
+		doc.SetModifiedFlag();
+		return free;
+	}
+
+	//! One of the FDS instrument's own sequences (0 volume, 1 arpeggio, 2 pitch)
+	void setFdsSequence(int index, int seqType, const val &items, int loop, int release, int setting) {
+		auto pFds = GetFds(index);
+		if (seqType < 0 || seqType >= CInstrumentFDS::SEQUENCE_COUNT)
+			throw std::out_of_range("no FDS sequence type " + std::to_string(seqType));
+		WriteSequence(pFds->GetSequence(seqType), seqType, items, loop, release, setting);
+		Doc().SetModifiedFlag();
+	}
+
+	// ---- instrument files --------------------------------------------------------------
+
+	//! The instrument as an .fti file (Uint8Array), with the DPCM samples of the 2A03's
+	val saveInstrument(int index) {
+		GetInstrument(index);
+		const std::string path = dnft::detail::NewPath("save.fti");
+		dnft::detail::MessageCollector messages;
+		Doc().SaveInstrument(index, CString(path.c_str()));
+		const std::vector<uint8_t> bytes = dnft_compat::TakeFile(path);
+		if (bytes.empty())
+			throw std::runtime_error(messages.GetText().empty() ? "could not save the instrument" : messages.GetText());
+		return CopyToJs(bytes);
+	}
+
+	//! Reads an .fti file into the first free instrument slot, which is its number. Its DPCM
+	//! samples are added to the module's (one the module has already is not added again).
+	//! Throws with the loader's message when it is not an instrument file, or the module has
+	//! no room for it.
+	int loadInstrument(const val &bytes) {
+		CFamiTrackerDoc &doc = Doc();
+		int slot = -1;
+		for (int i = 0; i < MAX_INSTRUMENTS && slot < 0; ++i)
+			if (!doc.GetInstrument(i))
+				slot = i;
+		if (slot < 0)
+			throw std::runtime_error("the module has as many instruments as it can hold");
+		const std::string path = dnft::detail::NewPath("load.fti");
+		dnft_compat::PutFile(path, FromJs(bytes));
+		dnft::detail::MessageCollector messages;
+		int loaded = INVALID_INSTRUMENT;
+		try {
+			loaded = doc.LoadInstrument(CString(path.c_str()));
+		}
+		catch (...) {
+			// what the loader does not handle, such as running out of memory, leaves the
+			// instrument half made
+			dnft_compat::TakeFile(path);
+			doc.RemoveInstrument(slot);
+			throw;
+		}
+		dnft_compat::TakeFile(path);
+		if (loaded < 0)
+			throw std::runtime_error(messages.GetText().empty() ? "not an instrument file" : messages.GetText());
+		return loaded;
+	}
+
+	// ---- 2A03: the DPCM samples and where they play -----------------------------------------
+
+	//! The sample a key plays, as instrument() gives it: `key` is octave * 12 + semitone,
+	//! `sample` 0 for none or the slot + 1, `pitch` 0-15, `delta` the delta counter it starts
+	//! at (-1: as it is)
+	void setDpcmKey(int index, int key, int sample, int pitch, bool loop, int delta) {
+		auto pInst = std::dynamic_pointer_cast<CInstrument2A03>(GetInstrument(index));
+		if (!pInst)
+			throw std::runtime_error("instrument " + std::to_string(index) + " has no DPCM samples");
+		if (key < 0 || key >= NOTE_COUNT)
+			throw std::out_of_range("no key " + std::to_string(key));
+		const int octave = key / NOTE_RANGE, note = key % NOTE_RANGE;
+		pInst->SetSampleIndex(octave, note, static_cast<char>(std::clamp(sample, 0, MAX_DSAMPLES)));
+		pInst->SetSamplePitch(octave, note, static_cast<char>(std::clamp(pitch, 0, 15) | (loop ? 0x80 : 0)));
+		pInst->SetSampleDeltaValue(octave, note, static_cast<char>(std::clamp(delta, -1, 127)));
+		Doc().SetModifiedFlag();
+	}
+
+	//! {samples: [{index, name, size}] for the slots in use, used: bytes taken, capacity:
+	//!  bytes the module may hold, maxSize: the longest sample, slots}
+	val samples() const {
+		const CFamiTrackerDoc &doc = Doc();
+		val list = val::array();
+		for (int i = 0; i < MAX_DSAMPLES; ++i)
+			if (const CDSample *pSample = doc.GetSample(i)) {
+				val entry = val::object();
+				entry.set("index", i);
+				entry.set("name", dnft::detail::ToUtf8(pSample->GetName(), CDSample::MAX_NAME_SIZE));
+				entry.set("size", pSample->GetSize());
+				list.call<void>("push", entry);
+			}
+		val result = val::object();
+		result.set("samples", list);
+		result.set("used", doc.GetTotalSampleSize());
+		result.set("capacity", MAX_SAMPLE_SPACE);
+		result.set("maxSize", static_cast<int>(CDSample::MAX_SIZE));
+		result.set("slots", MAX_DSAMPLES);
+		return result;
+	}
+
+	//! {index, name, data: Uint8Array}
+	val sample(int index) const {
+		const CDSample *pSample = GetSample(index);
+		val result = val::object();
+		result.set("index", index);
+		result.set("name", dnft::detail::ToUtf8(pSample->GetName(), CDSample::MAX_NAME_SIZE));
+		result.set("data", CopyToJs(reinterpret_cast<const uint8_t *>(pSample->GetData()), pSample->GetSize()));
+		return result;
+	}
+
+	//! Puts a sample in the slot (replacing the one there), or in the first free one when
+	//! `index` is -1; the slot. Throws when the module has no slot or no room for it.
+	int setSample(int index, const std::string &name, const val &data) {
+		CFamiTrackerDoc &doc = Doc();
+		const std::vector<uint8_t> bytes = FromJs(data);
+		if (bytes.empty() || bytes.size() > static_cast<size_t>(CDSample::MAX_SIZE))
+			throw std::out_of_range("a DPCM sample takes 1 to " + std::to_string(CDSample::MAX_SIZE) + " bytes");
+		unsigned freed = 0;
+		if (index < 0) {
+			index = doc.GetFreeSampleSlot();
+			if (index < 0)
+				throw std::runtime_error("the module has as many DPCM samples as it can hold");
+		}
+		else {
+			if (index >= MAX_DSAMPLES)
+				throw std::out_of_range("no sample slot " + std::to_string(index));
+			if (const CDSample *pOld = doc.GetSample(index))
+				freed = pOld->GetSize();
+		}
+		if (doc.GetTotalSampleSize() - freed + bytes.size() > static_cast<unsigned>(MAX_SAMPLE_SPACE))
+			throw std::runtime_error("the DPCM samples would take more than " + std::to_string(MAX_SAMPLE_SPACE / 1024) + " KB");
+		CDSample *pSample = new CDSample(static_cast<unsigned>(bytes.size()));
+		std::copy(bytes.begin(), bytes.end(), reinterpret_cast<uint8_t *>(pSample->GetData()));
+		pSample->SetName(ToDocument(name, CDSample::MAX_NAME_SIZE - 1).c_str());
+		// the DPCM may be playing from the sample that goes
+		m_pSession->ReleaseSamples();
+		doc.SetSample(index, pSample);
+		return index;
+	}
+
+	//! Takes the sample out of the module. Keys that played it play nothing.
+	void removeSample(int index) {
+		GetSample(index);
+		m_pSession->ReleaseSamples();
+		Doc().RemoveSample(index);
+	}
+
+	//! The sample editor's play button: plays the bytes (they need not be in the module) at
+	//! pitch 0-15 from the 64 byte step `offset`; `deltaStart` starts the delta counter at 64
+	//! rather than at 0
+	void previewSample(const val &data, int offset, int pitch, bool deltaStart) {
+		m_pSession->PreviewSample(FromJs(data), offset, pitch, deltaStart);
+	}
+
+	//! Stops a sample that previewSample() plays
+	void stopPreview() {
+		m_pSession->ReleaseSamples();
+	}
+
+	// ---- FDS: the wave, the modulation and their settings ---------------------------------
+
+	//! The 64 steps of the wave, 0-63 each
+	void setFdsWave(int index, const val &wave) {
+		auto pFds = GetFds(index);
+		const std::vector<int> values = BoundedValues(wave, CInstrumentFDS::WAVE_SIZE, 0, 63);
+		for (int i = 0; i < CInstrumentFDS::WAVE_SIZE; ++i)
+			pFds->SetSample(i, values[i]);
+		WaveChanged();
+	}
+
+	//! The 32 steps of the modulation table, 0-7 each (0 no change, 1 +1, 2 +2, 3 +4, 4
+	//! back to 0, 5 -4, 6 -2, 7 -1)
+	void setFdsModulation(int index, const val &table) {
+		auto pFds = GetFds(index);
+		const std::vector<int> values = BoundedValues(table, CInstrumentFDS::MOD_SIZE, 0, CInstrumentFDS::MOD_Y - 1);
+		for (int i = 0; i < CInstrumentFDS::MOD_SIZE; ++i)
+			pFds->SetModulation(i, values[i]);
+		WaveChanged();
+	}
+
+	//! Modulation rate 0-4095, depth 0-63 and delay 0-255
+	void setFdsParams(int index, int speed, int depth, int delay) {
+		auto pFds = GetFds(index);
+		pFds->SetModulationSpeed(std::clamp(speed, 0, 4095));
+		pFds->SetModulationDepth(std::clamp(depth, 0, 63));
+		pFds->SetModulationDelay(std::clamp(delay, 0, 255));
+		WaveChanged();
+	}
+
+	// ---- N163: the waves -----------------------------------------------------------------
+
+	//! Sets the size (a multiple of 4, 4-240), the position (0-255, at most 240 less the
+	//! size), and the waves: `count` (1-64) of `size` samples, 0-15 each, one after the
+	//! other. Returns what came of them: {waveSize, wavePos, waveCount}
+	val setN163(int index, int size, int pos, int count, const val &waves) {
+		auto pInst = GetN163(index);
+		size = std::clamp(size & ~3, 4, CInstrumentN163::MAX_WAVE_SIZE);
+		count = std::clamp(count, 1, CInstrumentN163::MAX_WAVE_COUNT);
+		const std::vector<int> values = BoundedValues(waves, static_cast<size_t>(size) * count, 0, 15);
+		pInst->SetWaveSize(size);
+		pInst->SetWavePos(std::clamp(pos, 0, 255));
+		pInst->SetWaveCount(count);
+		for (int wave = 0; wave < count; ++wave)
+			for (int i = 0; i < size; ++i)
+				pInst->SetSample(wave, i, values[static_cast<size_t>(wave) * size + i]);
+		WaveChanged();
+		val result = val::object();
+		result.set("waveSize", pInst->GetWaveSize());
+		result.set("wavePos", pInst->GetWavePos());
+		result.set("waveCount", pInst->GetWaveCount());
+		return result;
+	}
+
+	//! The samples of one wave (as many as the instrument's waves have), 0-15 each
+	void setN163Wave(int index, int wave, const val &samples) {
+		auto pInst = GetN163(index);
+		if (wave < 0 || wave >= pInst->GetWaveCount())
+			throw std::out_of_range("no wave " + std::to_string(wave));
+		const std::vector<int> values = BoundedValues(samples, pInst->GetWaveSize(), 0, 15);
+		for (int i = 0; i < pInst->GetWaveSize(); ++i)
+			pInst->SetSample(wave, i, values[i]);
+		WaveChanged();
+	}
+
+	// ---- VRC7: the patch -------------------------------------------------------------------
+
+	//! The patch to play (0 the instrument's own, 1-15 the chip's), and the 8 registers of
+	//! its own
+	void setVrc7(int index, int patch, const val &registers) {
+		auto pInst = std::dynamic_pointer_cast<CInstrumentVRC7>(GetInstrument(index));
+		if (!pInst)
+			throw std::runtime_error("instrument " + std::to_string(index) + " is not a VRC7 instrument");
+		const std::vector<int> values = BoundedValues(registers, 8, 0, 255);
+		for (int i = 0; i < 8; ++i)
+			pInst->SetCustomReg(i, static_cast<unsigned char>(values[i]));
+		pInst->SetPatch(std::clamp(patch, 0, 15));
+		Doc().SetModifiedFlag();
+	}
+
+	//! {patches: Uint8Array(16 * 8), names: [16]}: the patches the module's VRC7 instruments
+	//! choose from (the chip's, or the module's own with an external OPLL). Patch 0 is
+	//! each instrument's own.
+	val vrc7Patches() const {
+		const CFamiTrackerDoc &doc = Doc();
+		std::vector<uint8_t> patches(16 * 8);
+		for (size_t i = 0; i < patches.size(); ++i)
+			patches[i] = doc.GetOPLLPatchByte(static_cast<int>(i));
+		val names = val::array();
+		for (int i = 0; i < 16; ++i)
+			names.call<void>("push", dnft::text::ToUtf8(doc.GetOPLLPatchName(i)));
+		val result = val::object();
+		result.set("patches", CopyToJs(patches));
+		result.set("names", names);
+		return result;
 	}
 
 	// ---- sound -------------------------------------------------------------------------
@@ -1017,6 +1381,42 @@ private:
 		return pInst;
 	}
 
+	// The instrument if its sequences are the module's numbered ones (not the FDS's own)
+	std::shared_ptr<CSeqInstrument> GetSequenceInstrument(int index, int seqType) const {
+		CheckSequence(seqType, 0);
+		auto pInst = std::dynamic_pointer_cast<CSeqInstrument>(GetInstrument(index));
+		if (!pInst || pInst->GetType() == INST_FDS)
+			throw std::runtime_error("instrument " + std::to_string(index) + " has no numbered sequences");
+		return pInst;
+	}
+
+	std::shared_ptr<CInstrumentFDS> GetFds(int index) const {
+		auto pInst = std::dynamic_pointer_cast<CInstrumentFDS>(GetInstrument(index));
+		if (!pInst)
+			throw std::runtime_error("instrument " + std::to_string(index) + " is not an FDS instrument");
+		return pInst;
+	}
+
+	std::shared_ptr<CInstrumentN163> GetN163(int index) const {
+		auto pInst = std::dynamic_pointer_cast<CInstrumentN163>(GetInstrument(index));
+		if (!pInst)
+			throw std::runtime_error("instrument " + std::to_string(index) + " is not an N163 instrument");
+		return pInst;
+	}
+
+	const CDSample *GetSample(int index) const {
+		const CDSample *pSample = index >= 0 && index < MAX_DSAMPLES ? Doc().GetSample(index) : nullptr;
+		if (!pSample)
+			throw std::out_of_range("no DPCM sample " + std::to_string(index));
+		return pSample;
+	}
+
+	// An edited wave or its settings are for the sound generator to read again (the
+	// instrument editor of the desktop tells it the same)
+	static void WaveChanged() {
+		theApp.GetSoundGenerator()->WaveChanged();
+	}
+
 	CSequence *GetSequence(int instType, int seqType, int index) const {
 		CheckSequence(seqType, index);
 		if (instType != INST_2A03 && instType != INST_VRC6 && instType != INST_N163 && instType != INST_S5B)
@@ -1176,6 +1576,25 @@ EMSCRIPTEN_BINDINGS(dnft_session) {
 		.function("sequence", &EditSession::sequence)
 		.function("setSequence", &EditSession::setSequence)
 		.function("freeSequence", &EditSession::freeSequence)
+		.function("nextFreeSequence", &EditSession::nextFreeSequence)
+		.function("cloneSequence", &EditSession::cloneSequence)
+		.function("setFdsSequence", &EditSession::setFdsSequence)
+		.function("saveInstrument", &EditSession::saveInstrument)
+		.function("loadInstrument", &EditSession::loadInstrument)
+		.function("setDpcmKey", &EditSession::setDpcmKey)
+		.function("samples", &EditSession::samples)
+		.function("sample", &EditSession::sample)
+		.function("setSample", &EditSession::setSample)
+		.function("removeSample", &EditSession::removeSample)
+		.function("previewSample", &EditSession::previewSample)
+		.function("stopPreview", &EditSession::stopPreview)
+		.function("setFdsWave", &EditSession::setFdsWave)
+		.function("setFdsModulation", &EditSession::setFdsModulation)
+		.function("setFdsParams", &EditSession::setFdsParams)
+		.function("setN163", &EditSession::setN163)
+		.function("setN163Wave", &EditSession::setN163Wave)
+		.function("setVrc7", &EditSession::setVrc7)
+		.function("vrc7Patches", &EditSession::vrc7Patches)
 		.function("setExpansion", &EditSession::setExpansion)
 		.function("setMachine", &EditSession::setMachine)
 		.function("setEngineSpeed", &EditSession::setEngineSpeed)
