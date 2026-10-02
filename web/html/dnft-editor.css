@@ -34,6 +34,7 @@
   --dnft-pe-separator: #282c38;
   --dnft-pe-header: #1a1d26;
   --dnft-pe-header-text: #cfd5e3;
+  --dnft-pe-bookmark: #6b4a1a;
 
   position: relative;
   display: grid;
@@ -429,6 +430,11 @@
 
 .dnft-frame-row.is-playing .dnft-frame-number {
   color: var(--dnft-pe-volume);
+}
+
+.dnft-frame-row.is-bookmarked .dnft-frame-number {
+  background: var(--dnft-pe-bookmark);
+  border-radius: 3px;
 }
 
 .dnft-frame-number {
@@ -1677,5 +1683,262 @@
 
   .dnft-sample-name {
     grid-column: 2 / -1;
+  }
+}
+
+/* ---- the Edit and Pattern menus, their windows (dnft-pattern-menu.mjs) ---- */
+
+.dnft-menu {
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+}
+
+.dnft-menu-item {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  padding-left: 24px;
+}
+
+.dnft-menu-label {
+  flex: 1;
+}
+
+.dnft-menu-shortcut {
+  font-size: 11px;
+  color: var(--dnft-muted);
+}
+
+.dnft-menu-item[role="menuitemcheckbox"],
+.dnft-menu-item[role="menuitemradio"] {
+  position: relative;
+}
+
+.dnft-menu-item.is-checked::before {
+  position: absolute;
+  left: 8px;
+  content: "✓";
+  color: var(--dnft-accent);
+}
+
+.dnft-menu-item[role="menuitemradio"].is-checked::before {
+  content: "●";
+  font-size: 9px;
+  line-height: 1.9;
+}
+
+.dnft-menu-item.has-submenu::after {
+  content: "▸";
+  color: var(--dnft-muted);
+}
+
+.dnft-menu-item.has-submenu[aria-expanded="true"]::after {
+  content: "▾";
+}
+
+.dnft-submenu {
+  display: grid;
+  margin: 0 0 4px 12px;
+  padding-left: 4px;
+  border-left: 1px solid var(--dnft-line);
+}
+
+.dnft-submenu[hidden] {
+  display: none;
+}
+
+/* windows that stay open beside the pattern */
+.dnft-dialog.dnft-dialog--float {
+  position: fixed;
+  inset: 72px 16px auto auto;
+  z-index: 30;
+  margin: 0;
+  max-height: calc(100vh - 88px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.dnft-dialog--float .dnft-dialog-head {
+  cursor: move;
+  user-select: none;
+}
+
+.dnft-dialog-close {
+  margin-left: auto;
+}
+
+.dnft-stretch-test {
+  margin: 0;
+  font: 12px var(--dnft-mono);
+}
+
+.dnft-stretch-test.is-error {
+  color: var(--dnft-error);
+}
+
+.dnft-goto-dialog .dnft-grid,
+.dnft-split-dialog .dnft-grid {
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+}
+
+.dnft-goto-dialog input[type="text"] {
+  font-family: var(--dnft-mono);
+}
+
+.dnft-dialog--narrow.dnft-find-dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.dnft-find-grid {
+  display: grid;
+  grid-template-columns: auto repeat(4, minmax(0, 1fr));
+  gap: 6px 8px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--dnft-muted);
+}
+
+.dnft-find-head {
+  color: var(--dnft-text);
+}
+
+.dnft-find-cell {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+}
+
+.dnft-find-cell input[type="text"] {
+  width: 100%;
+  min-width: 0;
+  padding: 3px 4px;
+  font-family: var(--dnft-mono);
+}
+
+.dnft-find-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.dnft-find-count {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dnft-muted);
+}
+
+.dnft-find-results {
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--dnft-line);
+  border-radius: 6px;
+}
+
+.dnft-find-results table {
+  width: 100%;
+  border-collapse: collapse;
+  font: 12px var(--dnft-mono);
+}
+
+.dnft-find-results th {
+  position: sticky;
+  top: 0;
+  padding: 3px 6px;
+  background: var(--dnft-surface-2);
+  font: 500 11px var(--dnft-font);
+  color: var(--dnft-muted);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.dnft-find-results td {
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+
+.dnft-find-results tbody tr {
+  cursor: pointer;
+}
+
+.dnft-find-results tbody tr:hover {
+  background: var(--dnft-accent-soft);
+}
+
+.dnft-dialog--narrow.dnft-bookmark-dialog {
+  width: min(600px, calc(100vw - 32px));
+}
+
+.dnft-bookmarks {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(0, 1.4fr);
+  gap: 12px;
+}
+
+.dnft-bookmark-list {
+  min-height: 160px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 2px;
+  border: 1px solid var(--dnft-line);
+  border-radius: 6px;
+  background: var(--dnft-surface-2);
+  outline: none;
+}
+
+.dnft-bookmark-list:focus-visible {
+  border-color: var(--dnft-accent);
+}
+
+.dnft-bookmark-item {
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.dnft-bookmark-item:hover {
+  background: var(--dnft-accent-soft);
+}
+
+.dnft-bookmark-item.is-current {
+  background: var(--dnft-accent);
+  color: var(--dnft-accent-text);
+}
+
+.dnft-bookmark-edit {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-width: 0;
+}
+
+.dnft-bookmark-edit input[type="number"] {
+  width: 64px;
+}
+
+.dnft-bookmark-edit .dnft-grid input {
+  font-family: var(--dnft-mono);
+}
+
+@media (max-width: 560px) {
+  .dnft-bookmarks {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dnft-bookmark-list {
+    min-height: 0;
+    max-height: 140px;
+  }
+
+  .dnft-find-buttons {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dnft-dialog.dnft-dialog--float {
+    inset: 8px 8px auto 8px;
+    width: auto;
   }
 }

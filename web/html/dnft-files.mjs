@@ -79,8 +79,17 @@ export class FileMenu {
 
     // menus close on a click elsewhere
     document.addEventListener('pointerdown', e => {
-      if (!e.target.closest?.('.dnft-menu-wrap'))
+      if (!e.target.closest?.('.dnft-menu-wrap, .dnft-context-menu'))
         this.closeMenus();
+    }, true);
+    // and Escape closes them, wherever the keyboard is
+    document.addEventListener('keydown', e => {
+      const open = this.context || editor.root.querySelector('.dnft-menu-wrap > .dnft-menu:not([hidden])');
+      if (e.key === 'Escape' && open && !e.target.closest?.('.dnft-menu')) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.closeMenus();
+      }
     }, true);
 
     this.buildWaveDialog();
@@ -102,7 +111,9 @@ export class FileMenu {
     return input;
   }
 
-  // A button with a list of commands under it; null items are separators
+  // A button with a list of commands under it. Items: {label, hint, shortcut, run,
+  // checked() (a check mark, or with `radio` a dot), disabled(), items (a submenu, which
+  // opens under its entry)}; null items are separators.
   menu(label, hint, items) {
     const wrap = document.createElement('div');
     wrap.className = 'dnft-menu-wrap';
@@ -113,54 +124,132 @@ export class FileMenu {
     button.title = hint;
     button.setAttribute('aria-haspopup', 'menu');
     button.setAttribute('aria-expanded', 'false');
-    const list = document.createElement('div');
-    list.className = 'dnft-menu';
-    list.role = 'menu';
+    const list = this.menuList(items, () => button.focus());
     list.hidden = true;
-    for (const item of items) {
-      if (!item) {
-        list.append(Object.assign(document.createElement('div'), { className: 'dnft-menu-separator', role: 'separator' }));
-        continue;
-      }
-      const entry = document.createElement('button');
-      entry.type = 'button';
-      entry.role = 'menuitem';
-      entry.className = 'dnft-menu-item';
-      entry.textContent = item.label;
-      entry.title = item.hint ?? '';
-      entry.addEventListener('click', () => {
-        this.closeMenus();
-        item.run();
-      });
-      list.append(entry);
-    }
     button.addEventListener('click', () => {
       const open = list.hidden;
       this.closeMenus();
       if (!open)
         return;
+      this.refreshMenu(list);
       list.hidden = false;
       button.setAttribute('aria-expanded', 'true');
       // opened from the keyboard: the keyboard goes into the list
       if (document.activeElement === button)
-        list.querySelector('[role="menuitem"]')?.focus();
+        list.querySelector('.dnft-menu-item:not(:disabled)')?.focus();
     });
+    wrap.append(button, list);
+    return wrap;
+  }
+
+  // The list of a menu's entries (see menu()); `escape`: what Escape does after closing it
+  menuList(items, escape) {
+    const list = document.createElement('div');
+    list.className = 'dnft-menu';
+    list.role = 'menu';
+    const fill = (parent, entries) => {
+      for (const item of entries) {
+        if (!item) {
+          parent.append(Object.assign(document.createElement('div'), { className: 'dnft-menu-separator', role: 'separator' }));
+          continue;
+        }
+        const entry = document.createElement('button');
+        entry.type = 'button';
+        entry.className = 'dnft-menu-item';
+        entry.role = item.checked ? (item.radio ? 'menuitemradio' : 'menuitemcheckbox') : 'menuitem';
+        entry.title = item.hint ?? '';
+        entry.menuItem = item;
+        const text = document.createElement('span');
+        text.className = 'dnft-menu-label';
+        text.textContent = item.label;
+        entry.append(text);
+        if (item.shortcut)
+          entry.append(Object.assign(document.createElement('span'), { className: 'dnft-menu-shortcut', textContent: item.shortcut }));
+        parent.append(entry);
+        if (item.items) {
+          const sub = document.createElement('div');
+          sub.className = 'dnft-submenu';
+          sub.role = 'menu';
+          sub.hidden = true;
+          entry.classList.add('has-submenu');
+          entry.setAttribute('aria-haspopup', 'menu');
+          entry.setAttribute('aria-expanded', 'false');
+          entry.addEventListener('click', () => this.toggleSubmenu(entry, sub.hidden));
+          fill(sub, item.items);
+          parent.append(sub);
+        } else {
+          entry.addEventListener('click', () => {
+            this.closeMenus();
+            item.run();
+          });
+        }
+      }
+    };
+    fill(list, items);
     list.addEventListener('keydown', e => {
-      const entries = [...list.querySelectorAll('[role="menuitem"]')];
+      const entries = [...list.querySelectorAll('.dnft-menu-item')].filter(entry => !entry.closest('[hidden]') && !entry.disabled);
       const at = entries.indexOf(document.activeElement);
+      const entry = document.activeElement;
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         entries[(at + (e.key === 'ArrowDown' ? 1 : entries.length - 1)) % entries.length]?.focus();
+      } else if (e.key === 'ArrowRight' && entry?.classList.contains('has-submenu')) {
+        this.toggleSubmenu(entry, true);
+        entry.nextElementSibling.querySelector('.dnft-menu-item:not(:disabled)')?.focus();
+      } else if (e.key === 'ArrowLeft' && entry?.closest('.dnft-submenu')) {
+        const trigger = entry.closest('.dnft-submenu').previousElementSibling;
+        this.toggleSubmenu(trigger, false);
+        trigger.focus();
       } else if (e.key === 'Escape') {
         this.closeMenus();
-        button.focus();
+        escape?.();
       } else {
         return;
       }
       e.preventDefault();
       e.stopPropagation();
     });
-    wrap.append(button, list);
-    return wrap;
+    return list;
+  }
+
+  toggleSubmenu(entry, open) {
+    entry.nextElementSibling.hidden = !open;
+    entry.setAttribute('aria-expanded', String(open));
+  }
+
+  // The marks and the commands that can run, as they are now
+  refreshMenu(list) {
+    for (const entry of list.querySelectorAll('.dnft-menu-item')) {
+      const item = entry.menuItem;
+      if (item?.checked) {
+        const on = !!item.checked();
+        entry.setAttribute('aria-checked', String(on));
+        entry.classList.toggle('is-checked', on);
+      }
+      if (item?.disabled)
+        entry.disabled = !!item.disabled();
+    }
+    for (const sub of list.querySelectorAll('.dnft-submenu'))
+      this.toggleSubmenu(sub.previousElementSibling, false);
+  }
+
+  // A menu of `items` (as menu() has them) at a point of the window, as the right button
+  // opens one
+  contextMenu(items, x, y) {
+    this.closeMenus();
+    const list = this.menuList(items, () => this.editor.view.scroller.focus());
+    list.classList.add('dnft-context-menu');
+    this.refreshMenu(list);
+    this.editor.root.append(list);
+    const place = () => {
+      const { width, height } = list.getBoundingClientRect();
+      list.style.left = `${Math.max(0, Math.min(x, window.innerWidth - width - 4))}px`;
+      list.style.top = `${Math.max(0, Math.min(y, window.innerHeight - height - 4))}px`;
+    };
+    place();
+    // a submenu opening makes it longer
+    new ResizeObserver(place).observe(list);
+    list.querySelector('.dnft-menu-item:not(:disabled)')?.focus({ preventScroll: true });
+    this.context = list;
   }
 
   closeMenus() {
@@ -168,6 +257,8 @@ export class FileMenu {
       wrap.querySelector('.dnft-menu').hidden = true;
       wrap.querySelector('button').setAttribute('aria-expanded', 'false');
     }
+    this.context?.remove();
+    this.context = null;
   }
 
   // A dialog of the editor's look: title, body, buttons

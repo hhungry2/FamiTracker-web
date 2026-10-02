@@ -7,9 +7,11 @@
 // from the CSS custom properties of the editor (dnft-editor.css).
 //
 // The view only draws and reports where things are; the editor (dnft-editor.mjs) owns
-// the state it reads: song, track, cursor, selection, editMode, play, muted.
+// the state it reads: song, track, cursor, selection, editMode, play, muted. Bookmarked
+// rows have their numbers marked, and may set the row highlight from their row on.
 
 import { CELL, NOTE, MAX_VOLUME, NO_INSTRUMENT, HOLD_INSTRUMENT, CHANNEL_ID } from './dnft-song.mjs';
+import { inRows, highlightAt, highlightState, bookmarkAt } from './dnft-pattern-edit.mjs';
 
 const NOTE_NAMES = ['C-', 'C#', 'D-', 'D#', 'E-', 'F-', 'F#', 'G-', 'G#', 'A-', 'A#', 'B-'];
 const HEX = '0123456789ABCDEF';
@@ -95,6 +97,7 @@ export class PatternView {
       effect: v('--dnft-pe-effect'), dim: v('--dnft-pe-dim'), rowNumber: v('--dnft-pe-row-number'),
       cursorRow: v('--dnft-pe-cursor-row'), editRow: v('--dnft-pe-edit-row'), playRow: v('--dnft-pe-play-row'),
       cursor: v('--dnft-pe-cursor'), selection: v('--dnft-pe-selection'), separator: v('--dnft-pe-separator'),
+      bookmark: v('--dnft-pe-bookmark'),
     };
     const size = parseFloat(style.fontSize) || 13;
     this.font = `${size}px ${style.fontFamily}`;
@@ -221,7 +224,7 @@ export class PatternView {
     ctx.fillRect(0, 0, this.width, this.height);
 
     const tr = song.track(track);
-    const [beat, bar] = tr.highlight;
+    const bookmarks = tr.bookmarks;
     const scroll = this.scroller.scrollLeft;
     const left = this.gutter - scroll;
     const lines = this.lines;
@@ -244,9 +247,10 @@ export class PatternView {
         return;
       const y = line * rh;
       const layers = [];
-      if (bar && place.row % bar === 0)
+      const highlight = highlightState(highlightAt(bookmarks, tr.highlight, place.frame, place.row), place.row);
+      if (highlight === 2)
         layers.push(c.bar);
-      else if (beat && place.row % beat === 0)
+      else if (highlight === 1)
         layers.push(c.beat);
       if (line === middle)
         layers.push(editMode ? c.editRow : c.cursorRow);
@@ -280,11 +284,15 @@ export class PatternView {
       ctx.fillRect(Math.round(left + this.channels[ch].x + this.channels[ch].width), 0, 1, this.height);
     ctx.restore();
 
-    // row numbers
+    // row numbers, on a mark where there is a bookmark
     places.forEach((place, line) => {
       if (!place)
         return;
       ctx.globalAlpha = place.frame === cursor.frame ? 1 : 0.4;
+      if (bookmarkAt(bookmarks, place.frame, place.row)) {
+        ctx.fillStyle = c.bookmark;
+        ctx.fillRect(1, line * rh + 1, this.gutter - 3, rh - 2);
+      }
       ctx.fillStyle = c.rowNumber;
       ctx.fillText(hex2(place.row), cw * 0.5, line * rh + rh / 2 + 1);
     });
@@ -292,14 +300,16 @@ export class PatternView {
     ctx.fillStyle = c.separator;
     ctx.fillRect(this.gutter - 1, 0, 1, this.height);
 
-    // selection, then the cursor
-    if (selection && selection.frame === cursor.frame) {
-      const top = (selection.rowStart - cursor.row + middle) * rh;
-      const height = (selection.rowEnd - selection.rowStart + 1) * rh;
-      const x1 = this.columnX(selection.channelStart, selection.columnStart)[0];
-      const [x2, w2] = this.columnX(selection.channelEnd, selection.columnEnd);
+    // selection (which may go on into other frames), then the cursor
+    if (selection) {
+      const x1 = Math.max(this.gutter, this.columnX(selection.start.channel, selection.start.column)[0]);
+      const [x2, w2] = this.columnX(selection.end.channel, selection.end.column);
       ctx.fillStyle = c.selection;
-      ctx.fillRect(Math.max(this.gutter, x1), top, x2 + w2 - Math.max(this.gutter, x1), height);
+      if (x2 + w2 > x1)
+        places.forEach((place, line) => {
+          if (place && inRows(selection, place.frame, place.row))
+            ctx.fillRect(x1, line * rh, x2 + w2 - x1, rh);
+        });
     }
     const [cx, cwidth] = this.columnX(cursor.channel, cursor.column);
     if (cx + cwidth > this.gutter) {
@@ -364,12 +374,30 @@ export class PatternView {
     return [x, chars * cw];
   }
 
-  // The place under a point of the canvas: {frame, row, channel, column}, or null
-  hit(clientX, clientY) {
+  // The place under a point of the canvas: {frame, row, channel, column}, or null; the
+  // channel and column are null over the row numbers and past the channels. `clamp`: the
+  // nearest cell for a point anywhere (a drag): the first or last line shown, row of the
+  // track, channel.
+  hit(clientX, clientY, { clamp = false } = {}) {
     const rect = this.canvas.getBoundingClientRect();
     const x = clientX - rect.left, y = clientY - rect.top;
-    const { cursor } = this.editor;
-    const place = this.offset(cursor.frame, cursor.row, Math.floor(y / this.rowHeight) - this.middle);
+    const { cursor, song, track } = this.editor;
+    let line = Math.floor(y / this.rowHeight);
+    if (clamp)
+      line = Math.max(0, Math.min(this.lines - 1, line));
+    let place = this.offset(cursor.frame, cursor.row, line - this.middle);
+    if (!place && clamp) {
+      const { rows, frames } = song.track(track);
+      place = line < this.middle ? { frame: 0, row: 0 } : { frame: frames - 1, row: rows - 1 };
+    }
+    if (clamp) {
+      const content = x - this.gutter + this.scroller.scrollLeft;
+      if (content < 0)
+        return { ...place, channel: 0, column: 0 };
+      const last = this.channels.length - 1;
+      if (content >= this.channels[last].x + this.channels[last].width)
+        return { ...place, channel: last, column: columnCount(this.channels[last].effColumns) - 1 };
+    }
     if (!place || x < this.gutter)
       return place ? { ...place, channel: null, column: null } : null;
     const content = x - this.gutter + this.scroller.scrollLeft;

@@ -241,6 +241,56 @@ check('frames: insert, duplicate, clone, move, remove', () => {
   s.delete();
 });
 
+check('bookmarks: kept with the frames, saved, and never where the track does not reach', () => {
+  const s = dnft.createSession(RATE);
+  s.setFrameCount(0, 4);
+  const mark = (frame, row, name = 'B', highlight = [-1, -1], persist = false) => ({ frame, row, name, highlight, persist });
+  s.setBookmarks(0, [mark(1, 4, 'イントロ', [3, -1], true), mark(3, 60), mark(9, 0), mark(0, 64)]);
+  // the last two are past the track
+  assert.deepEqual(s.bookmarks(0), [mark(1, 4, 'イントロ', [3, -1], true), mark(3, 60)]);
+  assert.deepEqual(s.track(0).bookmarks, s.bookmarks(0));
+  // they move with the frames
+  s.insertFrame(0, 0);
+  assert.deepEqual(s.bookmarks(0).map(m => [m.frame, m.row]), [[2, 4], [4, 60]]);
+  s.moveFrame(0, 2, true);
+  assert.deepEqual(s.bookmarks(0).map(m => [m.frame, m.row]), [[1, 4], [4, 60]]);
+  // fewer rows: the desktop keeps the one on row 60, and then cannot open the file
+  s.setPatternLength(0, 32);
+  assert.deepEqual(s.bookmarks(0).map(m => [m.frame, m.row]), [[1, 4]]);
+  const bytes = s.save();
+  const t = openSession(bytes);
+  assert.deepEqual(t.bookmarks(0), [mark(1, 4, 'イントロ', [3, -1], true)]);
+  assert.match(new TextDecoder().decode(t.exportText()), /BOOKMARK 01 04 +3 +-1 +1 "/);
+  t.delete();
+  // Clear Patterns leaves one frame, and its bookmarks
+  s.setBookmarks(0, [mark(0, 2), mark(1, 4)]);
+  s.clearPatterns(0);
+  assert.deepEqual(s.bookmarks(0).map(m => [m.frame, m.row]), [[0, 2]]);
+  assert.throws(() => rethrow(() => s.bookmarks(3)), /no track 3/);
+  s.delete();
+});
+
+check('swap channels: patterns, frames and effect columns', () => {
+  const s = dnft.createSession(RATE);
+  s.insertFrame(0, 1);
+  s.setCells(0, 0, 0, 0, new Uint8Array(cell(NOTE_C, 4)));
+  s.setCells(0, 1, 1, 0, new Uint8Array(cell(NOTE_E, 3)));
+  s.setFramePattern(0, 0, 1, 1);
+  s.setEffColumns(0, 1, 3);
+  s.swapChannels(0, 0, 1);
+  const t = s.track(0);
+  assert.deepEqual([...t.frameList.subarray(0, 2)], [1, 0]);
+  assert.deepEqual(t.effColumns.slice(0, 2), [3, 1]);
+  assert.deepEqual([...s.pattern(0, 1, 0).subarray(0, 12)], cell(NOTE_C, 4));
+  assert.deepEqual([...s.pattern(0, 0, 1).subarray(0, 12)], cell(NOTE_E, 3));
+  // twice is as it was
+  s.swapChannels(0, 0, 1);
+  assert.deepEqual([...s.track(0).frameList.subarray(0, 2)], [0, 1]);
+  assert.deepEqual([...s.pattern(0, 0, 0).subarray(0, 12)], cell(NOTE_C, 4));
+  assert.throws(() => rethrow(() => s.swapChannels(0, 0, 5)), /no channel 5/);
+  s.delete();
+});
+
 check('song settings', () => {
   const s = dnft.createSession(RATE);
   s.setTitle('チップチューン ラボ の テスト曲です');

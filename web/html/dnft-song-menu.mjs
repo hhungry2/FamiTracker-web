@@ -3,8 +3,9 @@
 // Duplicated Patterns, Populate Unique Patterns, Clear Patterns, Estimate Song Length),
 // and the settings of its Module menu and module properties that the side panel does
 // not show (Detune Settings, Groove Settings, the device mix offsets, the VRC7's
-// patches), with Module > Cleanup. The engine does the work (src/session_bindings.cpp);
-// what the desktop lets undo can be undone here too.
+// patches), with Module > Cleanup; its Bookmark Manager is dnft-pattern-menu.mjs's. The
+// engine does the work (src/session_bindings.cpp); what the desktop lets undo can be
+// undone here too.
 //
 //   const menus = new SongMenu(editor);   // adds its menus after the Import and Export menus
 
@@ -75,6 +76,7 @@ export class SongMenu {
       { label: t.grooveSettings, hint: t.grooveSettingsHint, run: () => this.openGrooves() },
       { label: t.mixerSettings, hint: t.mixerSettingsHint, run: () => this.openMixer() },
       { label: t.opllSettings, hint: t.opllSettingsHint, run: () => this.openOpll() },
+      { label: t.bookmarkManager, hint: t.bookmarkManagerHint, run: () => this.editor.patternMenu.openBookmarks() },
       null,
       { label: t.removeUnusedInstruments, hint: t.removeUnusedInstrumentsHint, run: () => this.removeUnused('Instruments') },
       { label: t.removeUnusedPatterns, hint: t.removeUnusedPatternsHint, run: () => this.removeUnused('Patterns') },
@@ -523,8 +525,9 @@ export class SongMenu {
         cell[8] = speed;
       }
     });
-    // the first effect column is the cell's fourth field (dnft-editor.mjs)
-    this.editor.clipboard = { rows: entries.length, channels: [{ first: 3, last: 3, cells }] };
+    // the first effect column alone (dnft-pattern-edit.mjs copyCells())
+    this.editor.clipboard = { channels: 1, rows: entries.length, startField: 3, endField: 3, cells: [cells] };
+    this.editor.patternMenu.refresh();
     this.editor.message(this.strings.grooveCopied);
   }
 

@@ -34,6 +34,9 @@
 #include "DSample.h"
 #include "Sequence.h"
 #include "InstrumentManager.h"
+#include "Bookmark.h"
+#include "BookmarkCollection.h"
+#include "BookmarkManager.h"
 #include "engine_internal.h"
 #include "session.h"
 #include "export.h"
@@ -308,7 +311,8 @@ public:
 	// ---- tracks ------------------------------------------------------------------------
 
 	//! {title, frames, rows, speed, tempo, groove, highlight: [first, second],
-	//!  effColumns: [per channel, 1-4], frameList: Uint8Array(frames * channels)}
+	//!  effColumns: [per channel, 1-4], frameList: Uint8Array(frames * channels),
+	//!  bookmarks: bookmarks()}
 	val track(int track) const {
 		const CFamiTrackerDoc &doc = Doc();
 		CheckTrack(track);
@@ -336,7 +340,56 @@ public:
 			for (int c = 0; c < channels; ++c)
 				list[f * channels + c] = static_cast<uint8_t>(doc.GetPatternAtFrame(track, f, c));
 		result.set("frameList", CopyToJs(list.data(), list.size()));
+		result.set("bookmarks", bookmarks(track));
 		return result;
+	}
+
+	//! The track's bookmarks in the order it keeps them (the Bookmark Manager's): [{frame,
+	//! row, name, highlight: [first, second] (-1: the track's own), persist (the highlight
+	//! holds past the bookmark's frame)}]
+	val bookmarks(int track) const {
+		CheckTrack(track);
+		val list = val::array();
+		const CBookmarkCollection *pCol = Doc().GetBookmarkManager()->GetCollection(track);
+		for (unsigned i = 0; i < pCol->GetCount(); ++i) {
+			const CBookmark *pMark = pCol->GetBookmark(i);
+			val entry = val::object();
+			entry.set("frame", pMark->m_iFrame);
+			entry.set("row", pMark->m_iRow);
+			entry.set("name", dnft::detail::ToUtf8(pMark->m_sName.c_str(), pMark->m_sName.size()));
+			val highlight = val::array();
+			highlight.call<void>("push", pMark->m_Highlight.First);
+			highlight.call<void>("push", pMark->m_Highlight.Second);
+			entry.set("highlight", highlight);
+			entry.set("persist", pMark->m_bPersist);
+			list.call<void>("push", entry);
+		}
+		return list;
+	}
+
+	//! Replaces the track's bookmarks with a list as bookmarks() gives it. Those past the
+	//! track's frames or rows are left out: the desktop refuses to open a module with one.
+	void setBookmarks(int track, const val &list) {
+		CheckTrack(track);
+		CFamiTrackerDoc &doc = Doc();
+		CBookmarkCollection *pCol = doc.GetBookmarkManager()->GetCollection(track);
+		pCol->ClearBookmarks();
+		const unsigned count = list["length"].as<unsigned>();
+		for (unsigned i = 0; i < count; ++i) {
+			const val entry = list[i];
+			const int frame = entry["frame"].as<int>(), row = entry["row"].as<int>();
+			if (frame < 0 || frame >= static_cast<int>(doc.GetFrameCount(track)) || row < 0 || row >= static_cast<int>(doc.GetPatternLength(track)))
+				continue;
+			auto pMark = new CBookmark(frame, row);
+			const val highlight = entry["highlight"];
+			pMark->m_Highlight.First = std::clamp(highlight[0].as<int>(), -1, MAX_PATTERN_LENGTH);
+			pMark->m_Highlight.Second = std::clamp(highlight[1].as<int>(), -1, MAX_PATTERN_LENGTH);
+			pMark->m_Highlight.Offset = 0;
+			pMark->m_bPersist = entry["persist"].as<bool>();
+			pMark->m_sName = ToDocument(entry["name"].as<std::string>(), MAX_FILE_STRING);
+			pCol->AddBookmark(pMark);
+		}
+		doc.SetModifiedFlag();
 	}
 
 	int addTrack() {
@@ -359,9 +412,11 @@ public:
 		Doc().SetTrackTitle(track, CString(ToDocument(title, MAX_FILE_STRING).c_str()));
 	}
 
+	//! Bookmarks on the rows that go are left out (see setBookmarks())
 	void setPatternLength(int track, int rows) {
 		CheckTrack(track);
 		Doc().SetPatternLength(track, std::clamp(rows, 1, MAX_PATTERN_LENGTH));
+		DropStrayBookmarks(track);
 	}
 
 	void setFrameCount(int track, int frames) {
@@ -513,10 +568,22 @@ public:
 
 	// ---- the Song menu and Module > Cleanup --------------------------------------------
 
-	//! Song > Clear Patterns: every pattern of the track empty, and one frame
+	//! Song > Clear Patterns: every pattern of the track empty, and one frame (with the
+	//! bookmarks of that frame)
 	void clearPatterns(int track) {
 		CheckTrack(track);
 		Doc().ClearPatterns(track);
+		DropStrayBookmarks(track);
+	}
+
+	//! Edit > Swap Channels: the two channels change their patterns, the patterns their
+	//! frames play and their effect columns, in the track
+	void swapChannels(int track, int first, int second) {
+		CheckTrack(track);
+		CheckChannel(first);
+		CheckChannel(second);
+		if (first != second)
+			Doc().SwapChannels(track, first, second);
 	}
 
 	//! Song > Populate Unique Patterns: each frame plays patterns of its own, copies of
@@ -1452,6 +1519,19 @@ private:
 			theApp.GetSoundGenerator()->ResetTempo();
 	}
 
+	// The desktop's SetPatternLength() and ClearPatterns() leave bookmarks where the track
+	// no longer reaches, and then cannot open the file it saves (ReadBlock_Bookmarks()
+	// checks their frames and rows): they go here instead
+	void DropStrayBookmarks(int track) {
+		CFamiTrackerDoc &doc = Doc();
+		CBookmarkCollection *pCol = doc.GetBookmarkManager()->GetCollection(track);
+		for (unsigned i = pCol->GetCount(); i-- > 0;) {
+			const CBookmark *pMark = pCol->GetBookmark(i);
+			if (pMark->m_iFrame >= doc.GetFrameCount(track) || pMark->m_iRow >= doc.GetPatternLength(track))
+				pCol->RemoveBookmark(i);
+		}
+	}
+
 	std::shared_ptr<dnft::Session> m_pSession;
 	std::string m_sWarning;
 };
@@ -1538,6 +1618,9 @@ EMSCRIPTEN_BINDINGS(dnft_session) {
 		.function("setCopyright", &EditSession::setCopyright)
 		.function("setComment", &EditSession::setComment)
 		.function("track", &EditSession::track)
+		.function("bookmarks", &EditSession::bookmarks)
+		.function("setBookmarks", &EditSession::setBookmarks)
+		.function("swapChannels", &EditSession::swapChannels)
 		.function("addTrack", &EditSession::addTrack)
 		.function("removeTrack", &EditSession::removeTrack)
 		.function("setTrackTitle", &EditSession::setTrackTitle)

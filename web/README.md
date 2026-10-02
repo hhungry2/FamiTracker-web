@@ -120,7 +120,7 @@ The document is read and changed through the tracker's own functions:
 | | |
 | --- | --- |
 | module | `info()` (title, chips, channels, tracks, comment, engineSpeed...), `setTitle`, `setArtist`, `setCopyright`, `setComment(text, showOnOpen)`, `setExpansion(chips, n163Channels)`, `setMachine(pal)`, `setEngineSpeed(hz)` (0: the machine's), `setVibratoStyle(newStyle)`, `setLinearPitch(enable)`, `detune()`, `setDetune(offsets, semitone, cent)` (Detune Settings), `grooves()`, `setGrooves(list)` (Groove Settings), `mixing()`, `setMixing(levels, hardwareMixing)` (the device mix offsets), `opll()`, `setOpll(external, patches, names)` (the VRC7's patches), `removeUnusedInstruments`, `removeUnusedPatterns`, `removeUnusedSamples` (Cleanup) |
-| tracks | `track(t)` (frames, rows, speed, tempo, highlight, effColumns, frameList), `addTrack`, `removeTrack`, `setTrackTitle`, `setPatternLength`, `setFrameCount`, `setSpeed`, `setTempo`, `setHighlight`, `setEffColumns`, `setGrooveMode(t, groove)`, `moveTrack(t, up)`, `songLength(t)` (intro and loop, in seconds) |
+| tracks | `track(t)` (frames, rows, speed, tempo, highlight, effColumns, frameList, bookmarks), `addTrack`, `removeTrack`, `setTrackTitle`, `setPatternLength`, `setFrameCount`, `setSpeed`, `setTempo`, `setHighlight`, `setEffColumns`, `setGrooveMode(t, groove)`, `moveTrack(t, up)`, `songLength(t)` (intro and loop, in seconds), `bookmarks(t)` and `setBookmarks(t, list)` (frame, row, name, highlight, persist), `swapChannels(t, a, b)` (Swap Channels) |
 | patterns | `pattern(t, channel, pattern)`, `patterns(t)` (every one with something in it), `setCells(t, channel, pattern, row, cells)`, `clearPatterns(t)`, `populateUniquePatterns(t)` |
 | frames | `setFramePattern`, `setFrameList`, `insertFrame`, `removeFrame`, `duplicateFrame`, `cloneFrame`, `moveFrame`, `freePattern` |
 | instruments | `instruments()`, `instrument(i)` (also the DPCM keys, the FDS's wave, modulation and sequences, the N163's waves, the VRC7's patch and registers, by the kind), `addInstrument(chip, name)`, `removeInstrument`, `cloneInstrument`, `deepCloneInstrument`, `setInstrumentName`, `setInstrumentSequence(i, type, enabled, index)`, `sequence(instType, type, index)`, `setSequence(...)`, `freeSequence`, `nextFreeSequence(i, type)` ("Select next empty slot"), `cloneSequence(i, type)` ("Clone sequence"), `saveInstrument(i)` and `loadInstrument(bytes)` (.fti files) |
@@ -131,6 +131,13 @@ A pattern cell is 12 bytes, the fields of the tracker's `stChanNote`: note, octa
 instrument, four effect numbers, four effect parameters. `dnft.effects()` gives the
 effect letters, the parameter an effect starts with, and which letter means which effect
 on each chip. Indices are checked, and what is out of range throws.
+
+A track's bookmarks are kept in its order (the Bookmark Manager's): each has a frame, a
+row, a name and the row highlight it sets from its row on, `[beat, bar]` (-1: the track's),
+in its frame or, with `persist`, in the frames after too. They move with the frames as the
+desktop moves them. The desktop leaves bookmarks past the end of a track that gets fewer
+rows, or loses its frames to Clear Patterns, and then cannot open the file it saves;
+sessions drop those, and `setBookmarks()` ignores them.
 
 A comment comes with `\n` line breaks and is kept with the CR LF of the desktop's comment
 box. Changing the machine, the engine speed, the vibrato style, the pitch mode, the
@@ -216,6 +223,10 @@ As with players, one session drives the sound generator at a time.
   reached (from the worklet's position reports and `getOutputTimestamp()`)
 - `dnft-editor.mjs`: the editor; `dnft-pattern-view.mjs`: the pattern grid (a canvas);
   `dnft-song.mjs`: the page's copy of the module and the undo history;
+  `dnft-pattern-edit.mjs`: what the pattern editor's commands do to the cells (paste
+  modes, Interpolate, Find / Replace, bookmarks...), as numbers;
+  `dnft-pattern-menu.mjs`: the Edit and Pattern menus, their dialogs, the pattern's
+  right-click menu and MIDI input;
   `dnft-instrument-editor.mjs`: the instrument editor's dialog and the sequences;
   `dnft-instrument-panels.mjs`: its wave editors and the FDS, N163 and VRC7 panels;
   `dnft-dpcm.mjs`: the DPCM panel, the sample editor and the import of WAV files;
@@ -231,13 +242,57 @@ const editor = await DnFTEditor.create(element, { base: '.', lang: 'ja' });
 ```
 
 Keys follow the desktop's defaults: the Z and Q rows of the keyboard enter notes (by the
-key's place, whatever the layout), 1 a note cut, \ a release, hex digits the other
-columns; Space toggles editing, Enter plays the frame or stops, F5/F6/F7/F8 play the song,
-loop the pattern, play from the cursor, stop; Delete, Insert and Backspace clear, insert
-and pull up; Shift with the arrows selects, Ctrl+C/X/V copy, cut and paste, Ctrl+Z/Y undo
-and redo, Ctrl+Up/Down transpose. Edits of patterns, frames and song settings can be
-undone; instruments, as on the desktop, cannot. The module is kept in the browser's
+key's place, whatever the layout), 1 a note cut, \ a release, - clears a field (Ctrl+-
+the cell), hex digits the other columns; Space toggles editing, Enter plays the frame or
+stops, F5/F6/F7/F8 play the song, loop the pattern, play from the cursor, stop; Up and
+Down go by the edit step, Alt+Up/Down by one row, Alt+Left/Right to the next channel in
+the same column; Delete, Insert and Backspace clear, insert and pull up (with a
+selection: its fields, a row at its top, its rows); Shift with the arrows selects, also
+on into the frames before and after, Alt+B and Alt+E set the start and end of a
+selection that stays as the cursor moves; Ctrl+C/X/V copy, cut and paste, Ctrl+M pastes
+mixed, Ctrl+Z/Y undo and redo; Ctrl+F1/F2/F3/F4 transpose by a semitone and an octave
+(Ctrl+F4 closes the tab in most browsers: Ctrl+Shift+Up/Down transpose by octaves too),
+Shift+F1/F2/F3/F4 change the values by 1 and 16; Ctrl+Up/Down pick the instrument before
+or after; Ctrl+G interpolates, Ctrl+R reverses, Alt+S replaces the instrument; Ctrl+K,
+Ctrl+PageDown and Ctrl+PageUp toggle a bookmark and go to the next and previous one;
+Ctrl+F opens Find / Replace, Alt+G Go To; Alt+T and Alt+V toggle the instrument and
+volume masks; the numeric keypad picks an instrument in the note column, and with Alt
+the edit step; Ctrl+ the keypad's + and - change the step, + and - alone the frame's
+pattern. With the mouse, a click puts the cursor on a cell and a drag selects (the rows
+scroll at the top and bottom), on the row numbers whole rows; a double click selects the
+channel in the frame (on the row numbers, the frame); the wheel with Ctrl transposes,
+with Shift changes the values, with both goes from frame to frame. Edits of patterns,
+frames, bookmarks and song settings can be undone, and put the cursor and the selection
+back; instruments, as on the desktop, cannot. The module is kept in the browser's
 localStorage as it changes and comes back when the page is opened again.
+
+The Edit and Pattern menus after Export have what the desktop's do. Paste Special mixes
+(fills only empty fields), overwrites (keeps fields the copy has nothing in) or inserts
+(moves the rows below down), at the cursor, at the selection or filling it; a paste
+stops at the end of the frame unless "paste past the end of the frame" (the desktop's
+Overflow paste mode) is on, selects what it pasted, and asks first when the area plays a
+row of a pattern twice. Copy As copies a channel's volumes as a volume sequence, the
+selection as plain text (the text export's form) or as PPMCK MML (a row a sixteenth
+note). Select takes the cursor's row, column, pattern, frame, channel (all frames) or
+the track. Interpolate, Reverse and Stretch (with Expand and Shrink) refuse selections
+where a channel plays a row twice, as the desktop's do. Find / Replace is a window that
+stays open: notes (C-4, C#4, Db4, a letter alone for any octave, ---, ===, ^1, noise
+periods as 3-#, `.` for anything), instruments, volumes and effects, each as a value or a
+range, in the track, the cursor's channel, frame or pattern, or the selection, across the
+channels or down them, negated or not; Find All lists what it finds, to go to; Replace
+All is one action. Go To takes a frame and row (in hexadecimal) and a channel. Bookmarks
+mark their rows' numbers and their frames in the frame list, and the Bookmark Manager
+(also in the Module menu) names them, moves them, sorts them, and sets the row
+highlight they start; unlike the desktop's, their changes can be undone. Swap Channels
+swaps two channels in the track or in every track. The instrument mask keeps the
+instrument column as notes are entered, the volume mask off writes the volume typed last;
+Pick Up Row (on the pattern's right-click menu) takes the instrument and volume at the
+cursor for the notes entered next. Split Keyboard moves the notes up to a split point by
+up to two octaves, may give them an instrument of their own, and outside the edit mode
+plays them on a channel of their own. Enable MIDI takes notes from MIDI keyboards (Web
+MIDI) into the cursor's channel, two octaves down, as the desktop does; it is on again on
+the next visit when the browser does not have to ask. Select > In Other Editor waits for
+selections in the frame list, and dragging a selection to move it is not done.
 
 The instrument editor (double-click an instrument, or its edit button) has the panels
 of the desktop's, by the kind of instrument. The sequences (2A03, VRC6, N163, 5B) are bars
@@ -279,8 +334,9 @@ Patterns and Estimate Song Length; the first two can be undone, the others, as o
 desktop, cannot, nor what was done before them. Populate Unique Patterns keeps the
 track's row highlight, which the desktop's leaves behind. The Module menu opens Detune Settings
 (with the desktop's CSV files of the tables), Groove Settings (with its tools, and a
-copy as Fxx effects to paste), the device mix offsets with hardware-based mixing, and
-the VRC7's patches (external OPLL) of the module properties, and runs Module > Cleanup.
+copy as Fxx effects to paste), the device mix offsets with hardware-based mixing, the
+VRC7's patches (external OPLL) of the module properties and the Bookmark Manager, and runs
+Module > Cleanup.
 The song panel moves tracks up and down, and switches the speed of a track to grooves.
 
 How it works
@@ -391,6 +447,7 @@ node web/test/text.mjs                           # module texts: code pages and 
 node web/test/seek.mjs                           # seeking: the audio, and the speed
 node web/test/instrument.mjs                     # instruments: DPCM samples, FDS, N163, VRC7, .fti files
 node web/test/dpcm.mjs                           # the editor's page code that works on numbers
+node web/test/pattern.mjs                        # the pattern editor's commands, on cells
 node web/test/render.mjs <module> [out.wav]      # render and report
 node web/test/compare.mjs <module> <export.wav>  # against the desktop WAV export
 ```
