@@ -10,6 +10,8 @@
 //   session.play(0, PLAY.CURSOR, 0, 0);
 //   requestAnimationFrame(() => session.poll());   // -> {frame, row} playing, or null
 //   session.ended                                  // true once the song stopped by itself
+//   session.levels                                 // the channels' volume meters now (0-15)
+//   session.analyser                               // an AnalyserNode on the output
 
 import { unsupportedReason } from './dnft-player.mjs';
 
@@ -38,6 +40,8 @@ export class DnFTSession {
     this.pending = new Map();     // call id -> {resolve, reject}
     this.nextId = 1;
     this.rows = [];               // row events not reached by the audio yet
+    this.levelEvents = [];        // the same for the volume meters
+    this.levels = null;           // the meters the audio heard now has: a Uint8Array, 0-15 for each channel
     this.playing = null;          // {frame, row} the audio is at, or null
     this.playback = 0;            // the number of the last play()
     this.ended = false;           // the audio reached where that playback stopped
@@ -54,6 +58,11 @@ export class DnFTSession {
     this.output = context.createGain();
     this.node.connect(this.output);
     this.output.connect(context.destination);
+    // what the oscilloscope and the spectrum of the editor look at
+    this.analyser = context.createAnalyser();
+    this.analyser.fftSize = 2048;
+    this.analyser.smoothingTimeConstant = 0.7;
+    this.output.connect(this.analyser);
 
     this.worker = new Worker(`${base}/dnft-session-engine.mjs`, { type: 'module' });
     const channel = new MessageChannel();
@@ -74,6 +83,8 @@ export class DnFTSession {
   onWorker(message) {
     if (message.type === 'rows') {
       this.rows.push(...message.events);
+    } else if (message.type === 'levels') {
+      this.levelEvents.push(...message.events);
     } else if (message.type === 'progress') {
       this.pending.get(message.id)?.onprogress?.(message.value);
     } else if (message.type === 'result' || message.type === 'error') {
@@ -132,6 +143,8 @@ export class DnFTSession {
   // Where the audio heard now is: {frame, row} while the song plays, null otherwise.
   poll() {
     const at = this.audibleFrame();
+    while (this.levelEvents.length && this.levelEvents[0].at <= at)
+      this.levels = this.levelEvents.shift().levels;
     while (this.rows.length && this.rows[0].at <= at) {
       const e = this.rows.shift();
       this.playing = e.frame < 0 ? null : { frame: e.frame, row: e.row };
@@ -145,6 +158,12 @@ export class DnFTSession {
   clearRows() {
     this.rows = [];
     this.playing = null;
+  }
+
+  // For a new module: the meters of the old one
+  clearLevels() {
+    this.levelEvents = [];
+    this.levels = null;
   }
 
   resume() {

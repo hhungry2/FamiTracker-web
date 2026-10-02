@@ -654,9 +654,10 @@ export class FrameEditor {
       row.classList.toggle('is-current', f === current);
       row.classList.toggle('is-playing', !!editor.play && editor.play.frame === f);
       row.classList.toggle('is-bookmarked', marked.has(f));
+      row.classList.toggle('is-marker', editor.marker?.frame === f);
       const number = document.createElement('span');
       number.className = 'dnft-frame-number';
-      number.textContent = hex2(f);
+      number.textContent = editor.frameLabel(f);
       row.append(number);
       for (let c = 0; c < channels; ++c) {
         const cell = document.createElement('span');

@@ -113,7 +113,8 @@ export class FileMenu {
 
   // A button with a list of commands under it. Items: {label, hint, shortcut, run,
   // checked() (a check mark, or with `radio` a dot), disabled(), items (a submenu, which
-  // opens under its entry)}; null items are separators.
+  // opens under its entry)}; null items are separators. `items` may be a function that gives
+  // them, which is called each time the menu opens.
   menu(label, hint, items) {
     const wrap = document.createElement('div');
     wrap.className = 'dnft-menu-wrap';
@@ -124,13 +125,20 @@ export class FileMenu {
     button.title = hint;
     button.setAttribute('aria-haspopup', 'menu');
     button.setAttribute('aria-expanded', 'false');
-    const list = this.menuList(items, () => button.focus());
+    const entries = () => typeof items === 'function' ? items() : items;
+    let list = this.menuList(entries(), () => button.focus());
     list.hidden = true;
     button.addEventListener('click', () => {
       const open = list.hidden;
       this.closeMenus();
       if (!open)
         return;
+      if (typeof items === 'function') {
+        const fresh = this.menuList(entries(), () => button.focus());
+        fresh.hidden = true;
+        list.replaceWith(fresh);
+        list = fresh;
+      }
       this.refreshMenu(list);
       list.hidden = false;
       button.setAttribute('aria-expanded', 'true');

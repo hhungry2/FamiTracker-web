@@ -32,6 +32,7 @@ CORE_SOURCES := \
 	SoundGen ChannelHandler ChannelState Channels2A03 ChannelsVRC6 ChannelsVRC7 ChannelsFDS ChannelsMMC5 \
 	ChannelsN163 ChannelsS5B InstHandlerDPCM InstHandlerVRC7 SeqInstHandler SeqInstHandler2A03Pulse \
 	SeqInstHandlerFDS SeqInstHandlerN163 SeqInstHandlerS5B SeqInstHandlerSawtooth NoteQueue RegisterState \
+	InstrumentRecorder \
 	Chunk utils/ftmath \
 	APU/APU APU/Mixer APU/SoundChip APU/2A03 APU/MMC5 APU/VRC6 APU/VRC7 APU/FDS APU/N163 APU/S5B \
 	APU/nsfplay/xgm/devices/Sound/nes_apu APU/nsfplay/xgm/devices/Sound/nes_dmc \

@@ -8,12 +8,22 @@
 //
 // The view only draws and reports where things are; the editor (dnft-editor.mjs) owns
 // the state it reads: song, track, cursor, selection, editMode, play, muted. Bookmarked
-// rows have their numbers marked, and may set the row highlight from their row on.
+// rows have their numbers marked, and may set the row highlight from their row on; the row
+// marker (Tracker > Set Row Marker) is a bar on its row number. The headers have the
+// channels' volume meters (dnft-displays.mjs), and the compact view (View > Compact View)
+// shows only the notes, in narrow channels.
 
 import { CELL, NOTE, MAX_VOLUME, NO_INSTRUMENT, HOLD_INSTRUMENT, CHANNEL_ID } from './dnft-song.mjs';
 import { inRows, highlightAt, highlightState, bookmarkAt } from './dnft-pattern-edit.mjs';
 
 const NOTE_NAMES = ['C-', 'C#', 'D-', 'D#', 'E-', 'F-', 'F#', 'G-', 'G#', 'A-', 'A#', 'B-'];
+const FLAT_NAMES = ['C-', 'Db', 'D-', 'Eb', 'E-', 'F-', 'Gb', 'G-', 'Ab', 'A-', 'Bb', 'B-'];
+let displayFlats = false;
+
+// Configuration > General > flats: Db and Eb for C# and D#
+export function setDisplayFlats(on) {
+  displayFlats = on;
+}
 const HEX = '0123456789ABCDEF';
 const hex2 = value => HEX[value >> 4 & 15] + HEX[value & 15];
 
@@ -51,7 +61,7 @@ export function noteText(note, octave, channelId) {
   // the noise channel plays 16 periods: its notes show as their period
   if (channelId === CHANNEL_ID.NOISE)
     return `${HEX[(octave * 12 + note - 1) & 15]}-#`;
-  return NOTE_NAMES[note - 1] + octave;
+  return (displayFlats ? FLAT_NAMES : NOTE_NAMES)[note - 1] + octave;
 }
 
 export class PatternView {
@@ -97,13 +107,13 @@ export class PatternView {
       effect: v('--dnft-pe-effect'), dim: v('--dnft-pe-dim'), rowNumber: v('--dnft-pe-row-number'),
       cursorRow: v('--dnft-pe-cursor-row'), editRow: v('--dnft-pe-edit-row'), playRow: v('--dnft-pe-play-row'),
       cursor: v('--dnft-pe-cursor'), selection: v('--dnft-pe-selection'), separator: v('--dnft-pe-separator'),
-      bookmark: v('--dnft-pe-bookmark'),
+      bookmark: v('--dnft-pe-bookmark'), marker: v('--dnft-pe-marker') || v('--dnft-pe-cursor'),
     };
     const size = parseFloat(style.fontSize) || 13;
     this.font = `${size}px ${style.fontFamily}`;
     this.ctx.font = this.font;
     this.charWidth = Math.ceil(this.ctx.measureText('0').width * 4) / 4;
-    this.rowHeight = Math.round(size * 1.45);
+    this.rowHeight = Math.round(size * (parseFloat(style.getPropertyValue('--dnft-pe-row')) || 1.45));
     this.layout();
   }
 
@@ -128,8 +138,9 @@ export class PatternView {
     this.gutter = Math.round(cw * 3.5);
     let x = 0;
     const effColumns = song.track(track).effColumns;
+    const compact = this.editor.compact;
     this.channels = song.channels.map((channel, i) => {
-      const width = Math.round((channelChars(effColumns[i]) + 1) * cw);
+      const width = Math.round(((compact ? 3 : channelChars(effColumns[i])) + 1) * cw);
       const place = { x, width, effColumns: effColumns[i] };
       x += width + 1;
       return place;
@@ -146,17 +157,20 @@ export class PatternView {
     const corner = document.createElement('div');
     corner.className = 'dnft-pv-corner';
     corner.style.width = `${this.gutter}px`;
+    const compact = this.editor.compact;
+    const meters = [];
     this.header.replaceChildren(corner, ...song.channels.map((channel, i) => {
       const cell = document.createElement('div');
       cell.className = 'dnft-pv-channel';
       cell.classList.toggle('is-muted', muted[i]);
+      cell.classList.toggle('is-recording', this.recording === i);
       cell.style.width = `${this.channels[i].width + 1}px`;
       cell.dataset.channel = i;
 
       const name = document.createElement('button');
       name.type = 'button';
       name.className = 'dnft-pv-channel-name';
-      name.textContent = channel.name;
+      name.textContent = compact ? channel.shortName : channel.name;
       name.title = t.muteHint;
       name.setAttribute('aria-pressed', String(!muted[i]));
       name.addEventListener('click', e => this.editor.toggleMute(i, e.altKey || e.shiftKey));
@@ -178,9 +192,22 @@ export class PatternView {
       more.addEventListener('click', () => this.editor.setEffColumns(i, this.channels[i].effColumns + 1));
       columns.append(less, more);
 
-      cell.append(name, columns);
+      const meter = document.createElement('canvas');
+      meter.className = 'dnft-pv-meter';
+      meter.width = Math.max(15, this.channels[i].width - 8);
+      meter.height = 5;
+      meters.push(meter);
+
+      cell.append(name, columns, meter);
       return cell;
     }));
+    this.editor.displays?.meters.attach(meters);
+  }
+
+  // The channel being recorded (Tracker > Record To Instrument), or null
+  markRecording(channel) {
+    this.recording = channel;
+    this.header.querySelectorAll('.dnft-pv-channel').forEach((cell, i) => cell.classList.toggle('is-recording', i === channel));
   }
 
   invalidate() {
@@ -213,7 +240,7 @@ export class PatternView {
   }
 
   draw() {
-    const { song, track, cursor, selection, editMode, play, muted } = this.editor;
+    const { song, track, cursor, selection, editMode, play, muted, marker } = this.editor;
     const { ctx, colors: c, charWidth: cw, rowHeight: rh } = this;
     if (!song || !this.width || !this.height)
       return;
@@ -293,8 +320,15 @@ export class PatternView {
         ctx.fillStyle = c.bookmark;
         ctx.fillRect(1, line * rh + 1, this.gutter - 3, rh - 2);
       }
+      if (marker && marker.frame === place.frame && marker.row === place.row) {
+        const bar = ctx.createLinearGradient(0, 0, this.gutter, 0);
+        bar.addColorStop(0, c.marker);
+        bar.addColorStop(1, c.bg);
+        ctx.fillStyle = bar;
+        ctx.fillRect(1, line * rh + 1, this.gutter - 3, rh - 2);
+      }
       ctx.fillStyle = c.rowNumber;
-      ctx.fillText(hex2(place.row), cw * 0.5, line * rh + rh / 2 + 1);
+      ctx.fillText(this.editor.rowLabel(place.row), cw * 0.5, line * rh + rh / 2 + 1);
     });
     ctx.globalAlpha = 1;
     ctx.fillStyle = c.separator;
@@ -342,6 +376,8 @@ export class PatternView {
     } else {
       dots(3, 0);
     }
+    if (this.editor.compact)
+      return;
     if (cell[3] === NO_INSTRUMENT)
       dots(2, 4);
     else {
@@ -369,7 +405,7 @@ export class PatternView {
   // [x, width] of a column on the canvas
   columnX(channel, column) {
     const cw = this.charWidth;
-    const [at, chars] = columnPlace(column);
+    const [at, chars] = columnPlace(this.editor.compact ? 0 : column);
     const x = this.gutter - this.scroller.scrollLeft + this.channels[channel].x + cw * 0.5 + at * cw;
     return [x, chars * cw];
   }
@@ -396,7 +432,7 @@ export class PatternView {
         return { ...place, channel: 0, column: 0 };
       const last = this.channels.length - 1;
       if (content >= this.channels[last].x + this.channels[last].width)
-        return { ...place, channel: last, column: columnCount(this.channels[last].effColumns) - 1 };
+        return { ...place, channel: last, column: this.editor.columns(last) - 1 };
     }
     if (!place || x < this.gutter)
       return place ? { ...place, channel: null, column: null } : null;
@@ -405,7 +441,7 @@ export class PatternView {
     if (channel < 0)
       return { ...place, channel: null, column: null };
     const chars = (content - this.channels[channel].x) / this.charWidth - 0.5;
-    const columns = columnCount(this.channels[channel].effColumns);
+    const columns = this.editor.columns(channel);
     let column = 0;
     for (let i = columns - 1; i >= 0; --i)
       if (chars >= columnPlace(i)[0] - (i === 0 ? 1 : 0.5)) {

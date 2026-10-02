@@ -14,11 +14,15 @@
 // importer's `warning`; 'snapshot', 'trackData' (track); 'play' takes a number for the
 // playback besides the session's arguments; 'beginImport' (bytes) reads a module to
 // import from; 'exportWave' (options, see exportWave()) renders wave files, sending
-// {type: 'progress', id, value} on the way; everything else is a method of the session
+// {type: 'progress', id, value} on the way; 'registerView' (requests) reads the registers
+// and pitches of chips in one go (see registerView()); everything else is a method of the
+// session
 // (src/session_bindings.cpp).
 // Besides: {type: 'rows', events: [{at, frame, row, play}]} for the rows the player read,
 // `at` in frames of the output since the worklet started, `play` the number of the
-// playback they belong to (frame -1: playback stopped).
+// playback they belong to (frame -1: playback stopped); {type: 'levels', events: [{at,
+// levels}]} for the volume meters of the channels (a Uint8Array of 0-15 for each), `at`
+// in the same frames, after every tick that changed one.
 
 import createDnFT from './dnft.mjs';
 
@@ -59,6 +63,21 @@ function postRows() {
   const events = session?.takeRowEvents() ?? [];
   if (events.length)
     self.postMessage({ type: 'rows', events: events.map(e => ({ at: sessionStart + e.at, frame: e.frame, row: e.row, play: playback })) });
+  const levels = session?.takeLevelEvents() ?? [];
+  if (levels.length)
+    self.postMessage({ type: 'levels', events: levels.map(e => ({ at: sessionStart + e.at, levels: e.levels })) });
+}
+
+// The register view's data in one call: for each request {chip, addresses, frequencies}
+// the registers' values and ages (two bytes each, session.registers()) and the pitches of
+// the chip's first `frequencies` channels; the FDS's modulator counter too
+function registerView(requests) {
+  return requests.map(({ chip, addresses, frequencies }) => ({
+    chip,
+    registers: session.registers(chip, addresses),
+    frequencies: frequencies ? session.channelFrequencies(chip, frequencies) : [],
+    ...(chip === 4 ? { modCounter: session.fdsModCounter() } : {}),
+  }));
 }
 
 function trackData(track) {
@@ -186,6 +205,8 @@ function call(method, args, id) {
       postRows();
       playback = args[4] ?? playback + 1;
       return session.play(args[0], args[1], args[2], args[3]);
+    case 'registerView':
+      return registerView(args[0]);
     case 'beginImport':
       return inHeap(args[0], (at, size) => session.beginImport(at, size));
     case 'exportWave':

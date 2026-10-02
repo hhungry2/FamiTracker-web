@@ -5,7 +5,7 @@
 // Keys follow the desktop's defaults: the Z and Q rows of the keyboard enter notes, 1 a
 // note cut, \ a release, hex digits the other columns; Space toggles editing, Enter plays
 // the frame or stops, F5-F8 play from the start, loop the pattern, play from the cursor
-// and stop; the rest of the desktop's shortcuts are in KEYS. Edits of the patterns, the
+// and stop; the rest of the desktop's shortcuts are in dnft-keymap.mjs. Edits of the patterns, the
 // frames, the bookmarks and the song's settings can be undone. The module is kept in the
 // browser (localStorage) as it changes.
 //
@@ -25,11 +25,15 @@ import { FileMenu } from './dnft-files.mjs';
 import { PatternMenu } from './dnft-pattern-menu.mjs';
 import { FrameEditor } from './dnft-frame-editor.mjs';
 import { SongMenu } from './dnft-song-menu.mjs';
+import { TrackerMenu } from './dnft-tracker-menu.mjs';
+import { Displays } from './dnft-displays.mjs';
+import { Keymap } from './dnft-keymap.mjs';
+import { RecentFiles } from './dnft-recent.mjs';
+import { Config } from './dnft-config.mjs';
 import { STRINGS } from './dnft-editor-strings.mjs';
 
 const AUTOSAVE_KEY = 'dnft-editor.autosave';
 const AUTOSAVE_DELAY = 1500;
-const PAGE_ROWS = 16;
 // Engine ticks per second a module may ask for (CSpeedDlg)
 const ENGINE_RATE_MIN = 16;
 const ENGINE_RATE_MAX = 400;
@@ -52,36 +56,6 @@ function hexOfKey(event) {
 
 // The note of a key, octave * 12 + semitone (FamiTrackerTypes.h MIDI_NOTE())
 const midiNote = (note, octave) => octave * 12 + note - 1;
-
-// The desktop's shortcuts that are not typing (CAccelerator::DEFAULT_TABLE, and what its
-// pattern editor does with Alt), by modifiers (C Ctrl or Cmd, A Alt, S Shift) and the
-// key's code. Ctrl+F4 closes the browser's tab in most browsers: Ctrl+Shift+Up/Down
-// transpose by octaves too, as before.
-const KEYS = {
-  'C+KeyZ': e => e.undo(), 'CS+KeyZ': e => e.redo(), 'C+KeyY': e => e.redo(),
-  'C+KeyC': e => e.copy(), 'C+KeyX': e => e.cut(), 'C+KeyV': e => e.paste(), 'C+KeyM': e => e.paste(PASTE.MIX),
-  'C+KeyA': e => e.selectAll(),
-  'C+ArrowLeft': e => e.setCursor({ ...e.cursor, frame: e.cursor.frame - 1 }),
-  'C+ArrowRight': e => e.setCursor({ ...e.cursor, frame: e.cursor.frame + 1 }),
-  'C+ArrowUp': e => e.stepInstrument(-1), 'C+ArrowDown': e => e.stepInstrument(1),
-  'CS+ArrowUp': e => e.transpose(12), 'CS+ArrowDown': e => e.transpose(-12),
-  'C+F1': e => e.transpose(-1), 'C+F2': e => e.transpose(1), 'C+F3': e => e.transpose(-12), 'C+F4': e => e.transpose(12),
-  'S+F1': e => e.scrollValues(-1), 'S+F2': e => e.scrollValues(1), 'S+F3': e => e.scrollValues(-16), 'S+F4': e => e.scrollValues(16),
-  'C+KeyG': e => e.interpolate(), 'C+KeyR': e => e.reverse(), 'A+KeyS': e => e.replaceInstrument(),
-  'C+KeyK': e => e.toggleBookmark(), 'C+PageDown': e => e.gotoBookmark(1), 'C+PageUp': e => e.gotoBookmark(-1),
-  'C+KeyF': e => e.patternMenu.toggleFind(), 'A+KeyG': e => e.patternMenu.openGoto(),
-  'A+KeyB': e => e.setBlock(true), 'A+KeyE': e => e.setBlock(false),
-  'A+KeyT': e => e.setMask('instrument'), 'A+KeyV': e => e.setMask('volume'),
-  'A+ArrowUp': e => e.moveRows(-1), 'A+ArrowDown': e => e.moveRows(1),
-  'AS+ArrowUp': e => e.moveRows(-1, true), 'AS+ArrowDown': e => e.moveRows(1, true),
-  'A+ArrowLeft': e => e.moveChannelKeepingColumn(-1), 'A+ArrowRight': e => e.moveChannelKeepingColumn(1),
-  'AS+ArrowLeft': e => e.moveChannelKeepingColumn(-1, true), 'AS+ArrowRight': e => e.moveChannelKeepingColumn(1, true),
-  'C+KeyI': e => e.action('edit-instrument'), 'C+KeyD': e => e.frameOp('duplicate'), 'A+KeyD': e => e.songMenu.clonePattern(),
-  'C+NumpadAdd': e => e.setStep(e.step + 1), 'C+NumpadSubtract': e => e.setStep(e.step - 1),
-  'A+F9': e => e.toggleMute(e.cursor.channel, false), 'A+F10': e => e.toggleMute(e.cursor.channel, true),
-};
-for (let digit = 0; digit < 10; ++digit)
-  KEYS[`A+Numpad${digit}`] = e => e.setStep(digit);
 
 function copyField(from, to, field) {
   if (field === 0) { to[0] = from[0]; to[1] = from[1]; }
@@ -123,6 +97,7 @@ export class DnFTEditor {
     demos = null,
   } = {}) {
     this.base = base;
+    this.lang = lang;
     this.strings = STRINGS[lang] ?? STRINGS.en;
     this.autosave = autosave;
     this.source = source;
@@ -159,6 +134,9 @@ export class DnFTEditor {
     this.dirty = false;         // changed since last saved to a file
     this.fileName = null;
     this.activeEditor = 'pattern';     // the pattern or the 'frames', which had the keyboard last
+    this.marker = null;                // Tracker > Set Row Marker: {frame, row}, or none
+    this.compact = false;              // View > Compact View
+    this.keymap = new Keymap();        // the shortcuts (dnft-keymap.mjs)
 
     this.build(container);
   }
@@ -192,11 +170,13 @@ export class DnFTEditor {
           <label class="dnft-field dnft-field--inline"><span class="dnft-label"></span><select data-role="instrument"></select></label>
         </div>
         <div class="dnft-group">
+          <button type="button" class="dnft-button dnft-toggle dnft-side-toggle" data-action="toggle-side" aria-pressed="false">☰</button>
           <button type="button" class="dnft-button dnft-toggle" data-action="edit"></button>
           <button type="button" class="dnft-button dnft-toggle" data-action="follow"></button>
           <button type="button" class="dnft-button" data-action="undo"></button>
           <button type="button" class="dnft-button" data-action="redo"></button>
         </div>
+        <canvas class="dnft-visualizer" aria-hidden="true" hidden></canvas>
         <label class="dnft-group dnft-volume"><span class="dnft-label"></span><input type="range" min="0" max="1" step="0.01" value="0.8" data-role="volume"></label>
       </div>
       <div class="dnft-main">
@@ -275,7 +255,16 @@ export class DnFTEditor {
             <ul class="dnft-instrument-list" role="listbox"></ul>
           </section>
         </aside>
-        <div class="dnft-pattern"></div>
+        <div class="dnft-center">
+          <div class="dnft-frames-slot" hidden></div>
+          <div class="dnft-center-row">
+            <div class="dnft-pattern"></div>
+            <aside class="dnft-registers" hidden>
+              <header class="dnft-panel-head"><span data-text="registerState"></span><button type="button" class="dnft-icon-button" data-role="close-registers">✕</button></header>
+              <div class="dnft-registers-body"><canvas></canvas></div>
+            </aside>
+          </div>
+        </div>
       </div>
       <div class="dnft-keys">
         <div class="dnft-piano" aria-hidden="true"></div>
@@ -315,6 +304,7 @@ export class DnFTEditor {
     label('new', t.newSong, t.newHint);
     label('open', t.open, t.openHint);
     label('save', t.save, t.saveHint);
+    root.querySelector('[data-action="toggle-side"]').title = t.sidePanelsHint;
     label('play', `▶ ${t.play}`, t.playHint);
     label('play-song', t.playSong, t.playSongHint);
     label('play-pattern', t.playPattern, t.playPatternHint);
@@ -397,6 +387,7 @@ export class DnFTEditor {
       commentText: $('.dnft-comment-text'), showComment: $('[data-role="show-comment"]'),
       chips: $('.dnft-chips'), frames: $('.dnft-frame-list'), instruments: $('.dnft-instrument-list'),
       pattern: $('.dnft-pattern'), piano: $('.dnft-piano'), position: $('.dnft-position'),
+      visualizer: $('.dnft-visualizer'), registers: $('.dnft-registers'),
       message: $('.dnft-message'), drop: $('.dnft-drop'), loading: $('.dnft-loading'),
     };
 
@@ -404,11 +395,16 @@ export class DnFTEditor {
     this.view.scroller.setAttribute('aria-label', t.pattern);
     this.instrumentEditor = new InstrumentEditor(this);
     this.files = new FileMenu(this);
+    this.recent = new RecentFiles(this);
+    this.config = new Config(this);
     this.patternMenu = new PatternMenu(this);
     this.songMenu = new SongMenu(this);
     this.frameEditor = new FrameEditor(this);
+    this.displays = new Displays(this);
+    this.trackerMenu = new TrackerMenu(this);
     this.buildPiano();
     this.wire();
+    this.trackerMenu.applyOptions();
     if (this.demos)
       this.listDemos($('.dnft-demos'));
   }
@@ -629,6 +625,7 @@ export class DnFTEditor {
   setSong(snapshot) {
     this.stopPlaying();
     this.session.clearRows();
+    this.trackerMenu.onSong();
     // what it holds was the previous song's (saveComment())
     if (this.els.commentDialog.open)
       this.els.commentDialog.close();
@@ -679,6 +676,7 @@ export class DnFTEditor {
     }
     this.fileName = file.name.replace(/\.(dnm|0cc|ftm)$/i, '');
     this.dirty = false;
+    this.recent.add(file.name, bytes);
     this.message(this.strings.opened + file.name);
     this.saveToBrowser();
     this.renderToolbar();
@@ -717,6 +715,7 @@ export class DnFTEditor {
     this.dirty = false;
     this.renderToolbar();
     this.message(this.strings.saved + name);
+    this.recent.add(name, bytes);
     this.writeAutosave(bytes);
   }
 
@@ -774,9 +773,11 @@ export class DnFTEditor {
       this.session.ended = false;
       this.stopPlaying();
     }
+    this.displays.tick();
     if (samePlace(play, this.play))
       return;
     this.play = play;
+    this.trackerMenu.onPlayRow(play);
     if (play && this.playing && this.follow && !this.dragging) {
       const frameChanged = play.frame !== this.cursor.frame;
       this.cursor.frame = play.frame;
@@ -790,6 +791,22 @@ export class DnFTEditor {
 
   // ---- state shortcuts ------------------------------------------------------------------
 
+  // Row and frame numbers, in hexadecimal or decimal (Configuration > General)
+  rowLabel(row) {
+    return this.config.get('rowHex') ? hex2(row) : String(row).padStart(3, '0');
+  }
+
+  frameLabel(frame) {
+    return this.config.get('rowHex') ? hex2(frame) : String(frame).padStart(3, '0');
+  }
+
+  // After the Configuration dialog: what shows the settings draws again
+  applyConfig() {
+    this.renderFrames();
+    this.view.invalidate();
+    this.updateStatus();
+  }
+
   get tr() {
     return this.song.track(this.track);
   }
@@ -798,8 +815,9 @@ export class DnFTEditor {
     return this.song.channels.length;
   }
 
+  // How many columns a channel has to put the cursor on: the notes only, in the compact view
   columns(channel) {
-    return columnCount(this.tr.effColumns[channel]);
+    return this.compact ? 1 : columnCount(this.tr.effColumns[channel]);
   }
 
   patternOf(frame, channel) {
@@ -886,39 +904,54 @@ export class DnFTEditor {
     const { rows, frames } = this.tr;
     const total = rows * frames;
     let at = this.cursor.frame * rows + this.cursor.row + delta;
-    at = extend ? Math.max(0, Math.min(total - 1, at)) : ((at % total) + total) % total;
+    if (extend) {
+      at = Math.max(0, Math.min(total - 1, at));
+    } else if (this.config.get('wrapFrames')) {
+      at = ((at % total) + total) % total;
+    } else {
+      // within the frame: round it, or stopping at its ends (CPatternEditor::MoveToRow())
+      const row = this.cursor.row + delta;
+      at = this.cursor.frame * rows + (this.config.get('wrapCursor') ? ((row % rows) + rows) % rows : Math.max(0, Math.min(rows - 1, row)));
+    }
     this.setCursor({ ...this.cursor, frame: Math.floor(at / rows), row: at % rows }, { extend });
   }
 
   // Up and Down go by the edit step, as the desktop's do unless its "No step moving" is on;
   // Alt+Up and Alt+Down by one row
   moveByStep(direction, extend = false) {
-    this.moveRows(direction * Math.max(1, this.step), extend);
+    this.moveRows(direction * (this.config.get('noStepMove') ? 1 : Math.max(1, this.step)), extend);
   }
 
   moveColumn(delta, extend = false) {
     let { channel, column } = this.cursor;
     column += delta;
     if (column < 0) {
-      channel = (channel + this.channelCount - 1) % this.channelCount;
-      column = this.columns(channel) - 1;
+      channel = this.nextChannel(channel, -1);
+      column = channel === this.cursor.channel ? 0 : this.columns(channel) - 1;
     } else if (column >= this.columns(channel)) {
-      channel = (channel + 1) % this.channelCount;
-      column = 0;
+      channel = this.nextChannel(channel, 1);
+      column = channel === this.cursor.channel ? this.columns(channel) - 1 : 0;
     }
     this.setCursor({ ...this.cursor, channel, column }, { extend });
   }
 
+  // The channel next to one, round the ends or stopping there (Configuration > General)
+  nextChannel(channel, delta) {
+    if (this.config.get('wrapCursor'))
+      return (channel + delta + this.channelCount) % this.channelCount;
+    return Math.max(0, Math.min(this.channelCount - 1, channel + delta));
+  }
+
   // Tab and Shift+Tab: the next or previous channel's note column, no selection
   moveChannel(delta) {
-    const channel = (this.cursor.channel + delta + this.channelCount) % this.channelCount;
+    const channel = this.nextChannel(this.cursor.channel, delta);
     this.deselect();
     this.setCursor({ ...this.cursor, channel, column: 0 });
   }
 
   // Alt+Left and Alt+Right: the channel next to it, in the same column as far as it has one
   moveChannelKeepingColumn(delta, extend = false) {
-    const channel = (this.cursor.channel + delta + this.channelCount) % this.channelCount;
+    const channel = this.nextChannel(this.cursor.channel, delta);
     this.setCursor({ ...this.cursor, channel, column: Math.min(this.cursor.column, this.columns(channel) - 1) }, { extend });
   }
 
@@ -929,12 +962,14 @@ export class DnFTEditor {
 
   // ---- playback -------------------------------------------------------------------------
 
-  startPlaying(mode) {
+  // `place`: where PLAY.CURSOR starts from (the cursor, or the row marker)
+  startPlaying(mode, place = this.cursor) {
     this.session.resume();
     this.releaseHeldNotes();
-    this.session.play(this.track, mode, this.cursor.frame, this.cursor.row);
+    this.session.play(this.track, mode, place.frame, place.row);
     this.playing = true;
     this.renderToolbar();
+    this.trackerMenu.startPolling();
   }
 
   stopPlaying() {
@@ -1380,7 +1415,7 @@ export class DnFTEditor {
   // Shift+F1-F4: the values of the selection, or the field at the cursor, by `amount`
   scrollValues(amount) {
     if (this.canEdit())
-      this.applyWrites(edit.scrollValues(this.trackView(), this.selection, this.cursor, amount));
+      this.applyWrites(edit.scrollValues(this.trackView(), this.selection, this.cursor, amount, this.config.get('wrapPatternValue')));
   }
 
   interpolate() {
@@ -1876,11 +1911,16 @@ export class DnFTEditor {
   toggleMute(channel, solo) {
     if (solo) {
       const alone = this.muted.every((m, i) => m === (i !== channel));
-      this.muted = this.muted.map((_, i) => alone ? false : i !== channel);
+      this.setMuted(this.muted.map((_, i) => alone ? false : i !== channel));
     } else {
-      this.muted[channel] = !this.muted[channel];
+      this.setMuted(this.muted.map((m, i) => i === channel ? !m : m));
     }
-    this.session.send('setMutedChannels', this.muted.reduce((mask, m, i) => m ? mask + 2 ** i : mask, 0));
+  }
+
+  // The channels that are muted, one flag for each
+  setMuted(muted) {
+    this.muted = muted;
+    this.session.send('setMutedChannels', muted.reduce((mask, m, i) => m ? mask + 2 ** i : mask, 0));
     this.view.buildHeader();
     this.view.invalidate();
   }
@@ -2025,6 +2065,7 @@ export class DnFTEditor {
       case 'new': return this.newSong();
       case 'open': return this.els.file.click();
       case 'save': return this.saveFile();
+      case 'toggle-side': return this.trackerMenu.setOption('side', !this.trackerMenu.options.side);
       case 'play': return this.togglePlay();
       case 'play-song': return this.startPlaying(PLAY.SONG);
       case 'play-pattern': return this.startPlaying(PLAY.PATTERN);
@@ -2090,16 +2131,11 @@ export class DnFTEditor {
       return;
     const typing = e.target.matches('input, select, textarea') || e.target.closest('dialog');
     const ctrl = e.ctrlKey || e.metaKey;
-    // what works anywhere in the editor
-    const global = {
-      F5: () => this.startPlaying(PLAY.SONG),
-      F6: () => this.startPlaying(PLAY.PATTERN),
-      F7: () => this.startPlaying(PLAY.CURSOR),
-      F8: () => this.stopPlaying(),
-    }[e.code];
-    if (global && !e.altKey) {
+    // what works anywhere in the editor: playing, killing the sound, the help
+    const global = this.keymap.lookup(e);
+    if (global?.global && !e.repeat && !e.target.closest('dialog')) {
       e.preventDefault();
-      global();
+      global.run(this);
       return;
     }
     if (ctrl && e.code === 'KeyS') {
@@ -2116,13 +2152,12 @@ export class DnFTEditor {
       this.shortcut(e);
   }
 
-  // The desktop's shortcuts of KEYS, from where the keys are not the pattern's
+  // The shortcuts of the keymap, from where the keys are not the pattern's
   shortcut(e) {
-    const modifiers = (e.ctrlKey || e.metaKey ? 'C' : '') + (e.altKey ? 'A' : '') + (e.shiftKey ? 'S' : '');
-    const command = modifiers && KEYS[`${modifiers}+${e.code}`];
+    const command = this.keymap.lookup(e);
     if (command) {
       e.preventDefault();
-      command(this);
+      command.run(this);
     }
   }
 
@@ -2149,11 +2184,10 @@ export class DnFTEditor {
     const done = () => { e.preventDefault(); e.stopPropagation(); };
     const { column } = this.cursor;
 
-    const modifiers = (ctrl ? 'C' : '') + (e.altKey ? 'A' : '') + (shift ? 'S' : '');
-    const command = modifiers && KEYS[`${modifiers}+${e.code}`];
+    const command = this.keymap.lookup(e);
     if (command) {
       done();
-      command(this);
+      command.run(this);
       return;
     }
     if (ctrl || e.altKey) {
@@ -2170,8 +2204,8 @@ export class DnFTEditor {
       case 'ArrowDown': done(); return this.moveByStep(1, shift);
       case 'ArrowLeft': done(); return this.moveColumn(-1, shift);
       case 'ArrowRight': done(); return this.moveColumn(1, shift);
-      case 'PageUp': done(); return this.moveRows(-PAGE_ROWS, shift);
-      case 'PageDown': done(); return this.moveRows(PAGE_ROWS, shift);
+      case 'PageUp': done(); return this.moveRows(-this.config.get('pageStep'), shift);
+      case 'PageDown': done(); return this.moveRows(this.config.get('pageStep'), shift);
       case 'Home': done(); return this.setCursor({ ...this.cursor, row: 0 }, { extend: shift });
       case 'End': done(); return this.setCursor({ ...this.cursor, row: this.tr.rows - 1 }, { extend: shift });
       case 'Tab': done(); return this.moveChannel(shift ? -1 : 1);
@@ -2406,6 +2440,7 @@ export class DnFTEditor {
     };
     pressed('edit', this.editMode);
     pressed('follow', this.follow);
+    pressed('toggle-side', this.trackerMenu?.options.side ?? true);
     pressed('play', this.playing);
     root.classList.toggle('is-editing', this.editMode);
     root.classList.toggle('is-playing', this.playing);
@@ -2501,14 +2536,17 @@ export class DnFTEditor {
     const tr = this.tr;
     const { frame, row, channel } = this.cursor;
     const parts = [
-      `${t.statusFrame} ${hex2(frame)}/${hex2(tr.frames - 1)}`,
-      `${t.statusRow} ${hex2(row)}`,
+      `${t.statusFrame} ${this.frameLabel(frame)}/${this.frameLabel(tr.frames - 1)}`,
+      `${t.statusRow} ${this.rowLabel(row)}`,
       this.song.channels[channel].name,
     ];
-    if (this.playing && this.play)
+    if (this.playing && this.play) {
       parts.push(`${t.playing} ${hex2(this.play.frame)}:${hex2(this.play.row)}`);
-    else if (this.editMode)
+      if (this.trackerMenu.bpm)
+        parts.push(`${this.trackerMenu.options.averageBpm ? t.averageBpmShort : 'BPM'} ${this.trackerMenu.bpm.toFixed(1)}`);
+    } else if (this.editMode) {
       parts.push(t.editing);
+    }
     this.els.position.textContent = parts.join('  ·  ');
   }
 

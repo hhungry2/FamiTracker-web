@@ -15,7 +15,6 @@
 #include "FamiTrackerDoc.h"
 #include "PatternNote.h"
 #include "portable/SoundGenUI.h"
-#include "InstrumentRecorder.h"
 #include "DetuneDlg.h"
 #include "VersionChecker.h"
 #include "libsamplerate/include/samplerate.h"
@@ -56,66 +55,6 @@ bool CFamiTrackerView::PlayerGetNote(int Track, int Frame, int Channel, int Row,
 	}
 
 	return ValidCommand;
-}
-
-// ---- CInstrumentRecorder -------------------------------------------------------------------------
-// Recording instruments from playback is an editor feature; the recorder never records.
-
-CInstrumentRecorder::CInstrumentRecorder(CSoundGen *pSG) :
-	m_pDocument(nullptr),
-	m_pSoundGen(pSG),
-	m_iRecordChannel(-1),
-	m_iDumpCount(0),
-	m_pDumpInstrument(nullptr),
-	m_pDumpCache(),
-	m_pSequenceCache(),
-	m_stRecordSetting {15, 1, false},
-	m_iRecordWaveCache(nullptr),
-	m_iRecordWaveSize(0),
-	m_iRecordWaveCount(0)
-{
-}
-
-CInstrumentRecorder::~CInstrumentRecorder() {
-}
-
-void CInstrumentRecorder::StartRecording() {
-}
-
-void CInstrumentRecorder::StopRecording(CFamiTrackerView *) {
-}
-
-void CInstrumentRecorder::RecordInstrument(const unsigned, CFamiTrackerView *) {
-}
-
-CInstrument *CInstrumentRecorder::GetRecordInstrument(unsigned) const {
-	return nullptr;
-}
-
-int CInstrumentRecorder::GetRecordChannel() const {
-	return m_iRecordChannel;
-}
-
-void CInstrumentRecorder::SetRecordChannel(int Channel) {
-	m_iRecordChannel = Channel;
-}
-
-stRecordSetting *CInstrumentRecorder::GetRecordSetting() const {
-	return const_cast<stRecordSetting *>(&m_stRecordSetting);
-}
-
-void CInstrumentRecorder::SetRecordSetting(stRecordSetting *Setting) {
-	if (Setting)
-		m_stRecordSetting = *Setting;
-}
-
-void CInstrumentRecorder::ResetDumpInstrument() {
-}
-
-void CInstrumentRecorder::ResetRecordCache() {
-}
-
-void CInstrumentRecorder::ReleaseCurrent() {
 }
 
 // ---- CVersionChecker -------------------------------------------------------------------------------

@@ -37,6 +37,10 @@
 #include "Bookmark.h"
 #include "BookmarkCollection.h"
 #include "BookmarkManager.h"
+#include "APU/APU.h"
+#include "RegisterState.h"
+#include "InstrumentRecorder.h"
+#include "Settings.h"
 #include "engine_internal.h"
 #include "session.h"
 #include "export.h"
@@ -218,6 +222,7 @@ public:
 		result.set("speed", s.speed);
 		result.set("tempo", s.tempo);
 		result.set("timeMs", s.timeMs);
+		result.set("bpm", s.bpm);
 		return result;
 	}
 
@@ -232,6 +237,203 @@ public:
 	//! Bit n mutes channel n
 	void setMutedChannels(double mask) {
 		m_pSession->SetMutedChannels(static_cast<uint64_t>(mask));
+	}
+
+	// ---- Tracker menu, View menu ---------------------------------------------------------
+
+	//! Tracker > Play Row: the row's notes, with their effects, on the channels not muted
+	void playRow(int track, int frame, int row) {
+		m_pSession->PlayRow(track, frame, row);
+	}
+
+	//! Tracker > Kill Sound
+	void killSound() {
+		m_pSession->KillSound();
+	}
+
+	//! View > Meter Decay Rate: 0 slow, 1 fast
+	void setMeterDecayRate(int rate) {
+		m_pSession->SetMeterDecayRate(rate);
+	}
+
+	int meterDecayRate() const {
+		return m_pSession->GetMeterDecayRate();
+	}
+
+	//! View > Average BPM: whether state().bpm is the average of the song played so far
+	void setAverageBpm(bool average) {
+		theApp.GetSettings()->Display.bAverageBPM = average;
+	}
+
+	//! [{at, levels}]: the volume meters (Uint8Array, 0-15 for each channel) after each tick
+	//! that changed one, `at` the output frame the tick's audio begins at
+	val takeLevelEvents() {
+		val list = val::array();
+		for (const auto &e : m_pSession->TakeLevelEvents()) {
+			val entry = val::object();
+			entry.set("at", static_cast<double>(e.at));
+			entry.set("levels", CopyToJs(e.levels.data(), e.levels.size()));
+			list.call<void>("push", entry);
+		}
+		return list;
+	}
+
+	//! View > Register State: for each address of the chip (SNDCHIP_*: 0 the 2A03, 1 VRC6, 2
+	//! VRC7, 4 FDS, 8 MMC5, 16 N163, 32 5B) two bytes, the register's value and its age (the
+	//! ticks since a write in the low four bits, since a new value in the high four; 15 is
+	//! long ago). The module's chips only; zeros for an address the chip has no register at.
+	val registers(int chip, const val &addresses) const {
+		const std::vector<int> list = emscripten::vecFromJSArray<int>(addresses);
+		std::vector<uint8_t> out(list.size() * 2);
+		if (chip == 0 || Doc().ExpansionEnabled(static_cast<unsigned>(chip))) {
+			const CSoundGen &generator = *theApp.GetSoundGenerator();
+			for (size_t i = 0; i < list.size(); ++i)
+				if (list[i] >= 0)
+					if (const CRegisterState *state = generator.GetRegState(chip, list[i])) {
+						out[2 * i] = state->GetValue();
+						out[2 * i + 1] = static_cast<uint8_t>((state->GetNewValueTime() << 4) | state->GetLastUpdatedTime());
+					}
+		}
+		return CopyToJs(out.data(), out.size());
+	}
+
+	//! The pitches the chip's channels sound at, in Hz (what the register view shows beside
+	//! the registers): the first `count` of them; the FDS has its carrier then the modulated
+	//! pitch, the 5B its three tones then the envelope
+	val channelFrequencies(int chip, int count) const {
+		val list = val::array();
+		if (chip == 0 || Doc().ExpansionEnabled(static_cast<unsigned>(chip))) {
+			const CSoundGen &generator = *theApp.GetSoundGenerator();
+			for (int i = 0; i < count; ++i)
+				list.call<void>("push", generator.GetChannelFrequency(chip, i));
+		}
+		return list;
+	}
+
+	//! The FDS modulator's counter, as the register view shows it
+	int fdsModCounter() const {
+		return theApp.GetSoundGenerator()->GetFDSModCounter();
+	}
+
+	// ---- Tracker > Record To Instrument ----------------------------------------------------
+
+	//! The channel being recorded (an index of the module's channels, -1 for none) and the
+	//! recorder's settings (Tracker > Recorder Settings)
+	val recorder() const {
+		const CSoundGen &generator = *theApp.GetSoundGenerator();
+		val result = val::object();
+		int channel = -1;
+		const int type = generator.GetRecordChannel();
+		for (int i = 0; type != -1 && i < Doc().GetChannelCount(); ++i)
+			if (Doc().GetChannelType(i) == type)
+				channel = i;
+		result.set("channel", channel);
+		std::unique_ptr<stRecordSetting> setting(generator.GetRecordSetting());
+		result.set("interval", setting->Interval);
+		result.set("count", setting->InstCount);
+		result.set("reset", setting->Reset);
+		return result;
+	}
+
+	//! Record To Instrument on a channel (or off with -1, or on the one it is on): the next
+	//! playback records its registers into new instruments. Returns what stops it:
+	//! "unsupported" (the DPCM and the VRC7 cannot be recorded), "instruments" (no free
+	//! instrument slot), "sequences" (no free sequence), or "" for none.
+	std::string setRecordChannel(int channel) {
+		CSoundGen &generator = *theApp.GetSoundGenerator();
+		if (channel < 0) {
+			generator.SetRecordChannel(-1);
+			return "";
+		}
+		CheckChannel(channel);
+		const CFamiTrackerDoc &doc = Doc();
+		const int type = doc.GetChannelType(channel);
+		const int chip = doc.GetChipType(channel);
+		if (type == CHANID_DPCM || chip == SNDCHIP_VRC7)
+			return "unsupported";
+		if (doc.GetInstrumentCount() >= MAX_INSTRUMENTS)
+			return "instruments";
+		if (chip != SNDCHIP_FDS) {
+			inst_type_t instrument = INST_NONE;
+			switch (chip) {
+			case SNDCHIP_NONE: case SNDCHIP_MMC5: instrument = INST_2A03; break;
+			case SNDCHIP_VRC6: instrument = INST_VRC6; break;
+			case SNDCHIP_N163: instrument = INST_N163; break;
+			case SNDCHIP_S5B: instrument = INST_S5B; break;
+			}
+			if (instrument != INST_NONE)
+				for (int i = 0; i < SEQ_COUNT; ++i)
+					if (doc.GetFreeSequence(instrument, i) == -1)
+						return "sequences";
+		}
+		generator.SetRecordChannel(type == generator.GetRecordChannel() ? -1 : type);
+		return "";
+	}
+
+	//! `interval` ticks (1-MAX_SEQUENCE_ITEMS) of each instrument, `count` (1-MAX_INSTRUMENTS)
+	//! instruments; with `reset` the settings go back to the longest interval and 1
+	//! instrument after a recording
+	void setRecorderSettings(int interval, int count, bool reset) {
+		theApp.GetSoundGenerator()->SetRecordSetting(new stRecordSetting {
+			std::clamp(interval, 1, static_cast<int>(MAX_SEQUENCE_ITEMS)), std::clamp(count, 1, static_cast<int>(MAX_INSTRUMENTS)), reset});
+	}
+
+	//! The slots of the instruments the recorder made since the last call
+	val takeRecordedInstruments() {
+		val list = val::array();
+		for (int slot : m_pSession->TakeRecordedInstruments())
+			list.call<void>("push", slot);
+		return list;
+	}
+
+	// ---- Configuration: Sound, Mixer and Emulation ---------------------------------------------
+
+	//! The settings of the desktop's Sound (bass and treble filters, damping, volume), Mixer
+	//! (levels of the devices, in tenths of dB: APU1, APU2, VRC6, VRC7, FDS, MMC5, N163, 5B)
+	//! and Emulation pages (the FDS and N163 lowpass cutoffs, the N163's multiplexing, the
+	//! VRC7's set of patches). They are the engine's, for every module, until changed.
+	val soundSettings() const {
+		const CSettings &settings = *theApp.GetSettings();
+		val result = val::object();
+		result.set("bassFilter", settings.Sound.iBassFilter);
+		result.set("trebleFilter", settings.Sound.iTrebleFilter);
+		result.set("trebleDamping", settings.Sound.iTrebleDamping);
+		result.set("volume", settings.Sound.iMixVolume);
+		result.set("fdsLowpass", settings.Emulation.iFDSLowpass);
+		result.set("n163Lowpass", settings.Emulation.iN163Lowpass);
+		result.set("n163Multiplexing", settings.Emulation.bNamcoMixing);
+		result.set("vrc7Patch", settings.Emulation.iVRC7Patch);
+		val levels = val::array();
+		for (int *level : ChipLevels(theApp.GetSettings()))
+			levels.call<void>("push", *level);
+		result.set("levels", levels);
+		return result;
+	}
+
+	//! Changes the ones that `values` has (out of range ones are brought into the range of
+	//! the desktop's sliders) and sets the sound up again, which stops playback.
+	void setSoundSettings(const val &values) {
+		CSettings &settings = *theApp.GetSettings();
+		const auto number = [&](const char *name, int &target, int low, int high) {
+			if (values.hasOwnProperty(name))
+				target = std::clamp(values[name].as<int>(), low, high);
+		};
+		number("bassFilter", settings.Sound.iBassFilter, 16, 4000);
+		number("trebleFilter", settings.Sound.iTrebleFilter, 20, 20000);
+		number("trebleDamping", settings.Sound.iTrebleDamping, 0, 90);
+		number("volume", settings.Sound.iMixVolume, 0, 100);
+		number("fdsLowpass", settings.Emulation.iFDSLowpass, 0, 8000);
+		number("n163Lowpass", settings.Emulation.iN163Lowpass, 0, 12000);
+		number("vrc7Patch", settings.Emulation.iVRC7Patch, 0, CAPU::OPLL_TONE_NUM - 1);
+		if (values.hasOwnProperty("n163Multiplexing"))
+			settings.Emulation.bNamcoMixing = values["n163Multiplexing"].as<bool>();
+		if (values.hasOwnProperty("levels")) {
+			const std::vector<int> levels = emscripten::vecFromJSArray<int>(values["levels"]);
+			const std::vector<int *> targets = ChipLevels(&settings);
+			for (size_t i = 0; i < levels.size() && i < targets.size(); ++i)
+				*targets[i] = std::clamp(levels[i], -120, 120);
+		}
+		m_pSession->ApplyDocumentProperties();
 	}
 
 	// ---- file --------------------------------------------------------------------------
@@ -1563,6 +1765,12 @@ private:
 		return m_pSession->GetDocument();
 	}
 
+	static std::vector<int *> ChipLevels(CSettings *settings) {
+		auto &levels = settings->ChipLevels;
+		return {&levels.iLevelAPU1, &levels.iLevelAPU2, &levels.iLevelVRC6, &levels.iLevelVRC7,
+			&levels.iLevelFDS, &levels.iLevelMMC5, &levels.iLevelN163, &levels.iLevelS5B};
+	}
+
 	void CheckTrack(int track) const {
 		if (track < 0 || track >= static_cast<int>(Doc().GetTrackCount()))
 			throw std::out_of_range("no track " + std::to_string(track));
@@ -1760,6 +1968,21 @@ EMSCRIPTEN_BINDINGS(dnft_session) {
 		.function("noteOn", &EditSession::noteOn)
 		.function("noteOff", &EditSession::noteOff)
 		.function("setMutedChannels", &EditSession::setMutedChannels)
+		.function("playRow", &EditSession::playRow)
+		.function("killSound", &EditSession::killSound)
+		.function("setMeterDecayRate", &EditSession::setMeterDecayRate)
+		.function("meterDecayRate", &EditSession::meterDecayRate)
+		.function("setAverageBpm", &EditSession::setAverageBpm)
+		.function("takeLevelEvents", &EditSession::takeLevelEvents)
+		.function("registers", &EditSession::registers)
+		.function("channelFrequencies", &EditSession::channelFrequencies)
+		.function("fdsModCounter", &EditSession::fdsModCounter)
+		.function("recorder", &EditSession::recorder)
+		.function("setRecordChannel", &EditSession::setRecordChannel)
+		.function("setRecorderSettings", &EditSession::setRecorderSettings)
+		.function("takeRecordedInstruments", &EditSession::takeRecordedInstruments)
+		.function("soundSettings", &EditSession::soundSettings)
+		.function("setSoundSettings", &EditSession::setSoundSettings)
 		.function("save", &EditSession::save)
 		.function("isModified", &EditSession::isModified)
 		.function("info", &EditSession::info)

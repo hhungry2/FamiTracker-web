@@ -393,6 +393,205 @@ check('Song > Transpose Song: every pattern and row, not noise, DPCM or what is 
   fresh.delete();
 });
 
+check('the volume meters: after each tick that changes one, and the decay rate', () => {
+  const s = dnft.createSession(RATE);
+  s.noteOn(0, 10, 4, 0, 16);
+  render(s, 100);
+  const events = s.takeLevelEvents();
+  assert.ok(events.length >= 2, `${events.length} events`);
+  // 15 channels' worth of nothing, then the note: 15 on the first pulse channel
+  assert.deepEqual([...events.at(-1).levels], [15, 0, 0, 0, 0]);
+  assert.ok(events.every((e, i) => i === 0 || e.at > events[i - 1].at), 'in order');
+  assert.deepEqual(s.takeLevelEvents(), []);
+  // a cut brings it down by the decay, slowly or quickly
+  const decay = rate => {
+    const t = dnft.createSession(RATE);
+    t.setMeterDecayRate(rate);
+    t.noteOn(0, 10, 4, 0, 16);
+    render(t, 50);
+    t.takeLevelEvents();
+    t.noteOff(0, false);
+    render(t, 1500);
+    const levels = t.takeLevelEvents().map(e => e.levels[0]);
+    t.delete();
+    return levels;
+  };
+  // slowly: a bar a tick; quickly: at once
+  const slow = decay(0), fast = decay(1);
+  assert.equal(s.meterDecayRate(), 0);
+  assert.ok(slow.length >= 10 && slow.every((v, i) => i === 0 || v === slow[i - 1] - 1), `${slow}`);
+  assert.deepEqual(fast, [0]);
+  assert.equal(slow.at(-1), 0);
+  s.setMeterDecayRate(1);
+  assert.equal(s.meterDecayRate(), 1);
+  s.delete();
+});
+
+check('Tracker > Play Row plays the row with its effects, and Kill Sound silences everything', () => {
+  const s = dnft.createSession(RATE);
+  s.setCells(0, 0, 0, 3, new Uint8Array(cell(NOTE_C, 4)));
+  s.setCells(0, 1, 0, 3, new Uint8Array(cell(NOTE_E, 4)));
+  // an arpeggio on the second channel: the note changes as the ticks go
+  s.setCells(0, 2, 0, 3, new Uint8Array(cell(NOTE_G, 3, 0, [[10, 0x47]])));
+  s.playRow(0, 0, 3);
+  render(s, 150);
+  const levels = s.takeLevelEvents().at(-1).levels;
+  assert.deepEqual([...levels].map(l => l > 0), [true, true, true, false, false]);
+  assert.ok(!s.state().playing, 'the player does not run for a row');
+  // the meters fall in their own time
+  const silent = () => [...s.takeLevelEvents().at(-1).levels].every(l => l === 0);
+  s.killSound();
+  render(s, 1500);
+  assert.ok(silent(), 'killed');
+  // muted channels are left out
+  s.setMutedChannels(2);
+  s.playRow(0, 0, 3);
+  render(s, 150);
+  assert.deepEqual([...s.takeLevelEvents().at(-1).levels].map(l => l > 0), [true, false, true, false, false]);
+  // what is out of range plays nothing
+  s.killSound();
+  render(s, 1500);
+  s.takeLevelEvents();
+  s.playRow(0, 5, 3);
+  s.playRow(0, 0, 99);
+  render(s, 100);
+  assert.deepEqual(s.takeLevelEvents(), []);
+  // Kill Sound stops the player too
+  s.play(0, 0, 0, 0);
+  render(s, 50);
+  assert.ok(s.state().playing);
+  s.killSound();
+  assert.ok(!s.state().playing);
+  s.delete();
+});
+
+check('the register state and pitches of the chips', () => {
+  const s = dnft.createSession(RATE);
+  s.noteOn(0, 10, 4, 0, 16);
+  render(s, 100);
+  // the first pulse channel: duty 0, constant volume 15, period $07E
+  const regs = s.registers(0, [0x4000, 0x4002, 0x4003, 0x4015, 0x9999, -1]);
+  assert.equal(regs.length, 12);
+  assert.equal(regs[0], 0x3F);
+  assert.equal(regs[2], 0x7E);
+  assert.equal(regs[4], 0x08);
+  assert.deepEqual([...regs.subarray(8)], [0, 0, 0, 0], 'no such register, and a negative address');
+  // a register written a moment ago is fresh, one that was not is not
+  assert.ok((regs[1] & 15) < 15, `written ${regs[1] & 15} ticks ago`);
+  const hz = s.channelFrequencies(0, 5);
+  assert.ok(hz[0] > 870 && hz[0] < 890 && hz[1] === 0, `${hz}`);
+  // a chip the module does not have gives nothing
+  assert.deepEqual([...s.registers(16, [0, 1])], [0, 0, 0, 0]);
+  assert.deepEqual(s.channelFrequencies(16, 2), []);
+  s.setExpansion(16, 2);
+  s.noteOn(5, 10, 3, 0, 16);
+  render(s, 100);
+  assert.ok(s.channelFrequencies(16, 8).some(f => f > 0));
+  assert.ok(s.registers(16, [0x78]).length === 2);
+  s.setExpansion(4, 1);
+  assert.equal(typeof s.fdsModCounter(), 'number');
+  s.delete();
+});
+
+check('Tracker > Record To Instrument: a playback becomes instruments, and the settings reset', () => {
+  const s = dnft.createSession(RATE);
+  s.setCells(0, 0, 0, 0, new Uint8Array(cell(NOTE_C, 4)));
+  assert.deepEqual({ ...s.recorder() }, { channel: -1, interval: 252, count: 1, reset: true });
+  // the DPCM cannot be recorded, a channel is chosen and taken back
+  assert.equal(s.setRecordChannel(4), 'unsupported');
+  assert.equal(s.setRecordChannel(0), '');
+  assert.equal(s.recorder().channel, 0);
+  assert.equal(s.setRecordChannel(0), '');
+  assert.equal(s.recorder().channel, -1);
+  assert.equal(s.setRecordChannel(0), '');
+  s.setRecorderSettings(30, 2, true);
+  assert.deepEqual({ ...s.recorder() }, { channel: 0, interval: 30, count: 2, reset: true });
+  const instruments = s.instruments().length;
+  s.play(0, 0, 0, 0);
+  render(s, 1200);
+  s.stop();
+  render(s, 100);
+  const slots = s.takeRecordedInstruments();
+  assert.equal(slots.length, 2);
+  assert.equal(s.instruments().length, instruments + 2);
+  assert.deepEqual(s.takeRecordedInstruments(), []);
+  // the first pulse channel plays C-4 at full volume: 30 steps of each sequence
+  const volume = s.sequence(1, 0, s.instrument(slots[0]).sequences[0].index);
+  assert.equal(volume.items.length, 30);
+  assert.ok(volume.items.every(v => v === 15), `${volume.items}`);
+  const arpeggio = s.sequence(1, 1, s.instrument(slots[0]).sequences[1].index);
+  assert.ok(arpeggio.items.every(v => v === 48), 'fixed arpeggio on C-4');
+  assert.equal(s.instrument(slots[0]).name, 'from Pulse 1');
+  // the recording ended with the playback, and the settings went back
+  assert.deepEqual({ ...s.recorder() }, { channel: -1, interval: 252, count: 1, reset: true });
+  // out of range settings are brought in, and kept when asked to
+  s.setRecorderSettings(0, 99, false);
+  assert.deepEqual({ ...s.recorder() }, { channel: -1, interval: 1, count: 64, reset: false });
+  s.setRecorderSettings(252, 1, true);
+  s.delete();
+});
+
+check('the sound settings of the Configuration: kept, in range, and heard', () => {
+  const s = dnft.createSession(RATE);
+  const original = { ...s.soundSettings() };
+  assert.equal(original.bassFilter, 30);
+  assert.equal(original.trebleFilter, 12000);
+  assert.equal(original.volume, 100);
+  assert.equal(original.levels.length, 8);
+  const heard = () => {
+    const t = dnft.createSession(RATE);
+    t.setCells(0, 0, 0, 0, new Uint8Array(cell(NOTE_C, 2)));
+    t.play(0, 0, 0, 0);
+    const pcm = render(t, 1500);
+    t.delete();
+    return pcm;
+  };
+  const before = heard();
+  try {
+    s.setSoundSettings({ bassFilter: 99999, volume: 50, levels: [-5, 999, 0, 0] });
+    const changed = s.soundSettings();
+    assert.equal(changed.bassFilter, 4000, 'brought into the range');
+    assert.equal(changed.volume, 50);
+    assert.deepEqual([...changed.levels].slice(0, 4), [-5, 120, 0, 0]);
+    assert.equal(changed.trebleFilter, 12000, 'what was not given stays');
+    // a bass filter at 4000 Hz takes a note of 65 Hz away
+    assert.ok(energy(heard()) < energy(before) * 0.05, `${energy(heard())} against ${energy(before)}`);
+    // half the volume is less than half the level (the engine's own scale)
+    s.setSoundSettings({ bassFilter: 30, levels: [0, 0, 0, 0, 0, 0, 0, 0] });
+    const quieter = heard();
+    assert.ok(energy(quieter) < energy(before) * 0.5 && energy(quieter) > energy(before) * 0.05, `${energy(quieter)} against ${energy(before)}`);
+    s.setSoundSettings({ volume: 100 });
+    assert.ok(equal(heard(), before), 'back to the defaults, the same sound');
+    s.setSoundSettings({ n163Multiplexing: false, vrc7Patch: 99, fdsLowpass: -4 });
+    assert.deepEqual([s.soundSettings().n163Multiplexing, s.soundSettings().vrc7Patch, s.soundSettings().fdsLowpass], [false, 8, 0]);
+  } finally {
+    // they belong to the engine, not to the session
+    s.setSoundSettings({ bassFilter: 30, trebleFilter: 12000, trebleDamping: 24, volume: 100, n163Multiplexing: true,
+      vrc7Patch: 0, fdsLowpass: 2000, n163Lowpass: 12000, levels: [0, 0, 0, 0, 0, 0, 0, 0] });
+  }
+  s.delete();
+});
+
+check('the BPM of the player: the tempo, and the average of what was played', () => {
+  const s = dnft.createSession(RATE);
+  assert.equal(s.state().bpm, 150);
+  s.setSpeed(0, 3);
+  s.setTempo(0, 120);
+  s.setCells(0, 0, 0, 2, new Uint8Array(cell(0, 0, 64, [[1, 8]])));     // F08: speed 8 from the third row on
+  s.play(0, 0, 0, 0);
+  render(s, 100);
+  // speed 3 and tempo 120: 120 * 6 / 3 = 240
+  assert.equal(s.state().bpm, 240);
+  render(s, 900);
+  assert.equal(s.state().bpm, 90);
+  s.setAverageBpm(true);
+  render(s, 50);
+  const average = s.state().bpm;
+  assert.ok(average > 90 && average < 240, `${average}`);
+  s.setAverageBpm(false);
+  s.delete();
+});
+
 check('song settings', () => {
   const s = dnft.createSession(RATE);
   s.setTitle('チップチューン ラボ の テスト曲です');

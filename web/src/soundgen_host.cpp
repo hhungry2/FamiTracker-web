@@ -212,6 +212,10 @@ void CSoundGenHost::Stop() {
 		g.OnStopPlayer(0, 0);
 }
 
+void CSoundGenHost::SilentAll() {
+	m_Gen.MakeSilent();
+}
+
 void CSoundGenHost::Tick() {
 	CSoundGen &g = m_Gen;
 	if (!g.m_pDocument || !g.m_pSoundStream || !g.m_pDocument->IsFileLoaded())

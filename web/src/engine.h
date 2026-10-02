@@ -86,6 +86,7 @@ struct PlayerState {
 	int tempo;
 	int channels;
 	uint32_t timeMs;
+	float bpm;		// of the editing session: as the control panel shows it (CSoundGen::GetCurrentBPM())
 };
 
 class Player {

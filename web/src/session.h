@@ -37,6 +37,13 @@ struct RowEvent {
 	int row;
 };
 
+// The volume meters of the channels (0-15, the desktop's bars in the channel headers),
+// after a tick that changed one, at the output frame its audio begins at
+struct LevelEvent {
+	uint64_t at;
+	std::vector<uint8_t> levels;
+};
+
 class Session {
 public:
 	// The desktop tracker's new module: 2A03 only, one instrument, one frame of 64 rows.
@@ -67,6 +74,8 @@ public:
 	uint64_t GetPosition() const { return m_iRendered; }
 	// The rows read since the last call, in order.
 	std::vector<RowEvent> TakeRowEvents();
+	// The meter levels reported since the last call, in order.
+	std::vector<LevelEvent> TakeLevelEvents();
 
 	enum PlayMode {
 		PLAY_SONG,		// from the top of the song
@@ -84,6 +93,16 @@ public:
 	void NoteOn(int channel, int note, int octave, int instrument, int volume);
 	// Releases the channel's note (release) or cuts it.
 	void NoteOff(int channel, bool release);
+	// Tracker > Play Row (CFamiTrackerView::OnTrackerPlayrow()): the notes of the row, with
+	// their effects, on every channel that is not muted.
+	void PlayRow(int track, int frame, int row);
+	// Tracker > Kill Sound: stops the player and silences the APU and the channels.
+	void KillSound();
+	// View > Meter Decay Rate (decay_rate_t: 0 slow, 1 fast)
+	void SetMeterDecayRate(int rate);
+	int GetMeterDecayRate() const { return m_iDecayRate; }
+	// Instruments the instrument recorder made, as slots, since the last call.
+	std::vector<int> TakeRecordedInstruments();
 	// Bit n mutes channel n. Muting cuts what the channel plays.
 	void SetMutedChannels(uint64_t mask);
 
@@ -131,6 +150,8 @@ public:
 private:
 	Session(std::unique_ptr<CFamiTrackerDoc> document, uint32_t sampleRate);
 	void Pump();
+	void CollectLevels(uint64_t at);
+	void DumpRecordedInstrument();
 
 	std::unique_ptr<CFamiTrackerDoc> m_pDocument;
 	std::string m_sType;
@@ -143,6 +164,10 @@ private:
 	std::vector<int16_t> m_Pending;	// mono samples rendered but not handed out yet
 	size_t m_iPendingPos = 0;
 	std::vector<RowEvent> m_RowEvents;
+	std::vector<LevelEvent> m_LevelEvents;
+	std::vector<uint8_t> m_LastLevels;
+	std::vector<int> m_Recorded;
+	int m_iDecayRate = 0;
 	bool m_bWave = false;			// a wave export has the sound generator
 	std::unique_ptr<CFamiTrackerDoc> m_pImport;	// the module of BeginImport()
 };

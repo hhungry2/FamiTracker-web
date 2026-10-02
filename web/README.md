@@ -108,10 +108,13 @@ session.play(track, dnft.PLAY_CURSOR, frame, row);  // or PLAY_SONG, PLAY_FRAME,
 session.stop();
 session.takeRowEvents();             // [{at, frame, row}]: the rows read since the last
                                      //  call, `at` in output frames; frame -1 where it stopped
-session.state();                     // {playing, track, frame, row, speed, tempo, timeMs}
+session.state();                     // {playing, track, frame, row, speed, tempo, timeMs, bpm}
 session.noteOn(channel, note, octave, instrument, volume);  // note 1-12, volume 16: none
 session.noteOff(channel, release);
 session.setMutedChannels(mask);
+session.playRow(track, frame, row);  // the row's notes with their effects (Tracker > Play Row)
+session.killSound();                 // stops the player and silences the chips (Kill Sound)
+session.takeLevelEvents();           // [{at, levels}]: the channels' volume meters, 0-15
 const bytes = session.save();        // Uint8Array of a .dnm file
 ```
 
@@ -126,6 +129,16 @@ The document is read and changed through the tracker's own functions:
 | instruments | `instruments()`, `instrument(i)` (also the DPCM keys, the FDS's wave, modulation and sequences, the N163's waves, the VRC7's patch and registers, by the kind), `addInstrument(chip, name)`, `removeInstrument`, `cloneInstrument`, `deepCloneInstrument`, `setInstrumentName`, `setInstrumentSequence(i, type, enabled, index)`, `sequence(instType, type, index)`, `setSequence(...)`, `freeSequence`, `nextFreeSequence(i, type)` ("Select next empty slot"), `cloneSequence(i, type)` ("Clone sequence"), `saveInstrument(i)` and `loadInstrument(bytes)` (.fti files) |
 | instrument settings | `setDpcmKey(i, key, sample, pitch, loop, delta)`, `setFdsWave`, `setFdsModulation`, `setFdsParams(i, speed, depth, delay)`, `setFdsSequence(i, type, items, loop, release, setting)`, `setN163(i, size, pos, count, waves)`, `setN163Wave(i, wave, samples)`, `setVrc7(i, patch, registers)`, `vrc7Patches()` |
 | DPCM samples | `samples()`, `sample(slot)`, `setSample(slot or -1, name, bytes)`, `removeSample(slot)`, `previewSample(bytes, offset, pitch, deltaStart)`, `stopPreview()` |
+| playing and showing | `takeLevelEvents()`, `setMeterDecayRate(0 slow, 1 fast)`, `meterDecayRate()`, `setAverageBpm(on)` (whether `state().bpm` is the average of the song so far), `registers(chip, addresses)` (a register's value and age, two bytes each), `channelFrequencies(chip, count)`, `fdsModCounter()` |
+| recording | `recorder()` (the channel and the settings), `setRecordChannel(channel)` (Record To Instrument: "unsupported", "instruments", "sequences" or ""), `setRecorderSettings(interval, count, reset)`, `takeRecordedInstruments()` (the slots made since the last call) |
+| sound | `soundSettings()` and `setSoundSettings(values)`: the Configuration's Sound, Mixer and Emulation pages (bass and treble filters, damping, volume, the FDS and N163 lowpass, the N163's multiplexing, the VRC7's set of patches, the level of each device in tenths of a dB). They are the engine's, for every module, until changed; changing them stops playback |
+
+The meters' levels come with the tick that changed one, at the output frame its audio begins at
+(the editor draws a level when the audio has reached it); the register view asks for the registers
+of the module's chips about twenty times a second. A recording (Record To Instrument) is the
+desktop's `CInstrumentRecorder` on the chip registers: while a channel is armed, a playback reads
+its registers every tick and makes instruments of `interval` ticks each, `count` of them; it ends
+with the playback or when they are made.
 
 A pattern cell is 12 bytes, the fields of the tracker's `stChanNote`: note, octave, volume,
 instrument, four effect numbers, four effect parameters. `dnft.effects()` gives the
@@ -228,6 +241,12 @@ As with players, one session drives the sound generator at a time.
   `dnft-pattern-menu.mjs`: the Edit and Pattern menus, their dialogs, the pattern's
   right-click menu and MIDI input; `dnft-frame-editor.mjs`: the frame list as the
   desktop's frame editor (its selection, clipboard and right-click menu);
+  `dnft-tracker-menu.mjs`: the Tracker, View and Help menus (the row marker, Play Row, Kill Sound,
+  chip mute and solo, Switch To Track Instrument, Record To Instrument, the View menu's choices);
+  `dnft-displays.mjs`: the volume meters, the oscilloscope and spectrum, the register state;
+  `dnft-keymap.mjs`: the shortcuts as a table that Configuration changes; `dnft-config.mjs`: the
+  Configuration dialog; `dnft-help.mjs`: Help Topics, the effect table, About; `dnft-recent.mjs`:
+  the recent files;
   `dnft-instrument-editor.mjs`: the instrument editor's dialog and the sequences;
   `dnft-instrument-panels.mjs`: its wave editors and the FDS, N163 and VRC7 panels;
   `dnft-dpcm.mjs`: the DPCM panel, the sample editor and the import of WAV files;
@@ -242,7 +261,8 @@ import { DnFTEditor } from './dnft-editor.mjs';
 const editor = await DnFTEditor.create(element, { base: '.', lang: 'ja' });
 ```
 
-Keys follow the desktop's defaults: the Z and Q rows of the keyboard enter notes (by the
+Keys follow the desktop's defaults, as the table in `dnft-keymap.mjs` has them (Configuration >
+Keys changes them; Help > Help Topics lists them as they are set): the Z and Q rows of the keyboard enter notes (by the
 key's place, whatever the layout), 1 a note cut, \ a release, - clears a field (Ctrl+-
 the cell), hex digits the other columns; Space toggles editing, Enter plays the frame or
 stops, F5/F6/F7/F8 play the song, loop the pattern, play from the cursor, stop; Up and
@@ -363,6 +383,43 @@ VRC7's patches (external OPLL) of the module properties and the Bookmark Manager
 Module > Cleanup.
 The song panel moves tracks up and down, and switches the speed of a track to grooves.
 
+The Tracker menu has the ways to play (from the row marker, one row, with Play Row) and the
+row marker itself (Ctrl+B puts it on the cursor's row, a bar on the row number and on the
+frame's number), muting and soloing the chips of the cursor's channel as well as the
+channel, Switch To Track Instrument (while the song plays, the instrument the cursor's channel
+plays is the one selected), Record To Instrument and its settings, and Kill Sound (F12,
+which a browser may keep for its tools: the menu has it too). Record To Instrument arms the
+cursor's channel; the next playback reads its registers tick by tick into the volume,
+arpeggio, pitch and duty sequences of new instruments (the FDS's and the N163's waves too),
+which join the module as it goes, and the header of the channel shows that it is armed.
+The DPCM and VRC7 cannot be recorded, as on the desktop.
+
+The View menu holds the follow mode, the compact view (only the notes, in narrow channels, and
+the cursor has only the note column), the meters' decay rate (every channel's header has
+its fifteen volume bars), the average BPM (the status line shows the BPM of the playing song,
+or its average so far), the register state (a panel beside the pattern with the registers of
+every chip of the module, coloured by how long ago they were written or changed, the pitch
+each channel sounds at, and where each channel's note is), the oscilloscope and the
+spectrum (beside the toolbar; a click switches), where the frame list is (in the side
+panel, or above the pattern) and whether the side panels show. What is chosen there is kept
+in the browser. On a phone the file buttons and the menus are a strip that scrolls
+sideways, a menu opens as a sheet at the bottom of the window, and the side panels start
+closed (the button with three bars opens them).
+
+The button after Recent opens the Configuration, which the desktop's has as File >
+Configuration: General (hexadecimal or decimal rows, flats, whether the cursor wraps round
+the channels and across the frames, the step of PageUp and PageDown, whether Up and Down go by
+the step, whether Shift+F1-F4 wrap a value), Appearance (the colours of the pattern, three
+presets, the font, its size and the height of a row; changes show as they are made),
+Keys (every shortcut can be given other keys, which a key that another command had takes
+away; a few that a browser keeps cannot be chosen), Sound (the bass and treble filters,
+the damping and the volume, the FDS and N163 lowpass filters, the N163's multiplexer, the
+set of VRC7 patches) and Mixer (the level of each device). The sound settings are the
+engine's, and are put back with the first module the page opens. The Recent menu has the
+modules last opened or saved, with their bytes, in the browser's IndexedDB. Help has the
+keys as they are set now, the effect table (the effects the chips take, with what each
+does) and what the editor is made of.
+
 How it works
 ------------
 
@@ -459,6 +516,7 @@ Small and meant to be harmless for the desktop build:
 | `Instrument.cpp` | `CInstrumentFile::ReadInt()` and `ReadChar()` raise a `CModuleException` when the file ends inside the value (they returned what the variable held) | a cut-short `.fti` was read with whatever the variable held, a sample count included |
 | `SeqInstrument.cpp` | `pSeq` starts at null in every round of `LoadFile()` | a damaged `.fti` made the handler delete the sequence of the round before, which the instrument manager owns (a double free) |
 | `Instrument2A03.cpp` | `SaveFile()` leaves out the keys whose sample the module does not have; `LoadFile()` checks the size of a sample against the module's DPCM space before taking memory, refuses a name or sample that the file ends inside, reads on when the file lists fewer samples than it counts, and gives a key whose sample the file does not carry none | the file counted the samples of such keys but did not list them (Hellpath's DPCM instrument is one), so it could not be read back; a damaged size asked for gigabytes; a cut-short sample was read with what the memory held; a key kept the number of whichever sample the module has there |
+| `InstrumentRecorder.cpp` | the view's header only under `#ifndef DNFT_PORTABLE` (the stand-in of `portable/SoundGenUI.h` otherwise), and `Instrument.h` before `InstrumentManager.h` | the recorder builds in the web build (Record To Instrument), and `InstrumentManager.h` refers to an enum that `Instrument.h` defines |
 | `FamiTrackerDoc.h` | `m_pCurrentDocument` starts at null | it was never set for a document that is not reading a file, and the range check of an `.fti` file that fails calls through it (a crash on the desktop too) |
 
 None of them but the N163's bass removal changes the audio of playing: the first 20 to 30
@@ -479,6 +537,7 @@ node web/test/instrument.mjs                     # instruments: DPCM samples, FD
 node web/test/dpcm.mjs                           # the editor's page code that works on numbers
 node web/test/pattern.mjs                        # the pattern editor's commands, on cells
 node web/test/frames.mjs                         # the frame editor's selections and clipboard
+node web/test/ui.mjs                             # the key table, the register view's texts, the effect table
 node web/test/render.mjs <module> [out.wav]      # render and report
 node web/test/compare.mjs <module> <export.wav>  # against the desktop WAV export
 ```

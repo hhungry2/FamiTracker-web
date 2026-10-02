@@ -78,6 +78,8 @@ public:
 	void CancelPreview();
 	// A write to an APU register (CSoundGen::WriteAPU())
 	void WriteAPU(int address, uint8_t value);
+	// Tracker > Kill Sound (CSoundGen::OnSilentAll()): the APU and every channel start over
+	void SilentAll();
 
 	// Rendering and playing (Start()); IsPlayerRunning() is about the player alone
 	bool IsPlaying() const;

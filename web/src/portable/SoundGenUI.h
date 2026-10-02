@@ -34,7 +34,16 @@ public:
 	bool PlayerGetNote(int Track, int Frame, int Channel, int Row, stChanNote &NoteData);
 	void MakeSilent() {}
 	int GetAutoArpeggio(unsigned int) { return 0; }
-	bool PostAudioMessage(AudioMessageId, WPARAM = 0, LPARAM = 0) { return false; }
+	// The sound generator tells the view that a recorded instrument is ready (the instrument
+	// recorder); the host takes it into the document after the tick, as the desktop's view
+	// does when it gets the message.
+	bool PostAudioMessage(AudioMessageId Message, WPARAM = 0, LPARAM = 0) {
+		if (Message != AM_DUMP_INST)
+			return false;
+		++m_iPendingDumps;
+		return true;
+	}
+	bool TakePendingDump() { return m_iPendingDumps > 0 && (--m_iPendingDumps, true); }
 
 	// host side
 	void SetDocument(CFamiTrackerDoc *pDoc) { m_pDoc = pDoc; }
@@ -47,6 +56,7 @@ private:
 	unsigned int m_iSelectedFrame = 0;
 	unsigned int m_iSelectedRow = 0;
 	uint64_t m_iMutedChannels = 0;
+	int m_iPendingDumps = 0;
 };
 
 class CVisualizerWnd : public CWnd {

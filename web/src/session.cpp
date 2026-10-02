@@ -15,6 +15,8 @@
 #include "DSample.h"
 #include "TrackerChannel.h"
 #include "TextExporter.h"
+#include "Instrument.h"
+#include "InstrumentRecorder.h"
 #include "portable/SoundGenUI.h"
 #include "dnft_compat.h"
 #include "soundgen_host.h"
@@ -87,6 +89,7 @@ Session::Session(std::unique_ptr<CFamiTrackerDoc> document, uint32_t sampleRate)
 	engine.view.SetMutedChannels(0);
 	engine.host->Attach(*m_pDocument, engine.view);
 	engine.host->BeginStream();
+	theApp.GetSoundGenerator()->SetMeterDecayRate(m_iDecayRate);
 }
 
 Session::~Session() {
@@ -134,8 +137,41 @@ void Session::Pump() {
 			m_RowEvents.push_back({at, -1, -1});
 		else if (playing && host.RowWasRead())
 			m_RowEvents.push_back({at, frame, row});
+		CollectLevels(at);
+		// the instrument recorder has one ready (the desktop's view takes it into the
+		// document when the message arrives)
+		while (engine.view.TakePendingDump())
+			DumpRecordedInstrument();
 	}
 	engine.target = nullptr;
+}
+
+void Session::CollectLevels(uint64_t at) {
+	const int channels = m_pDocument->GetChannelCount();
+	std::vector<uint8_t> levels(channels);
+	for (int i = 0; i < channels; ++i)
+		levels[i] = static_cast<uint8_t>(std::clamp(m_pDocument->GetChannel(i)->GetVolumeMeter(), 0, 255));
+	if (levels == m_LastLevels)
+		return;
+	m_LastLevels = levels;
+	m_LevelEvents.push_back({at, std::move(levels)});
+}
+
+// CFamiTrackerView::OnUserDumpInst()
+void Session::DumpRecordedInstrument() {
+	CSoundGen &sg = *theApp.GetSoundGenerator();
+	if (CInstrument *instrument = sg.GetRecordInstrument()) {
+		const int slot = m_pDocument->AddInstrument(instrument);
+		if (slot != INVALID_INSTRUMENT)
+			m_Recorded.push_back(slot);
+	}
+	sg.ResetDumpInstrument();
+}
+
+std::vector<int> Session::TakeRecordedInstruments() {
+	std::vector<int> slots;
+	slots.swap(m_Recorded);
+	return slots;
 }
 
 void Session::Render(int16_t *out, uint32_t frames) {
@@ -167,6 +203,12 @@ void Session::Render(int16_t *out, uint32_t frames) {
 std::vector<RowEvent> Session::TakeRowEvents() {
 	std::vector<RowEvent> events;
 	events.swap(m_RowEvents);
+	return events;
+}
+
+std::vector<LevelEvent> Session::TakeLevelEvents() {
+	std::vector<LevelEvent> events;
+	events.swap(m_LevelEvents);
 	return events;
 }
 
@@ -208,6 +250,7 @@ PlayerState Session::GetState() const {
 		state.row = host.GetRow();
 		state.speed = host.GetSpeed();
 		state.tempo = host.GetTempo();
+		state.bpm = theApp.GetSoundGenerator()->GetCurrentBPM();
 		if (state.frame < static_cast<int>(m_pDocument->GetFrameCount(m_iTrack)))
 			state.pattern = static_cast<int>(m_pDocument->GetPatternAtFrame(m_iTrack, state.frame, 0));
 	}
@@ -234,6 +277,36 @@ void Session::NoteOff(int channel, bool release) {
 	stChanNote NoteData {};
 	NoteData.Note = release ? RELEASE : HALT;
 	theApp.GetSoundGenerator()->QueueNote(channel, NoteData, NOTE_PRIO_2);
+}
+
+void Session::PlayRow(int track, int frame, int row) {
+	if (!IsCurrent() || m_bWave)
+		return;
+	const int channels = m_pDocument->GetChannelCount();
+	if (track < 0 || track >= static_cast<int>(m_pDocument->GetTrackCount()) ||
+		frame < 0 || frame >= static_cast<int>(m_pDocument->GetFrameCount(track)) ||
+		row < 0 || row >= static_cast<int>(m_pDocument->GetPatternLength(track)))
+		return;
+	for (int i = 0; i < channels; ++i) {
+		if (i < 64 && (m_iMutedChannels >> i & 1))
+			continue;
+		stChanNote note;
+		m_pDocument->GetNoteData(track, frame, i, row, &note);
+		theApp.GetSoundGenerator()->QueueNote(i, note, NOTE_PRIO_1);
+	}
+}
+
+void Session::KillSound() {
+	if (!IsCurrent() || m_bWave)
+		return;
+	Stop();
+	GetEngine().host->SilentAll();
+}
+
+void Session::SetMeterDecayRate(int rate) {
+	m_iDecayRate = rate != 0 ? 1 : 0;
+	if (IsCurrent())
+		theApp.GetSoundGenerator()->SetMeterDecayRate(m_iDecayRate);
 }
 
 void Session::PreviewSample(const std::vector<uint8_t> &data, int offset, int pitch, bool deltaStart) {
@@ -279,6 +352,7 @@ void Session::ApplyDocumentProperties() {
 	engine.host->Attach(*m_pDocument, engine.view);
 	engine.host->BeginStream();
 	engine.view.SetMutedChannels(m_iMutedChannels);
+	theApp.GetSoundGenerator()->SetMeterDecayRate(m_iDecayRate);
 }
 
 // ---- wave export -----------------------------------------------------------------------
