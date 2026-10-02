@@ -181,6 +181,7 @@ export class FileMenu {
           entry.addEventListener('click', () => {
             this.closeMenus();
             item.run();
+            this.editor.focusEditor();
           });
         }
       }
@@ -233,10 +234,10 @@ export class FileMenu {
   }
 
   // A menu of `items` (as menu() has them) at a point of the window, as the right button
-  // opens one
-  contextMenu(items, x, y) {
+  // opens one; `escape`: where the keyboard goes when Escape closes it
+  contextMenu(items, x, y, escape = () => this.editor.view.scroller.focus()) {
     this.closeMenus();
-    const list = this.menuList(items, () => this.editor.view.scroller.focus());
+    const list = this.menuList(items, escape);
     list.classList.add('dnft-context-menu');
     this.refreshMenu(list);
     this.editor.root.append(list);

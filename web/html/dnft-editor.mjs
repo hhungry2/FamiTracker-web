@@ -23,6 +23,7 @@ import { PASTE, PASTE_AT, fieldOfColumn, normalizeSelection } from './dnft-patte
 import { InstrumentEditor } from './dnft-instrument-editor.mjs';
 import { FileMenu } from './dnft-files.mjs';
 import { PatternMenu } from './dnft-pattern-menu.mjs';
+import { FrameEditor } from './dnft-frame-editor.mjs';
 import { SongMenu } from './dnft-song-menu.mjs';
 import { STRINGS } from './dnft-editor-strings.mjs';
 
@@ -157,7 +158,7 @@ export class DnFTEditor {
     this.held = new Map();      // note keys held: code -> channel
     this.dirty = false;         // changed since last saved to a file
     this.fileName = null;
-    this.frameDigits = '';
+    this.activeEditor = 'pattern';     // the pattern or the 'frames', which had the keyboard last
 
     this.build(container);
   }
@@ -405,6 +406,7 @@ export class DnFTEditor {
     this.files = new FileMenu(this);
     this.patternMenu = new PatternMenu(this);
     this.songMenu = new SongMenu(this);
+    this.frameEditor = new FrameEditor(this);
     this.buildPiano();
     this.wire();
     if (this.demos)
@@ -545,15 +547,10 @@ export class DnFTEditor {
     scroller.addEventListener('contextmenu', e => this.onGridContextMenu(e));
     scroller.addEventListener('wheel', e => this.onGridWheel(e), { passive: false });
 
-    // the frames
-    els.frames.addEventListener('click', e => {
-      const cell = e.target.closest('[data-frame]');
-      if (!cell)
-        return;
-      const channel = cell.dataset.channel !== undefined ? Number(cell.dataset.channel) : this.cursor.channel;
-      this.setCursor({ ...this.cursor, frame: Number(cell.dataset.frame), channel, column: channel === this.cursor.channel ? this.cursor.column : 0 });
-    });
-    els.frames.addEventListener('keydown', e => this.onFrameKey(e));
+    // the editor that takes the Edit menu's commands (the frame list's own handlers are
+    // FrameEditor's)
+    scroller.addEventListener('focus', () => { this.activeEditor = 'pattern'; });
+    els.frames.addEventListener('focus', () => { this.activeEditor = 'frames'; });
 
     // the instruments
     els.instruments.addEventListener('click', e => {
@@ -818,13 +815,17 @@ export class DnFTEditor {
     const before = this.cursor;
     const cursor = this.clampPlace(place);
     this.cursor = cursor;
+    // off the frame list's row after the last frame
+    const leftEnd = this.frameEditor?.pastEnd;
+    if (leftEnd)
+      this.frameEditor.pastEnd = false;
     if (extend)
       this.select(this.selection ? this.selStart : before, cursor, this.block);
     else if (!keep && !this.block)
       this.deselect();
     this.view.reveal(cursor.channel);
     this.view.invalidate();
-    if (cursor.frame !== before.frame || cursor.channel !== before.channel)
+    if (leftEnd || cursor.frame !== before.frame || cursor.channel !== before.channel)
       this.renderFrames();
     this.updateStatus();
   }
@@ -1524,11 +1525,34 @@ export class DnFTEditor {
     await this.reloadTrack(track);
   }
 
+  // A change of the frames that the engine makes: `run()` makes it, and again to redo
+  // (false: it could not); `after()` then puts the cursor and the frame selection where
+  // the change leaves them. Undo puts back the frame list and the bookmarks, empties the
+  // patterns the change filled, and puts the cursor and the selection back.
+  async changeFrames(run, after = null) {
+    const track = this.track;
+    const before = this.frameState();
+    const stateBefore = this.frameEditState();
+    const patternsBefore = new Set(this.tr.patterns.keys());
+    if (await run() === false)
+      return false;
+    await this.reloadTrack(track);
+    const created = [...this.tr.patterns.keys()].filter(key => !patternsBefore.has(key))
+      .map(key => ({ channel: Math.floor(key / MAX_PATTERNS), pattern: key % MAX_PATTERNS }));
+    after?.();
+    const stateAfter = this.frameEditState();
+    this.record({
+      undo: async () => { this.showTrack(track); await this.restoreFrames(track, before, created); this.restoreFrameEditState(stateBefore); },
+      redo: async () => { this.showTrack(track); await run(); await this.reloadTrack(track); this.restoreFrameEditState(stateAfter); },
+    });
+    this.afterFrames(this.cursor);
+    return true;
+  }
+
+  // Insert, Duplicate, Clone, Remove, Move Up and Move Down (the frame at the cursor)
   async frameOp(op) {
     const track = this.track;
     const frame = this.cursor.frame;
-    const before = this.frameState();
-    const patternsBefore = new Set(this.tr.patterns.keys());
     const call = {
       insert: ['insertFrame', track, frame + 1],
       duplicate: ['duplicateFrame', track, frame],
@@ -1537,20 +1561,10 @@ export class DnFTEditor {
       up: ['moveFrame', track, frame, true],
       down: ['moveFrame', track, frame, false],
     }[op];
-    if (!await this.session.call(...call))
-      return;
-    await this.reloadTrack(track);
-    const after = this.frameState();
-    const created = [...this.tr.patterns.keys()].filter(key => !patternsBefore.has(key))
-      .map(key => ({ channel: Math.floor(key / MAX_PATTERNS), pattern: key % MAX_PATTERNS }));
-    const target = { insert: frame + 1, duplicate: frame + 1, clone: frame + 1, remove: Math.min(frame, after.frames - 1), up: frame - 1, down: frame + 1 }[op];
-    const cursorBefore = { ...this.cursor };
-    const cursorAfter = { ...this.cursor, frame: target };
-    this.record({
-      undo: async () => { this.showTrack(track); await this.restoreFrames(track, before, created); this.afterFrames(cursorBefore); },
-      redo: async () => { this.showTrack(track); await this.session.call(...call); await this.reloadTrack(track); this.afterFrames(cursorAfter); },
+    await this.changeFrames(() => this.session.call(...call), () => {
+      const target = { insert: frame + 1, duplicate: frame + 1, clone: frame + 1, remove: Math.min(frame, this.tr.frames - 1), up: frame - 1, down: frame + 1 }[op];
+      this.setCursor({ ...this.cursor, frame: target });
     });
-    this.afterFrames(cursorAfter);
   }
 
   afterFrames(cursor) {
@@ -1559,6 +1573,16 @@ export class DnFTEditor {
     this.renderFrames();
     this.view.invalidate();
     this.patternMenu.refresh();
+  }
+
+  // The cursor and the frame selection, as undo of a change of the frames puts them back
+  frameEditState() {
+    return { cursor: { ...this.cursor }, frames: this.frameEditor.state() };
+  }
+
+  restoreFrameEditState(state) {
+    this.frameEditor.restore(state.frames);
+    this.afterFrames(state.cursor);
   }
 
   setFramePattern(frame, channel, pattern) {
@@ -2025,8 +2049,9 @@ export class DnFTEditor {
       case 'remove-frame': return this.frameOp('remove');
       case 'frame-up': return this.frameOp('up');
       case 'frame-down': return this.frameOp('down');
-      case 'pattern-down': return this.setFramePattern(this.cursor.frame, this.cursor.channel, this.patternOf(this.cursor.frame, this.cursor.channel) - 1);
-      case 'pattern-up': return this.setFramePattern(this.cursor.frame, this.cursor.channel, this.patternOf(this.cursor.frame, this.cursor.channel) + 1);
+      // the frame selection's patterns, or the cursor's
+      case 'pattern-down': return this.frameEditor.stepPatterns(-1);
+      case 'pattern-up': return this.frameEditor.stepPatterns(1);
       case 'add-instrument': return this.addInstrument();
       case 'clone-instrument': return this.cloneInstrument();
       case 'deep-clone-instrument': return this.cloneInstrument({ deep: true });
@@ -2084,8 +2109,30 @@ export class DnFTEditor {
     }
     if (typing)
       return;
-    if (e.target === this.view.scroller || e.target === this.root)
+    if (e.target === this.view.scroller || e.target === this.root) {
+      this.activeEditor = 'pattern';
       this.onPatternKey(e);
+    } else if (e.target === this.els.frames)
+      this.shortcut(e);
+  }
+
+  // The desktop's shortcuts of KEYS, from where the keys are not the pattern's
+  shortcut(e) {
+    const modifiers = (e.ctrlKey || e.metaKey ? 'C' : '') + (e.altKey ? 'A' : '') + (e.shiftKey ? 'S' : '');
+    const command = modifiers && KEYS[`${modifiers}+${e.code}`];
+    if (command) {
+      e.preventDefault();
+      command(this);
+    }
+  }
+
+  // After a command of a menu: the keyboard back to the editor in use, unless the command
+  // opened a window of its own
+  focusEditor() {
+    const active = document.activeElement;
+    if (active && active !== document.body && active.isConnected && !active.closest('.dnft-menu'))
+      return;
+    (this.activeEditor === 'frames' ? this.els.frames : this.view.scroller).focus({ preventScroll: true });
   }
 
   onKeyUp(e) {
@@ -2191,35 +2238,6 @@ export class DnFTEditor {
       done();
   }
 
-  onFrameKey(e) {
-    const { frame, channel } = this.cursor;
-    const done = () => { e.preventDefault(); e.stopPropagation(); };
-    const move = (df, dc) => {
-      this.frameDigits = '';
-      this.setCursor({ ...this.cursor, frame: frame + df, channel: Math.max(0, Math.min(this.channelCount - 1, channel + dc)), column: 0 });
-    };
-    switch (e.code) {
-      case 'ArrowUp': done(); return move(-1, 0);
-      case 'ArrowDown': done(); return move(1, 0);
-      case 'ArrowLeft': done(); return move(0, -1);
-      case 'ArrowRight': done(); return move(0, 1);
-      case 'Insert': done(); return this.frameOp('insert');
-      case 'Delete': done(); return this.frameOp('remove');
-      case 'NumpadAdd': done(); return this.setFramePattern(frame, channel, this.patternOf(frame, channel) + 1);
-      case 'NumpadSubtract': case 'Minus': done(); return this.setFramePattern(frame, channel, this.patternOf(frame, channel) - 1);
-      case 'Equal': if (e.shiftKey) { done(); return this.setFramePattern(frame, channel, this.patternOf(frame, channel) + 1); } break;
-      case 'Enter': done(); return this.view.scroller.focus();
-    }
-    const value = hexOfKey(e);
-    if (value >= 0 && !e.ctrlKey && !e.metaKey) {
-      done();
-      this.frameDigits = (this.frameDigits + value.toString(16)).slice(-2);
-      this.setFramePattern(frame, channel, parseInt(this.frameDigits, 16));
-      if (this.frameDigits.length === 2)
-        this.frameDigits = '';
-    }
-  }
-
   // ---- the pattern with the mouse ------------------------------------------------------------
 
   // As the desktop's: a click puts the cursor on the cell (once the button is let go), a
@@ -2231,6 +2249,7 @@ export class DnFTEditor {
       return;
     const place = this.view.hit(e.clientX, e.clientY);
     this.view.scroller.focus({ preventScroll: true });
+    this.activeEditor = 'pattern';
     if (!place)
       return;
     if (place.channel === null) {
@@ -2329,6 +2348,9 @@ export class DnFTEditor {
       return;
     e.preventDefault();
     this.endDrag();
+    // its commands are the pattern's
+    this.view.scroller.focus({ preventScroll: true });
+    this.activeEditor = 'pattern';
     const place = this.view.hit(e.clientX, e.clientY);
     if (place && place.channel !== null)
       this.setCursor(place, { keep: true });
@@ -2431,44 +2453,9 @@ export class DnFTEditor {
   }
 
   renderFrames() {
-    const { els } = this;
     const tr = this.tr;
-    const channels = this.channelCount;
-    const { frame: current, channel: currentChannel } = this.cursor;
-    const marked = new Set(tr.bookmarks.map(mark => mark.frame));
-    const rows = [];
-    for (let f = 0; f < tr.frames; ++f) {
-      const row = document.createElement('div');
-      row.className = 'dnft-frame-row';
-      row.classList.toggle('is-current', f === current);
-      row.classList.toggle('is-playing', !!this.play && this.play.frame === f);
-      row.classList.toggle('is-bookmarked', marked.has(f));
-      const number = document.createElement('span');
-      number.className = 'dnft-frame-number';
-      number.dataset.frame = f;
-      number.textContent = hex2(f);
-      row.append(number);
-      for (let c = 0; c < channels; ++c) {
-        const cell = document.createElement('span');
-        cell.className = 'dnft-frame-pattern';
-        cell.classList.toggle('is-channel', f === current && c === currentChannel);
-        cell.dataset.frame = f;
-        cell.dataset.channel = c;
-        cell.textContent = hex2(tr.frameList[f * channels + c]);
-        row.append(cell);
-      }
-      rows.push(row);
-    }
-    els.frames.replaceChildren(...rows);
-    // keep the current frame in view, without scrolling the page
-    const row = rows[current];
-    if (row) {
-      const top = row.offsetTop - els.frames.offsetTop, bottom = top + row.offsetHeight;
-      if (top < els.frames.scrollTop)
-        els.frames.scrollTop = top;
-      else if (bottom > els.frames.scrollTop + els.frames.clientHeight)
-        els.frames.scrollTop = bottom - els.frames.clientHeight;
-    }
+    const current = this.cursor.frame;
+    this.frameEditor.render();
     const tools = this.root.querySelector('.dnft-frames-panel');
     tools.querySelector('[data-action="remove-frame"]').disabled = tr.frames < 2;
     tools.querySelector('[data-action="frame-up"]').disabled = current === 0;

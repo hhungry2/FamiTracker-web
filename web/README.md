@@ -121,8 +121,8 @@ The document is read and changed through the tracker's own functions:
 | --- | --- |
 | module | `info()` (title, chips, channels, tracks, comment, engineSpeed...), `setTitle`, `setArtist`, `setCopyright`, `setComment(text, showOnOpen)`, `setExpansion(chips, n163Channels)`, `setMachine(pal)`, `setEngineSpeed(hz)` (0: the machine's), `setVibratoStyle(newStyle)`, `setLinearPitch(enable)`, `detune()`, `setDetune(offsets, semitone, cent)` (Detune Settings), `grooves()`, `setGrooves(list)` (Groove Settings), `mixing()`, `setMixing(levels, hardwareMixing)` (the device mix offsets), `opll()`, `setOpll(external, patches, names)` (the VRC7's patches), `removeUnusedInstruments`, `removeUnusedPatterns`, `removeUnusedSamples` (Cleanup) |
 | tracks | `track(t)` (frames, rows, speed, tempo, highlight, effColumns, frameList, bookmarks), `addTrack`, `removeTrack`, `setTrackTitle`, `setPatternLength`, `setFrameCount`, `setSpeed`, `setTempo`, `setHighlight`, `setEffColumns`, `setGrooveMode(t, groove)`, `moveTrack(t, up)`, `songLength(t)` (intro and loop, in seconds), `bookmarks(t)` and `setBookmarks(t, list)` (frame, row, name, highlight, persist), `swapChannels(t, a, b)` (Swap Channels) |
-| patterns | `pattern(t, channel, pattern)`, `patterns(t)` (every one with something in it), `setCells(t, channel, pattern, row, cells)`, `clearPatterns(t)`, `populateUniquePatterns(t)` |
-| frames | `setFramePattern`, `setFrameList`, `insertFrame`, `removeFrame`, `duplicateFrame`, `cloneFrame`, `moveFrame`, `freePattern` |
+| patterns | `pattern(t, channel, pattern)`, `patterns(t)` (every one with something in it), `setCells(t, channel, pattern, row, cells)`, `clearPatterns(t)`, `populateUniquePatterns(t)`, `transposeSong(t, all, semitones, excluded)` (Transpose Song: returns what changed) and `setNotes(changes, after)` (to undo and redo it) |
+| frames | `setFramePattern`, `setFrameList`, `insertFrame`, `removeFrame`, `duplicateFrame`, `cloneFrame`, `moveFrame`, `freePattern`; for the frame editor's clipboard, `insertFrames(t, frame, count)`, `deleteFrames(t, frame, count)` (never the last frame), `setFramePatterns(t, frame, channel, channels, list)` (a block of the frame list) and `clonePatterns(t, frame0, frame1, channel0, channel1)` (each pattern the block plays, to a free number) |
 | instruments | `instruments()`, `instrument(i)` (also the DPCM keys, the FDS's wave, modulation and sequences, the N163's waves, the VRC7's patch and registers, by the kind), `addInstrument(chip, name)`, `removeInstrument`, `cloneInstrument`, `deepCloneInstrument`, `setInstrumentName`, `setInstrumentSequence(i, type, enabled, index)`, `sequence(instType, type, index)`, `setSequence(...)`, `freeSequence`, `nextFreeSequence(i, type)` ("Select next empty slot"), `cloneSequence(i, type)` ("Clone sequence"), `saveInstrument(i)` and `loadInstrument(bytes)` (.fti files) |
 | instrument settings | `setDpcmKey(i, key, sample, pitch, loop, delta)`, `setFdsWave`, `setFdsModulation`, `setFdsParams(i, speed, depth, delay)`, `setFdsSequence(i, type, items, loop, release, setting)`, `setN163(i, size, pos, count, waves)`, `setN163Wave(i, wave, samples)`, `setVrc7(i, patch, registers)`, `vrc7Patches()` |
 | DPCM samples | `samples()`, `sample(slot)`, `setSample(slot or -1, name, bytes)`, `removeSample(slot)`, `previewSample(bytes, offset, pitch, deltaStart)`, `stopPreview()` |
@@ -226,7 +226,8 @@ As with players, one session drives the sound generator at a time.
   `dnft-pattern-edit.mjs`: what the pattern editor's commands do to the cells (paste
   modes, Interpolate, Find / Replace, bookmarks...), as numbers;
   `dnft-pattern-menu.mjs`: the Edit and Pattern menus, their dialogs, the pattern's
-  right-click menu and MIDI input;
+  right-click menu and MIDI input; `dnft-frame-editor.mjs`: the frame list as the
+  desktop's frame editor (its selection, clipboard and right-click menu);
   `dnft-instrument-editor.mjs`: the instrument editor's dialog and the sequences;
   `dnft-instrument-panels.mjs`: its wave editors and the FDS, N163 and VRC7 panels;
   `dnft-dpcm.mjs`: the DPCM panel, the sample editor and the import of WAV files;
@@ -258,7 +259,7 @@ Ctrl+PageDown and Ctrl+PageUp toggle a bookmark and go to the next and previous 
 Ctrl+F opens Find / Replace, Alt+G Go To; Alt+T and Alt+V toggle the instrument and
 volume masks; the numeric keypad picks an instrument in the note column, and with Alt
 the edit step; Ctrl+ the keypad's + and - change the step, + and - alone the frame's
-pattern. With the mouse, a click puts the cursor on a cell and a drag selects (the rows
+pattern (with frames selected in the frame list, theirs). With the mouse, a click puts the cursor on a cell and a drag selects (the rows
 scroll at the top and bottom), on the row numbers whole rows; a double click selects the
 channel in the frame (on the row numbers, the frame); the wheel with Ctrl transposes,
 with Shift changes the values, with both goes from frame to frame. Edits of patterns,
@@ -274,7 +275,9 @@ Overflow paste mode) is on, selects what it pasted, and asks first when the area
 row of a pattern twice. Copy As copies a channel's volumes as a volume sequence, the
 selection as plain text (the text export's form) or as PPMCK MML (a row a sixteenth
 note). Select takes the cursor's row, column, pattern, frame, channel (all frames) or
-the track. Interpolate, Reverse and Stretch (with Expand and Shrink) refuse selections
+the track; In Other Editor makes a selection of the pattern one of its frames and
+channels in the frame list, and a selection of the frame list one of their whole
+patterns, and goes there. Interpolate, Reverse and Stretch (with Expand and Shrink) refuse selections
 where a channel plays a row twice, as the desktop's do. Find / Replace is a window that
 stays open: notes (C-4, C#4, Db4, a letter alone for any octave, ---, ===, ^1, noise
 periods as 3-#, `.` for anything), instruments, volumes and effects, each as a value or a
@@ -291,8 +294,23 @@ cursor for the notes entered next. Split Keyboard moves the notes up to a split 
 up to two octaves, may give them an instrument of their own, and outside the edit mode
 plays them on a channel of their own. Enable MIDI takes notes from MIDI keyboards (Web
 MIDI) into the cursor's channel, two octaves down, as the desktop does; it is on again on
-the next visit when the browser does not have to ask. Select > In Other Editor waits for
-selections in the frame list, and dragging a selection to move it is not done.
+the next visit when the browser does not have to ask. Dragging a selection to move it (in
+the pattern or in the frame list) is not done.
+
+The frame list works as the desktop's frame editor. A drag selects frames and channels
+(from the frame numbers, whole frames; past the top or the bottom, the cursor and the
+list go on), Shift with a click or with the arrows extends the selection, Escape drops it.
+Copy (Ctrl+C) keeps the selected pattern numbers, or the cursor's frame; Paste (Ctrl+V)
+inserts them before the cursor's frame, Paste & Overwrite writes them over the frames from
+there on, Paste & Duplicate inserts them with copies of their patterns at free numbers;
+Cut and Delete (Del) remove the selected frames, or the cursor's, never the last one. A
+pattern number typed, and + and -, change every pattern of the selection, Clone Patterns
+(Alt+D) copies each of them; Ctrl+Up/Down move the frame, Insert adds one, Enter goes to
+the pattern. The row after the last frame (`>>`) takes the cursor, as the desktop's does:
+Paste there adds the frames at the end, and a pattern number typed there adds a frame. The
+right button opens the desktop's frame menu. While the frame list has the keyboard, the
+Edit menu's clipboard and Select commands (and Paste Special's Overwrite) are its own, as
+on the desktop; every change can be undone.
 
 The instrument editor (double-click an instrument, or its edit button) has the panels
 of the desktop's, by the kind of instrument. The sequences (2A03, VRC6, N163, 5B) are bars
@@ -329,10 +347,16 @@ dropping a `.txt` file), and the import of another module's tracks and instrumen
 the module properties. What they write is downloaded; several files come in a zip file.
 
 The Song menu after them does what the desktop's does to the track: Clone Patterns (the
-pattern at the cursor), Merge Duplicated Patterns, Populate Unique Patterns, Clear
-Patterns and Estimate Song Length; the first two can be undone, the others, as on the
-desktop, cannot, nor what was done before them. Populate Unique Patterns keeps the
-track's row highlight, which the desktop's leaves behind. The Module menu opens Detune Settings
+pattern at the cursor, or each of the frames selected), Merge Duplicated Patterns,
+Populate Unique Patterns, Clear Patterns, Transpose Song and Estimate Song Length.
+Transpose Song moves the notes of the track, or of all tracks, by semitones, in every
+pattern and every row as the desktop's does, but not in the noise and DPCM channels nor
+the notes of the instruments ticked to be left out. Clone Patterns, Merge Duplicated
+Patterns and Transpose Song can be undone (the desktop's Transpose Song clears what can
+be undone, and its Reverse and Clear All change only the boxes, not what is left out);
+Populate Unique Patterns and Clear Patterns, as on the desktop, cannot, nor what was done
+before them. Populate Unique Patterns keeps the track's row highlight, which the
+desktop's leaves behind. The Module menu opens Detune Settings
 (with the desktop's CSV files of the tables), Groove Settings (with its tools, and a
 copy as Fxx effects to paste), the device mix offsets with hardware-based mixing, the
 VRC7's patches (external OPLL) of the module properties and the Bookmark Manager, and runs
@@ -448,6 +472,7 @@ node web/test/seek.mjs                           # seeking: the audio, and the s
 node web/test/instrument.mjs                     # instruments: DPCM samples, FDS, N163, VRC7, .fti files
 node web/test/dpcm.mjs                           # the editor's page code that works on numbers
 node web/test/pattern.mjs                        # the pattern editor's commands, on cells
+node web/test/frames.mjs                         # the frame editor's selections and clipboard
 node web/test/render.mjs <module> [out.wav]      # render and report
 node web/test/compare.mjs <module> <export.wav>  # against the desktop WAV export
 ```

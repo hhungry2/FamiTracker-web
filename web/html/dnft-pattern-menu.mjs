@@ -1,10 +1,12 @@
 // Dn-FamiTracker web port - the editor's Edit and Pattern menus: what the desktop
 // tracker's have besides Undo, Redo and its pattern editor's keys (Paste Special, Copy As,
-// Select, Find / Replace, Go To, Bookmarks with the Module menu's Bookmark Manager,
-// Instrument Mask, Volume Mask, Split Keyboard, Enable MIDI; Interpolate, Reverse,
-// Replace Instrument, Expand, Shrink, Stretch, Transpose, Swap Channels), the pattern's
-// right-click menu with Pick Up Row, and notes from MIDI keyboards (Web MIDI). The edits
-// themselves are the editor's (dnft-editor.mjs) and dnft-pattern-edit.mjs's.
+// Select with In Other Editor, Find / Replace, Go To, Bookmarks with the Module menu's
+// Bookmark Manager, Instrument Mask, Volume Mask, Split Keyboard, Enable MIDI; Interpolate,
+// Reverse, Replace Instrument, Expand, Shrink, Stretch, Transpose, Swap Channels), the
+// pattern's right-click menu with Pick Up Row, and notes from MIDI keyboards (Web MIDI).
+// The edits themselves are the editor's (dnft-editor.mjs) and dnft-pattern-edit.mjs's;
+// while the frame list has the keyboard, the clipboard and Select are its own
+// (dnft-frame-editor.mjs), as on the desktop.
 //
 //   const menus = new PatternMenu(editor);   // adds its menus after the Export menu
 
@@ -47,15 +49,20 @@ export class PatternMenu {
     const t = this.strings;
     const editor = this.editor;
     const files = editor.files;
+    // with the frame list in use, the clipboard and the selections are its
+    // (CMainFrame::OnEditCopy() and the others)
+    const inFrames = () => editor.activeEditor === 'frames';
+    const frameEditor = () => editor.frameEditor;
     const noClip = () => !editor.clipboard;
+    const noClipHere = () => inFrames() ? !frameEditor().clipboard : !editor.clipboard;
     const item = {
       undo: { label: t.undoItem, shortcut: 'Ctrl+Z', run: () => editor.undo(), disabled: () => !editor.history.done.length },
       redo: { label: t.redoItem, shortcut: 'Ctrl+Y', run: () => editor.redo(), disabled: () => !editor.history.undone.length },
-      cut: { label: t.cutItem, shortcut: 'Ctrl+X', run: () => editor.cut() },
-      copy: { label: t.copyItem, shortcut: 'Ctrl+C', run: () => editor.copy() },
-      paste: { label: t.pasteItem, shortcut: 'Ctrl+V', run: () => editor.paste(), disabled: noClip },
-      delete: { label: t.deleteItem, shortcut: 'Del', run: () => this.deleteSelection() },
-      selectAll: { label: t.selectAll, shortcut: 'Ctrl+A', run: () => editor.selectAll() },
+      cut: { label: t.cutItem, shortcut: 'Ctrl+X', run: () => inFrames() ? frameEditor().cut() : editor.cut() },
+      copy: { label: t.copyItem, shortcut: 'Ctrl+C', run: () => inFrames() ? frameEditor().copy() : editor.copy() },
+      paste: { label: t.pasteItem, shortcut: 'Ctrl+V', run: () => inFrames() ? frameEditor().paste() : editor.paste(), disabled: noClipHere },
+      delete: { label: t.deleteItem, shortcut: 'Del', run: () => inFrames() ? frameEditor().delete() : this.deleteSelection() },
+      selectAll: { label: t.selectAll, shortcut: 'Ctrl+A', run: () => inFrames() ? frameEditor().selectScope('track') : editor.selectAll() },
       interpolate: { label: t.interpolate, hint: t.interpolateHint, shortcut: 'Ctrl+G', run: () => editor.interpolate() },
       reverse: { label: t.reverse, hint: t.reverseHint, shortcut: 'Ctrl+R', run: () => editor.reverse() },
       replaceInstrument: { label: t.replaceInstrument, hint: t.replaceInstrumentHint, shortcut: 'Alt+S', run: () => editor.replaceInstrument() },
@@ -76,7 +83,7 @@ export class PatternMenu {
       {
         label: t.pasteSpecial, items: [
           { label: t.pasteMix, hint: t.pasteMixHint, shortcut: 'Ctrl+M', run: () => editor.paste(PASTE.MIX), disabled: noClip },
-          { label: t.pasteOverwrite, hint: t.pasteOverwriteHint, run: () => editor.paste(PASTE.OVERWRITE), disabled: noClip },
+          { label: t.pasteOverwrite, hint: t.pasteOverwriteHint, run: () => inFrames() ? frameEditor().paste('overwrite') : editor.paste(PASTE.OVERWRITE), disabled: noClipHere },
           { label: t.pasteInsert, hint: t.pasteInsertHint, run: () => editor.paste(PASTE.INSERT), disabled: noClip },
           null,
           { label: t.pasteAtCursor, hint: t.pasteAtCursorHint, radio: true, checked: () => editor.pastePos === PASTE_AT.CURSOR, run: () => this.setPastePos(PASTE_AT.CURSOR) },
@@ -99,15 +106,17 @@ export class PatternMenu {
       {
         label: t.selectMenu, items: [
           item.selectAll,
-          { label: t.selectNone, shortcut: 'Esc', run: () => editor.deselect() },
+          { label: t.selectNone, shortcut: 'Esc', run: () => inFrames() ? frameEditor().deselect() : editor.deselect() },
           null,
-          { label: t.selectRow, hint: t.selectRowHint, run: () => editor.selectScope('row', 'all') },
-          { label: t.selectColumn, hint: t.selectColumnHint, run: () => editor.selectScope('frame', 'column') },
+          { label: t.selectRow, hint: t.selectRowHint, run: () => editor.selectScope('row', 'all'), disabled: inFrames },
+          { label: t.selectColumn, hint: t.selectColumnHint, run: () => editor.selectScope('frame', 'column'), disabled: inFrames },
           null,
-          { label: t.selectPattern, hint: t.selectPatternHint, run: () => editor.selectScope('frame', 'channel') },
-          { label: t.selectFrame, hint: t.selectFrameHint, run: () => editor.selectScope('frame', 'all') },
-          { label: t.selectChannel, hint: t.selectChannelHint, run: () => editor.selectScope('track', 'channel') },
-          { label: t.selectTrack, hint: t.selectTrackHint, run: () => editor.selectScope('track', 'all') },
+          { label: t.selectPattern, hint: t.selectPatternHint, run: () => inFrames() ? frameEditor().selectScope('pattern') : editor.selectScope('frame', 'channel') },
+          { label: t.selectFrame, hint: t.selectFrameHint, run: () => inFrames() ? frameEditor().selectScope('frame') : editor.selectScope('frame', 'all') },
+          { label: t.selectChannel, hint: t.selectChannelHint, run: () => inFrames() ? frameEditor().selectScope('channel') : editor.selectScope('track', 'channel') },
+          { label: t.selectTrack, hint: t.selectTrackHint, run: () => inFrames() ? frameEditor().selectScope('track') : editor.selectScope('track', 'all') },
+          null,
+          { label: t.selectOther, hint: t.selectOtherHint, run: () => frameEditor().selectInOtherEditor() },
         ],
       },
       null,

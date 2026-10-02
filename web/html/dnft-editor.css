@@ -428,6 +428,10 @@
   background: var(--dnft-pe-cursor-row);
 }
 
+.dnft-frame-row.is-end {
+  color: var(--dnft-pe-row-number);
+}
+
 .dnft-frame-row.is-playing .dnft-frame-number {
   color: var(--dnft-pe-volume);
 }
@@ -449,6 +453,11 @@
   cursor: pointer;
 }
 
+/* the cursor shows over the selection */
+.dnft-frame-pattern.is-selected {
+  background: var(--dnft-pe-selection);
+}
+
 .dnft-frame-pattern.is-channel {
   background: var(--dnft-pe-cursor);
   color: var(--dnft-pe-bg);
@@ -456,6 +465,10 @@
 
 .dnft-frame-list:focus .dnft-frame-pattern.is-channel {
   outline: 1px solid var(--dnft-accent);
+}
+
+.dnft-frame-list {
+  user-select: none;
 }
 
 .dnft-instrument-list {
@@ -1165,6 +1178,35 @@
   overflow-x: auto;
 }
 
+.dnft-transpose-amount {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-bottom: 8px;
+}
+
+.dnft-transpose-amount input[type="number"] {
+  width: 5em;
+}
+
+.dnft-transpose-instruments {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 2px 8px;
+  font-family: var(--dnft-mono);
+}
+
+.dnft-transpose-instruments .dnft-check:has(input:disabled) {
+  opacity: 0.45;
+}
+
+.dnft-transpose-tools {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .dnft-opll td {
   padding: 1px 2px;
 }
@@ -1186,6 +1228,10 @@
 @media (max-width: 560px) {
   .dnft-groove {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dnft-transpose-instruments {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .dnft-groove-list {

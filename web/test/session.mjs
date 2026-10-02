@@ -291,6 +291,108 @@ check('swap channels: patterns, frames and effect columns', () => {
   s.delete();
 });
 
+check('the frame editor: frames inserted and deleted with their bookmarks, blocks of patterns', () => {
+  const s = dnft.createSession(RATE);
+  const list = () => [...s.track(0).frameList];
+  s.setFrameCount(0, 3);
+  s.setFramePatterns(0, 0, 0, 5, new Uint8Array(Array.from({ length: 15 }, (_, i) => i + 1)));
+  // what is past the frames or the channels is left out
+  s.setFramePatterns(0, 2, 3, 3, new Uint8Array([20, 21, 22, 23, 24, 25]));
+  assert.deepEqual(list(), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 20, 21]);
+  const mark = { frame: 1, row: 0, name: 'B', highlight: [-1, -1], persist: false };
+  s.setBookmarks(0, [mark]);
+  // frames of pattern 0, the bookmark moves down with the frame
+  assert.ok(s.insertFrames(0, 1, 2));
+  assert.deepEqual(list(), [1, 2, 3, 4, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 7, 8, 9, 10, 11, 12, 13, 20, 21]);
+  assert.deepEqual(s.bookmarks(0).map(m => m.frame), [3]);
+  assert.ok(s.insertFrames(0, 5, 1));
+  assert.equal(s.track(0).frames, 6);
+  assert.equal(s.insertFrames(0, 0, 251), false);
+  assert.equal(s.track(0).frames, 6);
+  assert.throws(() => rethrow(() => s.insertFrames(0, 7, 1)), /no frame 7/);
+  assert.equal(s.deleteFrames(0, 1, 2), 2);
+  assert.deepEqual(list(), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 20, 21, 0, 0, 0, 0, 0]);
+  assert.deepEqual(s.bookmarks(0).map(m => m.frame), [1]);
+  // the bookmark goes with its frame, and one frame is always left: the last
+  assert.equal(s.deleteFrames(0, 0, 10), 3);
+  assert.deepEqual(list(), [0, 0, 0, 0, 0]);
+  assert.deepEqual(s.bookmarks(0), []);
+  s.delete();
+});
+
+check('the frame editor: clone patterns, one copy for each, and none without a free pattern', () => {
+  const s = dnft.createSession(RATE);
+  s.setFrameCount(0, 3);
+  // PU1 plays 0, 0, 1 and PU2 plays 2 in the three frames
+  s.setFramePatterns(0, 0, 0, 2, new Uint8Array([0, 2, 0, 2, 1, 2]));
+  s.setCells(0, 0, 0, 0, new Uint8Array(cell(NOTE_C, 4)));
+  s.setCells(0, 0, 1, 0, new Uint8Array(cell(NOTE_E, 4)));
+  s.setCells(0, 1, 2, 0, new Uint8Array(cell(NOTE_G, 3)));
+  assert.equal(s.clonePatterns(0, 2, 0, 1, 0), 0);
+  const t = s.track(0);
+  assert.deepEqual([0, 1, 2].map(f => [...t.frameList.subarray(f * 5, f * 5 + 2)]), [[2, 0], [2, 0], [3, 0]]);
+  assert.deepEqual([...s.pattern(0, 0, 2).subarray(0, 12)], cell(NOTE_C, 4));
+  assert.deepEqual([...s.pattern(0, 0, 3).subarray(0, 12)], cell(NOTE_E, 4));
+  assert.deepEqual([...s.pattern(0, 1, 0).subarray(0, 12)], cell(NOTE_G, 3));
+  // the originals stay
+  assert.deepEqual([...s.pattern(0, 0, 0).subarray(0, 12)], cell(NOTE_C, 4));
+  // every pattern of the triangle used: its frames keep theirs
+  for (let p = 0; p < 256; ++p)
+    s.setCells(0, 2, p, 0, new Uint8Array(cell(NOTE_C, 3)));
+  assert.equal(s.clonePatterns(0, 0, 2, 1, 2), 1);
+  assert.deepEqual([0, 1, 2].map(f => [...s.track(0).frameList.subarray(f * 5 + 1, f * 5 + 3)]), [[1, 0], [1, 0], [1, 0]]);
+  s.delete();
+});
+
+check('Song > Transpose Song: every pattern and row, not noise, DPCM or what is excluded', () => {
+  const NOTE_D = 3, NOTE_B = 12, NONE = 64;
+  const s = dnft.createSession(RATE);
+  s.setPatternLength(0, 16);
+  s.setCells(0, 0, 0, 0, new Uint8Array([
+    ...cell(NOTE_C, 4, 0), ...cell(NOTE_E, 4, 1), ...cell(NOTE_B, 7, 0), ...cell(HALT, 0, NONE), ...cell(NOTE_C, 4, NONE),
+  ]));
+  // a pattern no frame plays, and a row past the pattern length
+  s.setCells(0, 0, 9, 0, new Uint8Array(cell(NOTE_D, 3)));
+  s.setCells(0, 0, 0, 20, new Uint8Array(cell(NOTE_G, 2)));
+  s.setCells(0, 3, 0, 0, new Uint8Array(cell(NOTE_C, 4)));
+  s.setCells(0, 4, 0, 0, new Uint8Array(cell(NOTE_C, 4)));
+  const used = () => s.patterns(0).map(p => `${p.channel}:${p.pattern}`);
+  const before = used();
+  const rows = (channel, pattern, count) => Array.from({ length: count }, (_, r) => [...s.pattern(0, channel, pattern).subarray(r * 12, r * 12 + 4)]);
+  const original = rows(0, 0, 5);
+  assert.equal(s.transposeSong(0, false, 0, new Uint8Array()).length, 0);
+  const changes = s.transposeSong(0, false, 2, new Uint8Array([1]));
+  // B-7 cannot go up, instrument 01 is excluded, the note cut is no note
+  assert.equal(changes.length, 4 * 8);
+  assert.deepEqual(rows(0, 0, 5), [[NOTE_D, 4, 16, 0], [NOTE_E, 4, 16, 1], [NOTE_B, 7, 16, 0], [HALT, 0, 16, NONE], [NOTE_D, 4, 16, NONE]]);
+  assert.deepEqual(rows(0, 9, 1), [[NOTE_E, 3, 16, 0]]);
+  assert.deepEqual(rows(3, 0, 1), [[NOTE_C, 4, 16, 0]]);
+  assert.deepEqual(rows(4, 0, 1), [[NOTE_C, 4, 16, 0]]);
+  // no empty pattern was touched
+  assert.deepEqual(used(), before);
+  s.setPatternLength(0, 64);
+  assert.deepEqual([...s.pattern(0, 0, 0).subarray(20 * 12, 20 * 12 + 2)], [10, 2]);
+  // undo and redo
+  s.setNotes(changes, false);
+  assert.deepEqual(rows(0, 0, 5), original);
+  assert.deepEqual([...s.pattern(0, 0, 0).subarray(20 * 12, 20 * 12 + 2)], [NOTE_G, 2]);
+  s.setNotes(changes, true);
+  assert.deepEqual(rows(0, 9, 1), [[NOTE_E, 3, 16, 0]]);
+  // down to C-0 and no lower, in every track
+  s.addTrack();
+  s.setCells(1, 1, 0, 0, new Uint8Array(cell(NOTE_E, 1)));
+  assert.equal(s.transposeSong(1, true, -24, new Uint8Array()).length, 7 * 8);
+  assert.deepEqual([...s.pattern(1, 1, 0).subarray(0, 2)], [NOTE_C, 0]);
+  assert.deepEqual(rows(0, 0, 1), [[NOTE_D, 2, 16, 0]]);
+  s.delete();
+  // with no notes to move, the module is as it was
+  const fresh = dnft.createSession(RATE);
+  assert.equal(fresh.isModified(), false);
+  assert.equal(fresh.transposeSong(0, true, 5, new Uint8Array()).length, 0);
+  assert.equal(fresh.isModified(), false);
+  fresh.delete();
+});
+
 check('song settings', () => {
   const s = dnft.createSession(RATE);
   s.setTitle('チップチューン ラボ の テスト曲です');

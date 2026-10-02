@@ -1,6 +1,7 @@
 // Dn-FamiTracker web port - the editor's Song and Module menus: what the desktop
 // tracker's Song menu does to the patterns and frames of a track (Clone Patterns, Merge
-// Duplicated Patterns, Populate Unique Patterns, Clear Patterns, Estimate Song Length),
+// Duplicated Patterns, Populate Unique Patterns, Clear Patterns, Transpose Song, Estimate
+// Song Length),
 // and the settings of its Module menu and module properties that the side panel does
 // not show (Detune Settings, Groove Settings, the device mix offsets, the VRC7's
 // patches), with Module > Cleanup; its Bookmark Manager is dnft-pattern-menu.mjs's. The
@@ -9,7 +10,7 @@
 //
 //   const menus = new SongMenu(editor);   // adds its menus after the Import and Export menus
 
-import { CELL, CHIP, EMPTY_CELL, MAX_PATTERNS, emptyPattern, isEmptyCell } from './dnft-song.mjs';
+import { CELL, CHIP, EMPTY_CELL, MAX_INSTRUMENTS, MAX_PATTERNS, emptyPattern, isEmptyCell } from './dnft-song.mjs';
 
 const EF_SPEED = 1;
 // Grooves (FamiTrackerTypes.h, Groove.h): how many, how long, and the room a module has
@@ -30,6 +31,8 @@ const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 
 const MIX_CHIPS = [0, 0, CHIP.VRC6, CHIP.VRC7, CHIP.FDS, CHIP.MMC5, CHIP.N163, CHIP.S5B];
 const MAX_LEVEL = 120;
 const OPLL_PATCHES = 19;
+// Transpose Song goes this many semitones at most (CTransposeDlg's spin button)
+const MAX_TRANSPOSE = 96;
 
 const hex2 = value => value.toString(16).toUpperCase().padStart(2, '0');
 const pad2 = value => String(value).padStart(2, '0');
@@ -69,6 +72,8 @@ export class SongMenu {
       { label: t.populatePatterns, hint: t.populatePatternsHint, run: () => this.populateUniquePatterns() },
       { label: t.clearPatterns, hint: t.clearPatternsHint, run: () => this.clearPatterns() },
       null,
+      { label: t.transposeSong, hint: t.transposeSongHint, run: () => this.openTranspose() },
+      null,
       { label: t.songLength, hint: t.songLengthHint, run: () => this.estimateLength() },
     ]);
     const moduleMenu = files.menu(t.moduleMenu, t.moduleMenuHint, [
@@ -91,15 +96,19 @@ export class SongMenu {
     this.buildGrooveDialog();
     this.buildMixerDialog();
     this.buildOpllDialog();
+    this.buildTransposeDialog();
   }
 
   // ---- the Song menu ---------------------------------------------------------------------
 
   // Song > Clone Patterns: the pattern at the cursor, copied to the channel's first free
-  // number, which the frame then plays (CFActionClonePatterns)
+  // number, which the frame then plays; with frames selected, each of their patterns
+  // (CFActionClonePatterns)
   async clonePattern() {
     const t = this.strings;
     const editor = this.editor;
+    if (editor.frameEditor.selection)
+      return editor.frameEditor.clonePatterns();
     const track = editor.track;
     const { frame, channel } = editor.cursor;
     const old = editor.patternOf(frame, channel);
@@ -646,6 +655,117 @@ export class SongMenu {
     d.close();
     editor.edited();
     editor.message(this.strings.mixerApplied);
+  }
+
+  // ---- Transpose Song ---------------------------------------------------------------------
+
+  // Song > Transpose Song (CTransposeDlg): the notes up or down by semitones, in this track
+  // or in all of them, but those of the instruments ticked to be left out
+  buildTransposeDialog() {
+    // the instruments left out stay ticked from one time to the next, as on the desktop
+    this.transposeExcluded = new Set();
+    const d = this.transposeDialog = this.editor.files.dialog('dnft-transpose-dialog', `
+      <div class="dnft-transpose-amount">
+        <label class="dnft-field"><span data-t="transposeSemitones"></span><input type="number" min="0" max="${MAX_TRANSPOSE}" step="1" value="0" data-role="semitones"></label>
+        <label class="dnft-check"><input type="radio" name="dnft-transpose-way" data-role="raise" checked> <span data-t="transposeRaise"></span></label>
+        <label class="dnft-check"><input type="radio" name="dnft-transpose-way" data-role="lower"> <span data-t="transposeLower"></span></label>
+      </div>
+      <label class="dnft-check"><input type="checkbox" data-role="all"> <span data-t="transposeAllTracks"></span></label>
+      <fieldset class="dnft-fieldset">
+        <legend data-t="transposeExclude"></legend>
+        <div class="dnft-transpose-instruments" data-role="instruments"></div>
+        <div class="dnft-transpose-tools">
+          <button type="button" class="dnft-button" data-role="reverse" data-t="transposeReverse"></button>
+          <button type="button" class="dnft-button" data-role="clear" data-t="transposeClear"></button>
+        </div>
+      </fieldset>
+      <p class="dnft-hint" data-t="transposeSongNote"></p>`, `
+      <button type="button" class="dnft-button dnft-button--primary" data-role="ok" data-t="ok"></button>
+      <button type="button" class="dnft-button" data-role="cancel" data-t="cancel"></button>`);
+    const $ = role => d.querySelector(`[data-role="${role}"]`);
+    $('instruments').append(...Array.from({ length: MAX_INSTRUMENTS }, (_, i) => {
+      const label = document.createElement('label');
+      label.className = 'dnft-check';
+      label.innerHTML = `<input type="checkbox" data-instrument="${i}"> <span>${hex2(i)}</span>`;
+      return label;
+    }));
+    $('instruments').addEventListener('change', e => {
+      const box = e.target.closest('[data-instrument]');
+      if (box?.checked)
+        this.transposeExcluded.add(Number(box.dataset.instrument));
+      else if (box)
+        this.transposeExcluded.delete(Number(box.dataset.instrument));
+    });
+    // Reverse: the module's instruments left out are moved and the others left out; Clear
+    // All: none left out (the desktop's change only the boxes, not what is done)
+    $('reverse').addEventListener('click', () => {
+      for (const { index } of this.editor.song.instruments) {
+        if (!this.transposeExcluded.delete(index))
+          this.transposeExcluded.add(index);
+      }
+      this.showExcluded();
+    });
+    $('clear').addEventListener('click', () => {
+      this.transposeExcluded.clear();
+      this.showExcluded();
+    });
+    $('semitones').addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        this.transposeSong();
+      }
+    });
+    $('ok').addEventListener('click', () => this.transposeSong());
+    $('cancel').addEventListener('click', () => d.close());
+  }
+
+  // The boxes of the instruments, ticked when left out; those the module does not have
+  // cannot change
+  showExcluded() {
+    const song = this.editor.song;
+    for (const box of this.transposeDialog.querySelectorAll('[data-instrument]')) {
+      const index = Number(box.dataset.instrument);
+      box.checked = this.transposeExcluded.has(index);
+      box.disabled = !song.instrument(index);
+    }
+  }
+
+  openTranspose() {
+    const d = this.transposeDialog;
+    d.querySelector('.dnft-dialog-title').textContent = this.strings.transposeSongTitle;
+    this.showExcluded();
+    d.showModal();
+    const semitones = d.querySelector('[data-role="semitones"]');
+    semitones.focus();
+    semitones.select();
+  }
+
+  // The engine moves the notes (transposeSong(), every pattern and row as the desktop's);
+  // undo and redo put back what it changed
+  async transposeSong() {
+    const t = this.strings;
+    const editor = this.editor;
+    const d = this.transposeDialog;
+    const amount = clamp(Math.round(Number(d.querySelector('[data-role="semitones"]').value) || 0), 0, MAX_TRANSPOSE);
+    const semitones = d.querySelector('[data-role="lower"]').checked ? -amount : amount;
+    const all = d.querySelector('[data-role="all"]').checked;
+    d.close();
+    if (!semitones)
+      return;
+    const track = editor.track;
+    const changes = await this.session.call('transposeSong', track, all, semitones, Uint8Array.from(this.transposeExcluded));
+    if (!changes.length) {
+      editor.message(t.transposeNothing);
+      return;
+    }
+    const apply = async after => {
+      this.session.send('setNotes', changes, after);
+      await editor.reloadTracks();
+      editor.showTrack(track);
+    };
+    await editor.reloadTracks();
+    editor.record({ undo: () => apply(false), redo: () => apply(true) });
+    editor.message(t.transposedSong.replace('{n}', changes.length / 8));
   }
 
   // ---- the VRC7's patches ----------------------------------------------------------------

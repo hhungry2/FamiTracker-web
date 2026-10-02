@@ -559,6 +559,82 @@ public:
 		return up ? Doc().MoveFrameUp(track, frame) : Doc().MoveFrameDown(track, frame);
 	}
 
+	//! `count` frames at `frame` (the frame count: after the last) that play pattern 0 in
+	//! every channel; the bookmarks from there on move down with the frames
+	//! (CFamiTrackerDoc::AddFrames(), as the frame editor's paste inserts)
+	bool insertFrames(int track, int frame, int count) {
+		CheckTrack(track);
+		CFamiTrackerDoc &doc = Doc();
+		if (frame < 0 || frame > static_cast<int>(doc.GetFrameCount(track)))
+			throw std::out_of_range("no frame " + std::to_string(frame));
+		if (count < 1 || !doc.AddFrames(track, frame, count))
+			return false;
+		doc.SetModifiedFlag();
+		return true;
+	}
+
+	//! `count` frames from `frame` on removed, with their bookmarks, but never the last
+	//! one left (CFamiTrackerDoc::DeleteFrames()); returns how many went
+	int deleteFrames(int track, int frame, int count) {
+		CheckFrame(track, frame);
+		CFamiTrackerDoc &doc = Doc();
+		const int frames = doc.GetFrameCount(track);
+		doc.DeleteFrames(track, frame, std::clamp(count, 0, frames - frame));
+		doc.SetModifiedFlag();
+		return frames - static_cast<int>(doc.GetFrameCount(track));
+	}
+
+	//! The patterns of a block of the frame list: `list` has `channels` of them for each
+	//! frame from `frame` on, from `channel` on; what is past the frames or the channels is
+	//! left out (the frame editor's paste)
+	void setFramePatterns(int track, int frame, int channel, int channels, const val &list) {
+		CheckTrack(track);
+		CFamiTrackerDoc &doc = Doc();
+		const std::vector<uint8_t> patterns = FromJs(list);
+		const int frames = doc.GetFrameCount(track), channelCount = doc.GetChannelCount();
+		if (channels < 1)
+			return;
+		for (size_t i = 0; i < patterns.size(); ++i) {
+			const int f = frame + static_cast<int>(i) / channels, c = channel + static_cast<int>(i) % channels;
+			if (f >= 0 && f < frames && c >= 0 && c < channelCount)
+				doc.SetPatternAtFrame(track, f, c, patterns[i]);
+		}
+		doc.SetModifiedFlag();
+	}
+
+	//! Each pattern that frames [frame0, frame1] play in channels [channel0, channel1],
+	//! copied to the channel's first free pattern, which those frames then play; a pattern
+	//! played more than once gets one copy (CFrameEditor::ClonePatterns(), the frame
+	//! editor's Clone Patterns and Paste & Duplicate). The desktop's has no answer for a
+	//! channel without free patterns: here its frames keep theirs. Returns how many
+	//! patterns were left uncopied so.
+	int clonePatterns(int track, int frame0, int frame1, int channel0, int channel1) {
+		CheckFrame(track, frame0);
+		CheckFrame(track, frame1);
+		CheckChannel(channel0);
+		CheckChannel(channel1);
+		CFamiTrackerDoc &doc = Doc();
+		std::vector<int> copies(MAX_CHANNELS * MAX_PATTERN, -1);
+		int uncopied = 0;
+		for (int f = std::min(frame0, frame1), last = std::max(frame0, frame1); f <= last; ++f)
+			for (int c = std::min(channel0, channel1), end = std::max(channel0, channel1); c <= end; ++c) {
+				const int old = doc.GetPatternAtFrame(track, f, c);
+				int &copy = copies[c * MAX_PATTERN + old];
+				if (copy < 0) {
+					copy = static_cast<int>(doc.GetFirstFreePattern(track, c));
+					if (copy < 0) {
+						copy = old;
+						++uncopied;
+					}
+					else
+						doc.CopyPattern(track, copy, old, c);
+				}
+				doc.SetPatternAtFrame(track, f, c, copy);
+			}
+		doc.SetModifiedFlag();
+		return uncopied;
+	}
+
 	//! The lowest pattern number the channel does not use (-1: none left)
 	int freePattern(int track, int channel) const {
 		CheckTrack(track);
@@ -595,6 +671,80 @@ public:
 		const stHighlight highlight = doc.GetHighlight(track);
 		doc.PopulateUniquePatterns(track);
 		doc.SetHighlight(track, highlight);
+	}
+
+	//! Song > Transpose Song: the notes C to B of the track, or of every track (`all`),
+	//! `semitones` up or down, within C-0 to B-7, as CTransposeDlg::Transpose() does: in
+	//! every pattern and every row, past the pattern length too, but not in the noise and
+	//! DPCM channels nor the notes of the instruments in `excluded` (their numbers; a note
+	//! without an instrument is always moved, where the desktop's reads past its table).
+	//! Returns what changed, 8 bytes for each cell: track, channel, pattern, row, and the
+	//! note and the octave before and after, for setNotes() to undo and redo it.
+	val transposeSong(int track, bool all, int semitones, const val &excluded) {
+		CheckTrack(track);
+		CFamiTrackerDoc &doc = Doc();
+		bool skip[MAX_INSTRUMENTS] = {};
+		for (uint8_t index : FromJs(excluded))
+			if (index < MAX_INSTRUMENTS)
+				skip[index] = true;
+		std::vector<uint8_t> changes;
+		const bool modified = doc.IsModified() != FALSE;
+		const int first = all ? 0 : track, last = all ? static_cast<int>(doc.GetTrackCount()) - 1 : track;
+		for (int t = first; t <= last && semitones; ++t) {
+			// the patterns with something in them, in any row: reading an empty one would
+			// make room for all its rows (the desktop's reads them all)
+			const unsigned length = doc.GetPatternLength(t);
+			doc.SetPatternLength(t, MAX_PATTERN_LENGTH);
+			std::vector<std::pair<int, int>> used;
+			for (int c = doc.GetChannelCount() - 1; c >= 0; --c) {
+				const int type = doc.GetChannelType(c);
+				if (type == CHANID_NOISE || type == CHANID_DPCM)
+					continue;
+				for (int p = 0; p < MAX_PATTERN; ++p)
+					if (!doc.IsPatternEmpty(t, c, p))
+						used.emplace_back(c, p);
+			}
+			doc.SetPatternLength(t, length);
+			for (const auto &[c, p] : used)
+				for (int r = 0; r < MAX_PATTERN_LENGTH; ++r) {
+					stChanNote note;
+					doc.GetDataAtPattern(t, p, c, r, &note);
+					if (note.Note < NOTE_C || note.Note > NOTE_B || (note.Instrument < MAX_INSTRUMENTS && skip[note.Instrument]))
+						continue;
+					const int midi = std::clamp(MIDI_NOTE(note.Octave, note.Note) + semitones, 0, NOTE_COUNT - 1);
+					const int value = GET_NOTE(midi), octave = GET_OCTAVE(midi);
+					if (value == note.Note && octave == note.Octave)
+						continue;
+					const uint8_t change[] = {
+						static_cast<uint8_t>(t), static_cast<uint8_t>(c), static_cast<uint8_t>(p), static_cast<uint8_t>(r),
+						note.Note, note.Octave, static_cast<uint8_t>(value), static_cast<uint8_t>(octave),
+					};
+					changes.insert(changes.end(), std::begin(change), std::end(change));
+					note.Note = value;
+					note.Octave = octave;
+					doc.SetDataAtPattern(t, p, c, r, &note);
+				}
+		}
+		doc.SetModifiedFlag(changes.empty() ? modified : TRUE);
+		return CopyToJs(changes);
+	}
+
+	//! The notes transposeSong() changed, as they were (`after` false) or as it left them
+	void setNotes(const val &changes, bool after) {
+		const std::vector<uint8_t> list = FromJs(changes);
+		CFamiTrackerDoc &doc = Doc();
+		for (size_t at = 0; at + 8 <= list.size(); at += 8) {
+			const uint8_t *change = list.data() + at;
+			CheckTrack(change[0]);
+			CheckChannel(change[1]);
+			stChanNote note;
+			doc.GetDataAtPattern(change[0], change[2], change[1], change[3], &note);
+			note.Note = change[after ? 6 : 4];
+			note.Octave = change[after ? 7 : 5];
+			doc.SetDataAtPattern(change[0], change[2], change[1], change[3], &note);
+		}
+		if (!list.empty())
+			doc.SetModifiedFlag();
 	}
 
 	//! Module > Cleanup: the instruments no pattern plays (and the sequences no instrument
@@ -1640,9 +1790,15 @@ EMSCRIPTEN_BINDINGS(dnft_session) {
 		.function("duplicateFrame", &EditSession::duplicateFrame)
 		.function("cloneFrame", &EditSession::cloneFrame)
 		.function("moveFrame", &EditSession::moveFrame)
+		.function("insertFrames", &EditSession::insertFrames)
+		.function("deleteFrames", &EditSession::deleteFrames)
+		.function("setFramePatterns", &EditSession::setFramePatterns)
+		.function("clonePatterns", &EditSession::clonePatterns)
 		.function("freePattern", &EditSession::freePattern)
 		.function("clearPatterns", &EditSession::clearPatterns)
 		.function("populateUniquePatterns", &EditSession::populateUniquePatterns)
+		.function("transposeSong", &EditSession::transposeSong)
+		.function("setNotes", &EditSession::setNotes)
 		.function("removeUnusedInstruments", &EditSession::removeUnusedInstruments)
 		.function("removeUnusedPatterns", &EditSession::removeUnusedPatterns)
 		.function("removeUnusedSamples", &EditSession::removeUnusedSamples)
