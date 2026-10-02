@@ -421,13 +421,16 @@ are emulated sample by sample and clock by clock, which only the leaving out of 
 nobody uses (the resampling, the outputs) speeds up: a seek to the end of a 100 s module
 takes 2 to 3 s with either. The FDS is not skipped, and does not need to be.
 
-One thing is different. Playing a Namco 163 module straight adds the rounding of the
-steps of its own Blip_Buffer up (it keeps no high-pass, and the multiplexed output makes
-a step every 15 clocks): the level of Hellpath's N163 drifts into clipping, so that its
-channels are gone at 28 s; Kot's fade from 40 s on and are gone at 63 s. A seek starts without that error, so it
-lands on the sound the module has there, not on the one playing from the start has
-come to, and the audio matches that of playing to within one bit of a sample where the
-drift is still small (`test/seek.mjs` looks at the first seconds of such modules).
+The Namco 163 needed a change of its own for that to hold (FamiTracker-web#10). Its
+own Blip_Buffer kept no bass removal, so the rounding of the steps it is given (one
+every 15 clocks, by `Blip_Synth::update()`) added up in playing: the level of Hellpath's
+N163 drifted into clipping and its channels were gone at 28 s, Kot's at 63 s, while a
+seek, which skips most of those steps, started without that error and landed on another
+sound. The buffer removes bass below 16 Hz now (`CN163::UpdateFilter()`), which keeps the
+level near zero: the N163 plays on, and a seek to any position gives the audio of playing
+to it, bit for bit, as with the other chips (`test/seek.mjs`). The FDS and the VRC7 have
+buffers of the same kind; 300 s of a module of each did not drift, and they are as they
+were.
 
 ### Changes to Source/
 
@@ -449,6 +452,7 @@ Small and meant to be harmless for the desktop build:
 | `APU/SoundChip.h`, `APU/APU.h`, `APU/APU.cpp` | `SetSkipping()` on the chips and the APU, off by default | a chip that is told nobody listens can take shortcuts (see Seeking) |
 | `APU/2A03.cpp`, `nsfplay/.../nes_dmc.cpp`, `nes_dmc.h` | while skipping, steps as long as the frame sequencer allows (`NES_DMC::ClocksUntilFrameSequence()`, the part of `ClocksUntilLevelChange()` that is not about the level) | the counters count clocks the same in long steps |
 | `APU/VRC6.cpp`, `APU/MMC5.cpp` | while skipping, one step for all the time of a call | as above |
+| `APU/N163.cpp` | the dedicated Blip_Buffer removes bass below 16 Hz (`bass_freq(16)`, was 0) | with none, the rounding of its steps added up until the output clipped (#10) |
 | `APU/N163.cpp`, `mesen/Namco163Audio.h` | while skipping, `Namco163Audio::SkipAudio()` moves the channels one update for every 15 clocks at once; `UpdateChannel()` takes a number of updates | what `ClockAudio()` does for each clock, without the output of each |
 | `APU/VRC7.cpp`, `digital-sound-antiques/emu2413.c`, `emu2413.h` | while skipping, `OPLL_calcSkip()` for `OPLL_calc()`: the chip and its rate converter go on, the sum of the resampling and the volumes are left out | the samples are not used |
 | `digital-sound-antiques/emu2149.c` | `update_output()` split into `update_state()` and the outputs of the channels; `Tick()` only moves the state | the outputs of the calls before the last one are not used: the 5B plays twice as fast, sample for sample the same |
@@ -457,8 +461,10 @@ Small and meant to be harmless for the desktop build:
 | `Instrument2A03.cpp` | `SaveFile()` leaves out the keys whose sample the module does not have; `LoadFile()` checks the size of a sample against the module's DPCM space before taking memory, refuses a name or sample that the file ends inside, reads on when the file lists fewer samples than it counts, and gives a key whose sample the file does not carry none | the file counted the samples of such keys but did not list them (Hellpath's DPCM instrument is one), so it could not be read back; a damaged size asked for gigabytes; a cut-short sample was read with what the memory held; a key kept the number of whichever sample the module has there |
 | `FamiTrackerDoc.h` | `m_pCurrentDocument` starts at null | it was never set for a document that is not reading a file, and the range check of an `.fti` file that fails calls through it (a crash on the desktop too) |
 
-None of them changes the audio of playing: the first 20 to 30 seconds of every demo
-module, and of a module of each chip, are the same as before, sample for sample.
+None of them but the N163's bass removal changes the audio of playing: the first 20 to 30
+seconds of every demo module without the N163, and of a module of each of the other
+chips, are the same as before, sample for sample. The N163's differs below 16 Hz, and no
+longer loses its level.
 
 Testing
 -------

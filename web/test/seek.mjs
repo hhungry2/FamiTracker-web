@@ -1,6 +1,5 @@
-// Checks seeking: the audio after a seek is the audio of playing up to there, bit for bit
-// (but for the last bit of a sample with the Namco 163), and getting there is much
-// faster than playing.
+// Checks seeking: the audio after a seek is the audio of playing up to there, bit for bit,
+// and getting there is much faster than playing.
 //
 //   node test/seek.mjs
 
@@ -56,10 +55,6 @@ function maxDifference(a, b) {
 }
 
 const energy = pcm => pcm.reduce((sum, s) => sum + s * s, 0) / pcm.length;
-
-// The Namco 163's own Blip_Buffer never lets go of the rounding of its steps: the sound is
-// the same, but not to the last bit of every sample. The rest matches bit for bit.
-const tolerance = track => track.getProperty('Chips', '').includes('N163') ? 2 : 0;
 
 // The audio from `at` seconds on, played straight from the start
 function straight(track, at, ms) {
@@ -125,20 +120,19 @@ const files = readdirSync(demoDir).filter(f => /\.(dnm|0cc|ftm)$/i.test(f)).sort
 assert.ok(files.length > 0, 'no demo modules');
 
 // The modules are what the players play: several places, the first of them within the
-// exact stretch the seek ends with, the last far in. The Namco 163 goes only 15 s in:
-// its Blip_Buffer never lets go of the rounding of its steps, which adds up in playing to
-// a level that ends in clipping (Hellpath's N163 is gone at 28 s), where a seek starts anew.
+// exact stretch the seek ends with, the last far in (past the 28 s at which Hellpath's N163
+// used to be gone: #10).
 for (const file of files) {
   check(`${file}: the audio after a seek is that of playing`, () => {
     const track = load(readFileSync(path.join(demoDir, file)));
-    const places = track.getProperty('Chips', '').includes('N163') ? [0.2, 7.3, 15] : [0.2, 7.3, 41.7];
+    const places = [0.2, 7.3, 41.7];
     for (const at of places) {
       const player = track.createPlayer(RATE);
       player.seek(Math.round(at * 1000));
       assert.equal(player.getPosition(), Math.round(at * 1000));
       const sought = render(player, 1500);
       const difference = maxDifference(straight(track, at, 1500), sought);
-      assert.ok(difference <= tolerance(track), `${at} s: differs by up to ${difference}`);
+      assert.equal(difference, 0, `${at} s: differs by up to ${difference}`);
     }
     track.delete();
   });
@@ -160,11 +154,26 @@ for (const [name, chips] of chipSets) {
       player.seek(Math.round(at * 1000));
       const sought = render(player, 1000);
       const difference = maxDifference(straight(track, at, 1000), sought);
-      assert.ok(difference <= tolerance(track), `${at} s: differs by up to ${difference}`);
+      assert.equal(difference, 0, `${at} s: differs by up to ${difference}`);
     }
     track.delete();
   });
 }
+
+// #10: with no bass removal the Namco 163's own Blip_Buffer added up the rounding of its steps
+// until the output clipped, and Hellpath's N163 was gone at 28 s (Kot's at 63 s)
+check('the Namco 163 sounds on through a long play, with the 2A03 muted', () => {
+  for (const file of files.filter(f => /Hellpath|Wavetable/.test(f))) {
+    const track = load(readFileSync(path.join(demoDir, file)));
+    const player = track.createPlayer(RATE);
+    player.setIntProperty('zxtune.core.channels_mask', 0x1F);
+    const pcm = render(player, 70000);
+    const late = (from, to) => Math.sqrt(energy(pcm.subarray(from * RATE, to * RATE)));
+    assert.ok(late(60, 69) > late(2, 11) / 4, `${file}: ${late(60, 69)} at 60 s, ${late(2, 11)} at 2 s`);
+    assert.ok(late(30, 39) > 100, `${file}: ${late(30, 39)} at 30 s`);
+    track.delete();
+  }
+});
 
 check('a seek goes on from where the player is, and starts over when the position is behind', () => {
   const track = load(readFileSync(path.join(demoDir, files[0])));
@@ -177,19 +186,19 @@ check('a seek goes on from where the player is, and starts over when the positio
   forward.seek(5000);
   forward.seek(12000);
   assert.equal(forward.getPosition(), 12000);
-  assert.ok(maxDifference(want, render(forward, 1000)) <= tolerance(track), 'forward differs');
+  assert.ok(maxDifference(want, render(forward, 1000)) === 0, 'forward differs');
 
   const played = track.createPlayer(RATE);
   render(played, 3000);
   played.seek(12000);
-  assert.ok(maxDifference(want, render(played, 1000)) <= tolerance(track), 'forward from playing differs');
+  assert.ok(maxDifference(want, render(played, 1000)) === 0, 'forward from playing differs');
 
   // backward, and to where it is
   const back = track.createPlayer(RATE);
   back.seek(20000);
   back.seek(12000);
   assert.equal(back.getPosition(), 12000);
-  assert.ok(maxDifference(want, render(back, 1000)) <= tolerance(track), 'backward differs');
+  assert.ok(maxDifference(want, render(back, 1000)) === 0, 'backward differs');
   const rendered = back.getPosition();
   back.seek(rendered);
   assert.equal(back.getPosition(), rendered);
@@ -207,7 +216,7 @@ check('a seek inside what was rendered ahead, and past what is left of the track
   player.render(heap, 100);
   player.seek(10);
   assert.equal(player.getPosition(), 10);
-  assert.ok(maxDifference(want, render(player, 500)) <= tolerance(track), 'differs');
+  assert.ok(maxDifference(want, render(player, 500)) === 0, 'differs');
 
   const duration = track.getDuration();
   player.seek(duration + 5000);

@@ -53,7 +53,7 @@ The audio engine follows the same interface conventions as [ZXTune Web](https://
 | **WASM Core Engine** | ✅ Operational | Sound generator, loaders, and chip emulators compiled to WASM |
 | **2A03 / VRC6 / N163** | ✅ Verified | Tested and verified with demo modules |
 | **VRC7 / FDS / MMC5 / 5B** | ⚠️ Implemented | Emulation code included; real-world verification in progress |
-| **Seeking / Loops / Mutes** | ✅ Operational | A seek skips most of the way (0.3 to 1.1 s to reach 90 % of a demo module); the audio after it matches continuous playback sample for sample, the N163 within one bit |
+| **Seeking / Loops / Mutes** | ✅ Operational | A seek skips most of the way (0.3 to 1.1 s to reach 90 % of a demo module); the audio after it matches continuous playback sample for sample |
 | **Multi-Track Modules** | ✅ Operational | Subsong selection implemented |
 | **Web Player Demo** | ✅ Operational | Worker + AudioWorklet pipeline (`web/html/index.html`) |
 | **Web Tracker Editor** | ✅ Operational | Full interactive tracker UI (`web/html/editor.html`) |

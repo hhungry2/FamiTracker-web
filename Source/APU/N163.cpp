@@ -55,7 +55,11 @@ void CN163::UpdateFilter(blip_eq_t eq)
 {
 	m_BlipN163.set_sample_rate(eq.sample_rate);
 	m_SynthN163.treble_eq(eq);
-	m_BlipN163.bass_freq(0);
+	// With no bass removal here the buffer's integrator never lets go of the rounding error
+	// that Blip_Synth::update() adds with every step; it climbs until the output clips and the
+	// mixer's own bass filter turns it to silence (after 28 s of Hellpath). A weak one keeps it
+	// near zero and is far below what anyone hears.
+	m_BlipN163.bass_freq(16);
 	m_CutoffHz = 12000;
 	RecomputeN163Filter();
 }
