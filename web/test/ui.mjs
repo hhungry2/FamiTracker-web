@@ -9,6 +9,7 @@ import { strict as assert } from 'node:assert';
 import { COMMANDS, GROUPS, Keymap, comboOf, formatCombo } from '../html/dnft-keymap.mjs';
 import { RegisterView, CHIP_VIEWS, pitchText, noteOfFrequency, registerColor } from '../html/dnft-displays.mjs';
 import { STRINGS } from '../html/dnft-editor-strings.mjs';
+import { effectHintKey } from '../html/dnft-effect-hints.mjs';
 
 let failures = 0;
 function check(name, fn) {
@@ -176,6 +177,59 @@ check('the effect table has what the page needs: letters, names and the chips th
   assert.equal(effects.byChip[0]['F'], 1);
   assert.equal(effects.byChip[4]['E'], 40);
   assert.equal(effects.byChip[32]['W'], 33);
+});
+
+check('the hint of every effect has a text in both languages', () => {
+  const seen = new Set();
+  // every effect, with the parameters and places that make the hint differ
+  for (let effect = 1; effect <= 44; ++effect)
+    for (const param of [0, 0x10, 0x40, 0x80, 0xE0])
+      for (const [chip, channel] of [[0, 0], [0, 2], [2, 6], [16, 8], [4, 9]]) {
+        const key = effectHintKey(effect, param, { chip, channel, splitPoint: 32 });
+        assert.ok(key, `effect ${effect}`);
+        seen.add(key);
+        for (const lang of ['ja', 'en']) {
+          const text = STRINGS[lang].effectHints[key];
+          assert.ok(text, `${lang}: ${key}`);
+        }
+      }
+  // no text without an effect that has it
+  for (const lang of ['ja', 'en'])
+    for (const key of Object.keys(STRINGS[lang].effectHints))
+      assert.ok(seen.has(key) || key === 'undefined', `${lang}: ${key} is never given`);
+  assert.equal(effectHintKey(45, 0), 'undefined');
+  assert.equal(effectHintKey(0, 0), '');
+});
+
+check('the hint depends on the parameter, the chip and the channel as the desktop\'s does', () => {
+  const key = (effect, param, where = {}) => effectHintKey(effect, param, where);
+  assert.equal(key(1, 31), 'speedSpeed');
+  assert.equal(key(1, 32), 'speedTempo');
+  assert.equal(key(1, 21, { splitPoint: 21 }), 'speedTempo', 'the module\'s own split point');
+  assert.equal(key(5, 0xDF), 'lengthIndex');
+  assert.equal(key(5, 0xE0), 'lengthMode');
+  assert.equal(key(18, 0, { chip: 16 }), 'dutyN163');
+  assert.equal(key(18, 0, { chip: 2 }), 'dutyVrc7');
+  assert.equal(key(18, 0, { chip: 1 }), 'duty');
+  assert.equal(key(23, 0x80, { channel: 2 }), 'cutTriangle');
+  assert.equal(key(23, 0x80, { channel: 0 }), 'noteCut');
+  assert.equal(key(23, 0x7F, { channel: 2 }), 'noteCut');
+  assert.equal(key(24, 5, { channel: 2 }), 'retriggerTriangle');
+  assert.equal(key(24, 0, { channel: 2 }), 'retriggerTriangleOff');
+  assert.equal(key(24, 0, { channel: 4 }), 'retriggerDpcm');
+  assert.equal(key(26, 0x7F), 'fdsModDepth');
+  assert.equal(key(26, 0x80), 'fdsModRatio');
+  assert.equal(key(27, 0x0F), 'fdsModRateHi');
+  assert.equal(key(27, 0x10), 'fdsAutoMod');
+  assert.equal(key(30, 0x0F), 'envShape');
+  assert.equal(key(30, 0x10), 'envAuto');
+  assert.equal(key(38, 0x7F), 'transposeUp');
+  assert.equal(key(38, 0x80), 'transposeDown');
+  assert.equal(key(40, 0x3F), 'fdsVolumeAttack');
+  assert.equal(key(40, 0x40), 'fdsVolumeDecay');
+  // the English texts are the desktop's
+  assert.equal(STRINGS.en.effectHints.speedSpeed, 'Fxx - Set speed to XX, cancels groove. If xx>=10, tempo must be fixed.');
+  assert.equal(STRINGS.en.effectHints.harmonic, 'Kxx - Multiply frequency by XX; does not affect Ixy Auto FDS modulation');
 });
 
 if (failures) {

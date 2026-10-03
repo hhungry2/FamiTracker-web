@@ -248,7 +248,7 @@ As with players, one session drives the sound generator at a time.
   `dnft-displays.mjs`: the volume meters, the oscilloscope and spectrum, the register state;
   `dnft-keymap.mjs`: the shortcuts as a table that Configuration changes; `dnft-config.mjs`: the
   Configuration dialog; `dnft-help.mjs`: Help Topics, the effect table, About; `dnft-recent.mjs`:
-  the recent files;
+  the recent files; `dnft-effect-hints.mjs`: which hint the status line gives for an effect;
   `dnft-instrument-editor.mjs`: the instrument editor's dialog and the sequences;
   `dnft-instrument-panels.mjs`: its wave editors and the FDS, N163 and VRC7 panels;
   `dnft-dpcm.mjs`: the DPCM panel, the sample editor and the import of WAV files;
@@ -427,7 +427,9 @@ set of VRC7 patches) and Mixer (the level of each device). The sound settings ar
 engine's, and are put back with the first module the page opens. The Recent menu has the
 modules last opened or saved, with their bytes, in the browser's IndexedDB. Help has the
 keys as they are set now, the effect table (the effects the chips take, with what each
-does) and what the editor is made of.
+does) and what the editor is made of. As an effect or its parameter is typed, the status line
+says what the effect is, in the desktop's words (the English texts are its own), as the
+desktop's does; the hint depends on the parameter, the chip and the channel the effect is on.
 
 How it works
 ------------

@@ -28,6 +28,7 @@ import { SongMenu } from './dnft-song-menu.mjs';
 import { TrackerMenu } from './dnft-tracker-menu.mjs';
 import { Displays } from './dnft-displays.mjs';
 import { Keymap } from './dnft-keymap.mjs';
+import { effectHintKey } from './dnft-effect-hints.mjs';
 import { RecentFiles } from './dnft-recent.mjs';
 import { Config } from './dnft-config.mjs';
 import { STRINGS } from './dnft-editor-strings.mjs';
@@ -1245,12 +1246,27 @@ export class DnFTEditor {
         return false;
       const high = (column - 4) % 3 === 1;
       cell[8 + effect] = high ? (cell[8 + effect] & 0x0F) | value << 4 : (cell[8 + effect] & 0xF0) | value;
+      this.showEffectHint(cell, effect);
     } else {
       return false;
     }
     this.changeHere(cell);
     this.stepDown();
     return true;
+  }
+
+  // The status line says what the effect just entered is (CFamiTrackerView::GetEffectHint(),
+  // shown as an effect or its parameter is typed; not for no effect)
+  showEffectHint(cell, index) {
+    if (!cell[4 + index])
+      return;
+    const channel = this.cursor.channel;
+    const key = effectHintKey(cell[4 + index], cell[8 + index], {
+      chip: this.song.channels[channel].chip, channel, splitPoint: this.song.info.speedSplitPoint,
+    });
+    const text = this.strings.effectHints[key];
+    if (text)
+      this.message(text);
   }
 
   enterEffect(letter) {
@@ -1265,6 +1281,7 @@ export class DnFTEditor {
     cell[4 + index] = effect;
     if (!previous || defaults[effect])
       cell[8 + index] = defaults[effect];
+    this.showEffectHint(cell, index);
     this.changeHere(cell);
     this.stepDown();
     return true;
