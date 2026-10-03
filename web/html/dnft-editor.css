@@ -31,6 +31,7 @@
   --dnft-pe-play-row: rgba(90, 170, 255, 0.30);
   --dnft-pe-cursor: #d8def0;
   --dnft-pe-selection: rgba(120, 165, 255, 0.30);
+  --dnft-pe-drag: rgba(255, 184, 112, 0.38);
   --dnft-pe-separator: #282c38;
   --dnft-pe-header: #1a1d26;
   --dnft-pe-header-text: #cfd5e3;
@@ -602,6 +603,20 @@
 
 .dnft-visualizer:not([hidden]) + .dnft-volume {
   margin-left: 0;
+}
+
+/* Change all, under the frame list's head */
+.dnft-frame-option {
+  padding: 0 10px 4px;
+}
+
+/* the frame queued with Ctrl+click */
+.dnft-frame-row.is-queued {
+  background: rgba(16, 128, 16, 0.6); /* the desktop's QUEUE_COLOR */
+}
+
+.dnft-frame-row.is-queued .dnft-frame-number {
+  text-decoration: underline;
 }
 
 /* the row marker in the frame list */

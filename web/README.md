@@ -115,6 +115,8 @@ session.setMutedChannels(mask);
 session.playRow(track, frame, row);  // the row's notes with their effects (Tracker > Play Row)
 session.killSound();                 // stops the player and silences the chips (Kill Sound)
 session.takeLevelEvents();           // [{at, levels}]: the channels' volume meters, 0-15
+session.setQueueFrame(frame);        // Ctrl+click on a frame while playing: the frame the player goes to
+                                     // when the one it plays is done; -1 for none (it is taken with the jump)
 const bytes = session.save();        // Uint8Array of a .dnm file
 ```
 
@@ -129,7 +131,7 @@ The document is read and changed through the tracker's own functions:
 | instruments | `instruments()`, `instrument(i)` (also the DPCM keys, the FDS's wave, modulation and sequences, the N163's waves, the VRC7's patch and registers, by the kind), `addInstrument(chip, name)`, `removeInstrument`, `cloneInstrument`, `deepCloneInstrument`, `setInstrumentName`, `setInstrumentSequence(i, type, enabled, index)`, `sequence(instType, type, index)`, `setSequence(...)`, `freeSequence`, `nextFreeSequence(i, type)` ("Select next empty slot"), `cloneSequence(i, type)` ("Clone sequence"), `saveInstrument(i)` and `loadInstrument(bytes)` (.fti files) |
 | instrument settings | `setDpcmKey(i, key, sample, pitch, loop, delta)`, `setFdsWave`, `setFdsModulation`, `setFdsParams(i, speed, depth, delay)`, `setFdsSequence(i, type, items, loop, release, setting)`, `setN163(i, size, pos, count, waves)`, `setN163Wave(i, wave, samples)`, `setVrc7(i, patch, registers)`, `vrc7Patches()` |
 | DPCM samples | `samples()`, `sample(slot)`, `setSample(slot or -1, name, bytes)`, `removeSample(slot)`, `previewSample(bytes, offset, pitch, deltaStart)`, `stopPreview()` |
-| playing and showing | `takeLevelEvents()`, `setMeterDecayRate(0 slow, 1 fast)`, `meterDecayRate()`, `setAverageBpm(on)` (whether `state().bpm` is the average of the song so far), `registers(chip, addresses)` (a register's value and age, two bytes each), `channelFrequencies(chip, count)`, `fdsModCounter()` |
+| playing and showing | `takeLevelEvents()`, `setMeterDecayRate(0 slow, 1 fast)`, `meterDecayRate()`, `setAverageBpm(on)` (whether `state().bpm` is the average of the song so far), `registers(chip, addresses)` (a register's value and age, two bytes each), `channelFrequencies(chip, count)`, `fdsModCounter()`, `setQueueFrame(frame)` and `queueFrame()` (the frame queued, or -1; dropped when the player starts or stops) |
 | recording | `recorder()` (the channel and the settings), `setRecordChannel(channel)` (Record To Instrument: "unsupported", "instruments", "sequences" or ""), `setRecorderSettings(interval, count, reset)`, `takeRecordedInstruments()` (the slots made since the last call) |
 | sound | `soundSettings()` and `setSoundSettings(values)`: the Configuration's Sound, Mixer and Emulation pages (bass and treble filters, damping, volume, the FDS and N163 lowpass, the N163's multiplexing, the VRC7's set of patches, the level of each device in tenths of a dB). They are the engine's, for every module, until changed; changing them stops playback |
 
@@ -280,7 +282,10 @@ Ctrl+F opens Find / Replace, Alt+G Go To; Alt+T and Alt+V toggle the instrument 
 volume masks; the numeric keypad picks an instrument in the note column, and with Alt
 the edit step; Ctrl+ the keypad's + and - change the step, + and - alone the frame's
 pattern (with frames selected in the frame list, theirs). With the mouse, a click puts the cursor on a cell and a drag selects (the rows
-scroll at the top and bottom), on the row numbers whole rows; a double click selects the
+scroll at the top and bottom), on the row numbers whole rows; a press inside the selection
+(editing on) and a drag move what it holds to where it is dropped, with the cell under the
+pointer where the one taken was (Ctrl copies, Shift copies on top of what is there, Escape calls it off, and a
+click inside the selection puts the cursor there and drops the selection); a double click selects the
 channel in the frame (on the row numbers, the frame); the wheel with Ctrl transposes,
 with Shift changes the values, with both goes from frame to frame. Edits of patterns,
 frames, bookmarks and song settings can be undone, and put the cursor and the selection
@@ -314,8 +319,7 @@ cursor for the notes entered next. Split Keyboard moves the notes up to a split 
 up to two octaves, may give them an instrument of their own, and outside the edit mode
 plays them on a channel of their own. Enable MIDI takes notes from MIDI keyboards (Web
 MIDI) into the cursor's channel, two octaves down, as the desktop does; it is on again on
-the next visit when the browser does not have to ask. Dragging a selection to move it (in
-the pattern or in the frame list) is not done.
+the next visit when the browser does not have to ask.
 
 The frame list works as the desktop's frame editor. A drag selects frames and channels
 (from the frame numbers, whole frames; past the top or the bottom, the cursor and the
@@ -327,7 +331,12 @@ Cut and Delete (Del) remove the selected frames, or the cursor's, never the last
 pattern number typed, and + and -, change every pattern of the selection, Clone Patterns
 (Alt+D) copies each of them; Ctrl+Up/Down move the frame, Insert adds one, Enter goes to
 the pattern. The row after the last frame (`>>`) takes the cursor, as the desktop's does:
-Paste there adds the frames at the end, and a pattern number typed there adds a frame. The
+Paste there adds the frames at the end, and a pattern number typed there adds a frame. With
+Change all (the box under the head of the list) on, a pattern number typed, or + and -, with
+no selection go to every channel of the frame: the same number in each, or each one's own a
+step up or down. While the song plays, Ctrl+click on a frame queues it: the song goes there
+when the frame it plays is done (it shows in green, and the same frame again takes it back);
+the frame that plays is marked in the list, whether the cursor follows it or not. The
 right button opens the desktop's frame menu. While the frame list has the keyboard, the
 Edit menu's clipboard and Select commands (and Paste Special's Overwrite) are its own, as
 on the desktop; every change can be undone.

@@ -224,13 +224,27 @@ void Session::Play(int track, PlayMode mode, int frame, int row) {
 	detail::Engine &engine = GetEngine();
 	m_iTrack = track;
 	engine.view.SetSelection(frame, row);
+	theApp.GetSoundGenerator()->SetQueueFrame(-1);
 	engine.host->StartPlayer(MODES[std::clamp(static_cast<int>(mode), 0, 3)], track);
+}
+
+void Session::SetQueueFrame(int frame) {
+	if (!IsPlaying())
+		return;
+	// a frame the track does not have is no frame to go to
+	const int frames = static_cast<int>(m_pDocument->GetFrameCount(m_iTrack));
+	theApp.GetSoundGenerator()->SetQueueFrame(frame >= 0 && frame < frames ? frame : -1);
+}
+
+int Session::GetQueueFrame() const {
+	return IsPlaying() ? theApp.GetSoundGenerator()->GetQueueFrame() : -1;
 }
 
 void Session::Stop() {
 	if (!IsCurrent() || m_bWave || !IsPlaying())
 		return;
 	GetEngine().host->HaltPlayer();
+	theApp.GetSoundGenerator()->SetQueueFrame(-1);
 	// where the audio rendered from now on begins
 	m_RowEvents.push_back({m_iRendered + (m_Pending.size() - m_iPendingPos), -1, -1});
 }

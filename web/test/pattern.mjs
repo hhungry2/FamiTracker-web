@@ -10,7 +10,7 @@ import {
   FIELD, PASTE, PASTE_AT, normalizeSelection, cursorSelection, selectionLength, repeatsRows, copyCells, clearCells, paste,
   insertRows, deleteRows, interpolate, reverse, replaceInstrument, stretch, parseStretchMap, stretchTest, invertStretchMap,
   scrollValues, transpose, volumeSequence, cellText, selectionText, selectionMml, findTerm, replaceTerm, matchesTerm,
-  replaceCell, searchOrder, QueryError, nextBookmark, previousBookmark, highlightAt, highlightState, bookmarkPlace, fieldsOf,
+  replaceCell, searchOrder, QueryError, nextBookmark, previousBookmark, highlightAt, highlightState, bookmarkPlace, fieldsOf, moveCells,
 } from '../html/dnft-pattern-edit.mjs';
 import { CELL, EMPTY_CELL } from '../html/dnft-song.mjs';
 
@@ -496,6 +496,86 @@ check('bookmarks set the row highlight from their row on', () => {
   assert.equal(highlightState({ first: 3, second: 0, offset: 5 }, 2), (2 - 5 + 2 ** 32) % 3 === 0 ? 1 : 0);
   assert.equal(highlightState({ first: 4, second: 16, offset: 0 }, 16), 2);
   assert.deepEqual(bookmarkPlace(5, 70, 4, 64), { frame: 2, row: 6 });
+});
+
+// ---- dragging a selection ---------------------------------------------------------------------
+
+check('a dragged selection moves: cleared where it was, put where it is dropped', () => {
+  const track = makeTrack({});
+  track.put(0, 0, 1, cell(C, 4, 1, 15, [[EF_SPEED, 6]]));
+  track.put(0, 0, 2, cell(E, 4, 2, 9));
+  const drop = moveCells(track, sel(at(0, 1, 0, 0), at(0, 2, 0, 6)), at(0, 5, 1, 0));
+  assert.deepEqual(drop.target, { start: at(0, 5, 1, 0), end: at(0, 6, 1, 6) });
+  track.apply(drop.writes);
+  assert.equal(track.text(0, 0, 1), cellText(EMPTY_CELL, 4, false, LETTERS));
+  assert.equal(track.text(0, 0, 2), cellText(EMPTY_CELL, 4, false, LETTERS));
+  assert.deepEqual([...track.cell(0, 1, 5)], [...cell(C, 4, 1, 15, [[EF_SPEED, 6]])]);
+  assert.deepEqual([...track.cell(0, 1, 6)], [...cell(E, 4, 2, 9)]);
+});
+
+check('Ctrl copies, and Shift copies on top of what is there', () => {
+  const track = makeTrack({});
+  track.put(0, 0, 0, cell(C, 4, 1, 15));
+  track.put(0, 1, 3, cell(0, 0, 64, 7, [[EF_SPEED, 3]]));
+  const s = sel(at(0, 0, 0, 0), at(0, 0, 0, 6));
+  // a copy leaves the source
+  const copy = moveCells(track, s, at(0, 3, 1, 0), { copy: true });
+  const plain = makeTrack({});
+  plain.put(0, 0, 0, cell(C, 4, 1, 15));
+  plain.put(0, 1, 3, cell(0, 0, 64, 7, [[EF_SPEED, 3]]));
+  plain.apply(copy.writes);
+  assert.deepEqual([...plain.cell(0, 0, 0)], [...cell(C, 4, 1, 15)]);
+  // the drop replaces the cell, including its fields that were empty
+  assert.deepEqual([...plain.cell(0, 1, 3)], [...cell(C, 4, 1, 15)]);
+  // mixed: the volume and the effect the target had stay
+  const mix = moveCells(track, s, at(0, 3, 1, 0), { copy: true, mix: true });
+  track.apply(mix.writes);
+  assert.deepEqual([...track.cell(0, 1, 3)], [...cell(C, 4, 1, 7, [[EF_SPEED, 3]])]);
+  // Shift without Ctrl is still a move
+  const moved = moveCells(makeTrack({}), s, at(0, 3, 1, 0), { mix: true });
+  assert.equal(moved.writes.length, 2);
+});
+
+check('a drop where the selection is changes nothing; one that overlaps it moves the rows', () => {
+  const track = makeTrack({});
+  track.put(0, 0, 1, cell(C, 4, 1, 15));
+  track.put(0, 0, 2, cell(E, 4, 2, 9));
+  const s = sel(at(0, 1, 0, 0), at(0, 2, 0, 6));
+  assert.equal(moveCells(track, s, at(0, 1, 0, 0)), null);
+  track.apply(moveCells(track, s, at(0, 2, 0, 0)).writes);
+  assert.equal(track.text(0, 0, 1), cellText(EMPTY_CELL, 4, false, LETTERS));
+  assert.deepEqual([...track.cell(0, 0, 2)], [...cell(C, 4, 1, 15)]);
+  assert.deepEqual([...track.cell(0, 0, 3)], [...cell(E, 4, 2, 9)]);
+});
+
+check('an effect column of one channel can be dropped on another effect column', () => {
+  const track = makeTrack({ effColumns: [3, 3, 3] });
+  track.put(0, 0, 0, cell(C, 4, 1, 15, [[EF_SPEED, 6], [EF_ARPEGGIO, 0x37]]));
+  // the first effect column alone
+  const s = sel(at(0, 0, 0, 4), at(0, 0, 0, 6));
+  assert.equal(s.start.column, 4);
+  // dropped on the second one, in the same row
+  const drop = moveCells(track, s, at(0, 0, 0, 7));
+  assert.deepEqual(drop.target, { start: at(0, 0, 0, 7), end: at(0, 0, 0, 9) });
+  track.apply(drop.writes);
+  const c = track.cell(0, 0, 0);
+  assert.equal(c[4], 0, 'the first effect is gone');
+  assert.deepEqual([c[5], c[9]], [EF_SPEED, 6], 'and is in the second');
+  // dropped outside the effect columns it goes to the first one
+  const back = moveCells(track, sel(at(0, 0, 0, 7), at(0, 0, 0, 9)), at(0, 0, 0, 0));
+  assert.equal(back.target.start.column, 4);
+});
+
+check('a drop at the end of the frame stops there, and goes on into the next frame with overflow', () => {
+  const track = makeTrack({});
+  for (let r = 0; r < 3; ++r)
+    track.put(0, 0, r, cell(C + r, 4, 1, 15));
+  const s = sel(at(0, 0, 0, 0), at(0, 2, 0, 6));
+  const stopped = moveCells(track, s, at(0, 6, 1, 0));
+  assert.deepEqual(stopped.writes.filter(w => w.channel === 1).map(w => w.row).sort(), [6, 7]);
+  const through = moveCells(track, s, at(0, 6, 1, 0), { overflow: true });
+  assert.deepEqual(through.writes.filter(w => w.channel === 1).map(w => [w.pattern, w.row]).sort(), [[0, 6], [0, 7], [1, 0]]);
+  assert.deepEqual(through.target.end, { frame: 1, row: 0, channel: 1, column: 6 });
 });
 
 if (failures) {

@@ -88,6 +88,8 @@ export const STRINGS = {
     moveDown: '下へ',
     patternDown: 'パターン番号を下げる',
     patternUp: 'パターン番号を上げる',
+    changeAll: '全チャンネル',
+    changeAllHint: 'パターン番号の入力と ＋／－ を、カーソルのフレームの全チャンネルに適用する（選択があるときは選択だけ）',
     // the frame list's menu and clipboard (dnft-frame-editor.mjs)
     frameInsert: 'フレームを追加',
     frameRemove: 'フレームを削除',
@@ -1026,6 +1028,8 @@ export const STRINGS = {
     moveDown: 'Down',
     patternDown: 'Previous pattern number',
     patternUp: 'Next pattern number',
+    changeAll: 'Change all',
+    changeAllHint: 'Typed pattern numbers and + / - go to every channel of the frame at the cursor (a selection takes them instead)',
     // the frame list's menu and clipboard (dnft-frame-editor.mjs)
     frameInsert: 'Insert Frame',
     frameRemove: 'Remove Frame',

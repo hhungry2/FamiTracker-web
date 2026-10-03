@@ -246,6 +246,15 @@ public:
 		m_pSession->PlayRow(track, frame, row);
 	}
 
+	//! Ctrl+click on a frame of the frame list while playing: the frame to go to next, or -1
+	void setQueueFrame(int frame) {
+		m_pSession->SetQueueFrame(frame);
+	}
+
+	int queueFrame() const {
+		return m_pSession->GetQueueFrame();
+	}
+
 	//! Tracker > Kill Sound
 	void killSound() {
 		m_pSession->KillSound();
@@ -1969,6 +1978,8 @@ EMSCRIPTEN_BINDINGS(dnft_session) {
 		.function("noteOff", &EditSession::noteOff)
 		.function("setMutedChannels", &EditSession::setMutedChannels)
 		.function("playRow", &EditSession::playRow)
+		.function("setQueueFrame", &EditSession::setQueueFrame)
+		.function("queueFrame", &EditSession::queueFrame)
 		.function("killSound", &EditSession::killSound)
 		.function("setMeterDecayRate", &EditSession::setMeterDecayRate)
 		.function("meterDecayRate", &EditSession::meterDecayRate)

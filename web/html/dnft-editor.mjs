@@ -39,6 +39,8 @@ const ENGINE_RATE_MIN = 16;
 const ENGINE_RATE_MAX = 400;
 // Characters of a comment, well within what a module file holds (session_bindings.cpp)
 const COMMENT_MAX = 20000;
+// How far in pixels the pointer goes before a press in the selection drags it (SM_CXDRAG)
+const DRAG_DISTANCE = 4;
 
 const CHIPS = [['VRC6', CHIP.VRC6], ['VRC7', CHIP.VRC7], ['FDS', CHIP.FDS], ['MMC5', CHIP.MMC5], ['N163', CHIP.N163], ['5B', CHIP.S5B]];
 
@@ -111,10 +113,13 @@ export class DnFTEditor {
     this.selStart = null;       // the place the selection was started at, and its other end
     this.selEnd = null;
     this.block = false;         // made with Alt+B / Alt+E: moving the cursor keeps it
+    this.dragTarget = null;     // where a dragged selection would land (a selection)
     this.editMode = true;
     this.follow = true;
     this.playing = false;
     this.play = null;           // {frame, row} heard now while the song plays
+    this.playingTrack = 0;      // the track it plays
+    this.queueFrame = -1;       // the frame queued with Ctrl+click: the one the song goes to next
     this.muted = [];
     this.octave = 3;
     this.step = 1;
@@ -238,6 +243,7 @@ export class DnFTEditor {
                 <button type="button" class="dnft-icon-button" data-action="pattern-up">+</button>
               </span>
             </header>
+            <label class="dnft-check dnft-mini-check dnft-frame-option"><input type="checkbox" data-role="change-all"> <span data-text="changeAll"></span></label>
             <div class="dnft-frame-list" tabindex="0"></div>
           </section>
           <section class="dnft-panel dnft-instruments-panel">
@@ -348,6 +354,7 @@ export class DnFTEditor {
     $('[data-setting="speed"]').title = t.speedHint;
     $('[data-setting="speed"]').setAttribute('aria-label', t.speed);
     $('[data-role="groove-mode"]').closest('label').title = t.grooveModeHint;
+    $('[data-role="change-all"]').closest('label').title = t.changeAllHint;
     $('[data-setting="rows"]').title = t.rowsHint;
     $('[data-setting="beat"]').title = t.highlightHint;
     $('[data-setting="bar"]').title = t.highlightHint;
@@ -537,7 +544,15 @@ export class DnFTEditor {
     scroller.tabIndex = 0;
     scroller.addEventListener('pointerdown', e => this.onGridPointerDown(e));
     scroller.addEventListener('pointermove', e => this.onGridPointerMove(e));
-    scroller.addEventListener('pointerup', () => this.endDrag(true));
+    scroller.addEventListener('pointerup', e => {
+      // the keys held as the button is let go decide between a move and a copy
+      if (this.drag?.dropping) {
+        this.drag.copy = e.ctrlKey || e.metaKey;
+        this.drag.mix = e.shiftKey;
+        this.dragSelection();
+      }
+      this.endDrag(true);
+    });
     scroller.addEventListener('pointercancel', () => this.endDrag());
     scroller.addEventListener('dblclick', e => this.onGridDoubleClick(e));
     scroller.addEventListener('contextmenu', e => this.onGridContextMenu(e));
@@ -776,7 +791,14 @@ export class DnFTEditor {
     this.displays.tick();
     if (samePlace(play, this.play))
       return;
+    const before = this.play;
     this.play = play;
+    // the queued frame is taken when the song jumps to it (or, if it is the one playing, when it starts over)
+    const queued = this.queueFrame;
+    if (queued >= 0 && play && play.frame === queued && (!before || before.frame !== play.frame || play.row < before.row))
+      this.queueFrame = -1;
+    if (!before || !play || before.frame !== play.frame || queued !== this.queueFrame)
+      this.frameEditor.renderPlayback();
     this.trackerMenu.onPlayRow(play);
     if (play && this.playing && this.follow && !this.dragging) {
       const frameChanged = play.frame !== this.cursor.frame;
@@ -968,6 +990,8 @@ export class DnFTEditor {
     this.releaseHeldNotes();
     this.session.play(this.track, mode, place.frame, place.row);
     this.playing = true;
+    this.playingTrack = this.track;
+    this.queueFrame = -1;
     this.renderToolbar();
     this.trackerMenu.startPolling();
   }
@@ -976,8 +1000,26 @@ export class DnFTEditor {
     if (this.playing)
       this.session?.stop();
     this.playing = false;
+    this.queueFrame = -1;
+    this.frameEditor.renderPlayback();
     this.renderToolbar();
     this.updateStatus();
+  }
+
+  // Ctrl+click on a frame while the song plays (CFrameEditor::OnLButtonUp()): the song goes
+  // to it when the frame it plays is done; the same frame again takes it back
+  toggleQueue(frame) {
+    if (!this.playing || this.track !== this.playingTrack)
+      return;
+    this.queueFrame = frame === this.queueFrame ? -1 : frame;
+    this.session.send('setQueueFrame', this.queueFrame);
+    this.frameEditor.renderPlayback();
+  }
+
+  // Whether the pattern numbers typed or stepped in the frame list go to every channel of
+  // the frame (the desktop's Change all checkbox, which a selection overrides)
+  get changeAll() {
+    return this.root.querySelector('[data-role="change-all"]').checked;
   }
 
   togglePlay() {
@@ -2211,7 +2253,11 @@ export class DnFTEditor {
       case 'Tab': done(); return this.moveChannel(shift ? -1 : 1);
       case 'Space': done(); return this.setEditMode(!this.editMode);
       case 'Enter': case 'NumpadEnter': done(); return this.togglePlay();
-      case 'Escape': done(); return this.deselect();
+      case 'Escape':
+        done();
+        // while a selection is being dragged, the drag is called off, and the selection with it
+        this.endDrag();
+        return this.deselect();
       case 'NumpadDivide': done(); return this.setOctave(this.octave - 1);
       case 'NumpadMultiply': done(); return this.setOctave(this.octave + 1);
       // the desktop's Increase pattern / Decrease pattern
@@ -2292,6 +2338,10 @@ export class DnFTEditor {
     } else if (e.shiftKey) {
       this.select(this.selection ? this.selStart : this.cursor, place, this.block);
       this.drag = { start: this.selStart, moved: true };
+    } else if (this.editMode && this.inSelection(place)) {
+      // in the selection: a click puts the cursor there and drops it, a drag moves what it
+      // holds (Ctrl copies, Shift copies on top)
+      this.drag = { dropping: true, grab: place, click: place, origin: { x: e.clientX, y: e.clientY } };
     } else {
       this.deselect();
       this.drag = { start: place, click: place };
@@ -2301,17 +2351,80 @@ export class DnFTEditor {
     this.view.scroller.setPointerCapture(e.pointerId);
   }
 
+  // Whether a cell of the pattern (a place with a channel) is in the selection's fields
+  inSelection(place) {
+    const sel = this.selection;
+    return !!sel && place.channel !== null && edit.inRows(sel, place.frame, place.row) &&
+      edit.fieldSelected(sel, place.channel, fieldOfColumn(place.column));
+  }
+
   onGridPointerMove(e) {
     if (!this.drag)
       return;
     this.drag.pointer = { x: e.clientX, y: e.clientY };
+    if (this.drag.dropping) {
+      this.drag.copy = e.ctrlKey || e.metaKey;
+      this.drag.mix = e.shiftKey;
+    }
     this.dragTo();
+    if (!this.drag)
+      return;
+    if (this.drag.dropping)
+      this.view.canvas.style.cursor = this.drag.moved ? (this.drag.copy ? 'copy' : 'move') : '';
     this.autoScroll();
+  }
+
+  // Where the selection would land, with the cell under the pointer where the one it was
+  // taken by is: the same number of rows and channels from it, kept inside the track
+  // (CPatternEditor::UpdateDrag())
+  dropPlace() {
+    const { drag } = this;
+    const place = this.view.hit(drag.pointer.x, drag.pointer.y, { clamp: true });
+    if (!place)
+      return null;
+    const sel = this.selection;
+    const { rows, frames } = this.tr;
+    const width = sel.end.channel - sel.start.channel + 1;
+    const grabbed = (drag.grab.frame - sel.start.frame) * rows + drag.grab.row - sel.start.row;
+    const at = Math.max(0, Math.min(rows * frames - 1, place.frame * rows + place.row - grabbed));
+    return {
+      frame: Math.floor(at / rows), row: at % rows, column: place.column,
+      channel: Math.max(0, Math.min(this.channelCount - width, place.channel - (drag.grab.channel - sel.start.channel))),
+    };
+  }
+
+  // The drag of the selection: its target shows once the pointer has gone a few pixels
+  // (the system's drag distance), and goes if the drop would change nothing
+  dragSelection() {
+    const { drag } = this;
+    if (!drag.moved) {
+      if (Math.hypot(drag.pointer.x - drag.origin.x, drag.pointer.y - drag.origin.y) < DRAG_DISTANCE)
+        return;
+      if (edit.repeatsRows(this.trackView(), this.selection)) {
+        this.message(this.strings.repeatedRows, true);
+        this.endDrag();
+        return;
+      }
+      drag.moved = true;
+    }
+    const to = this.dropPlace();
+    const key = to && `${to.frame}:${to.row}:${to.channel}:${to.column}:${drag.copy}:${drag.mix}`;
+    if (key === drag.key)
+      return;
+    drag.key = key;
+    const drop = to && edit.moveCells(this.trackView(), this.selection, to, { copy: drag.copy, mix: drag.mix, overflow: this.overflowPaste });
+    drag.drop = drop;
+    this.dragTarget = drop?.target ?? null;
+    this.view.invalidate();
   }
 
   // The selection from where the drag started to the cell under the pointer
   dragTo() {
     const { drag } = this;
+    if (drag.dropping) {
+      this.dragSelection();
+      return;
+    }
     const place = this.view.hit(drag.pointer.x, drag.pointer.y, { clamp: true });
     if (!place)
       return;
@@ -2361,8 +2474,32 @@ export class DnFTEditor {
       clearInterval(drag.timer);
     this.drag = null;
     this.dragging = false;
+    if (drag?.dropping) {
+      this.view.canvas.style.cursor = '';
+      this.dragTarget = null;
+      this.view.invalidate();
+      if (!click)
+        return;
+      if (!drag.moved) {
+        // a click in the selection: it goes, and the cursor is where it was
+        this.deselect();
+        this.setCursor(drag.click);
+      } else if (drag.drop) {
+        this.drop(drag.drop);
+      }
+      return;
+    }
     if (click && drag?.click && !drag.moved)
       this.setCursor(drag.click);
+  }
+
+  // The selection dropped (CPActionDragAndDrop): one action, which puts the cursor at the
+  // top of what was dropped and selects it
+  drop({ writes, target }) {
+    const { frame, row, channel, column } = target.start;
+    const after = { cursor: { frame, row, channel, column }, selStart: target.start, selEnd: target.end, block: false };
+    if (this.applyWrites(writes, after))
+      this.restoreEditState(after);
   }
 
   // A double click selects the channel in the frame; on the row numbers, the frame

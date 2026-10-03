@@ -397,6 +397,12 @@ export class FrameEditor {
     const editor = this.editor;
     this.digits = '';
     const sel = this.selection;
+    if (!sel && editor.changeAll) {
+      // every channel's own pattern, a step on (CFActionChangePatternAll)
+      const row = wholeFrames(editor.cursor.frame, editor.cursor.frame, editor.channelCount);
+      this.setBlock(row, steppedPatterns(editor.tr.frameList, editor.channelCount, row, delta));
+      return;
+    }
     if (!sel) {
       const { frame, channel } = editor.cursor;
       editor.setFramePattern(frame, channel, editor.patternOf(frame, channel) + delta);
@@ -426,6 +432,11 @@ export class FrameEditor {
     if (this.digits.length === 2)
       this.digits = '';
     const sel = this.selection;
+    if (!sel && editor.changeAll) {
+      // the same pattern in every channel of the frame (CFActionSetPatternAll)
+      this.setBlock(wholeFrames(editor.cursor.frame, editor.cursor.frame, editor.channelCount), new Uint8Array(editor.channelCount).fill(pattern));
+      return;
+    }
     if (!sel) {
       editor.setFramePattern(editor.cursor.frame, editor.cursor.channel, pattern);
       return;
@@ -520,6 +531,12 @@ export class FrameEditor {
     e.preventDefault();
     this.focus();
     this.digits = '';
+    // Ctrl+click while the song plays: the frame is queued, the cursor stays
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && editor.playing) {
+      if (place.frame < editor.tr.frames)
+        editor.toggleQueue(place.frame);
+      return;
+    }
     const last = editor.channelCount - 1;
     const frame = Math.min(place.frame, editor.tr.frames - 1);
     if (e.shiftKey) {
@@ -652,7 +669,8 @@ export class FrameEditor {
       row.className = 'dnft-frame-row';
       row.dataset.index = f;
       row.classList.toggle('is-current', f === current);
-      row.classList.toggle('is-playing', !!editor.play && editor.play.frame === f);
+      row.classList.toggle('is-playing', this.isPlaying(f));
+      row.classList.toggle('is-queued', editor.queueFrame === f);
       row.classList.toggle('is-bookmarked', marked.has(f));
       row.classList.toggle('is-marker', editor.marker?.frame === f);
       const number = document.createElement('span');
@@ -699,6 +717,23 @@ export class FrameEditor {
         list.scrollTop = top;
       else if (bottom > list.scrollTop + list.clientHeight)
         list.scrollTop = bottom - list.clientHeight;
+    }
+  }
+
+  // The frame playing, in the track that plays (the desktop's play cursor, which follow mode
+  // leaves to the cursor itself)
+  isPlaying(frame) {
+    const editor = this.editor;
+    return !!editor.play && editor.playing && editor.track === editor.playingTrack && editor.play.frame === frame;
+  }
+
+  // Only the marks of the frame playing and of the frame queued, as they move
+  renderPlayback() {
+    const editor = this.editor;
+    for (const row of this.list.children) {
+      const frame = Number(row.dataset.index);
+      row.classList.toggle('is-playing', !row.classList.contains('is-end') && this.isPlaying(frame));
+      row.classList.toggle('is-queued', editor.queueFrame === frame);
     }
   }
 

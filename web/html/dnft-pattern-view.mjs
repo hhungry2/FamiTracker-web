@@ -106,7 +106,8 @@ export class PatternView {
       text: v('--dnft-pe-note'), instrument: v('--dnft-pe-instrument'), volume: v('--dnft-pe-volume'),
       effect: v('--dnft-pe-effect'), dim: v('--dnft-pe-dim'), rowNumber: v('--dnft-pe-row-number'),
       cursorRow: v('--dnft-pe-cursor-row'), editRow: v('--dnft-pe-edit-row'), playRow: v('--dnft-pe-play-row'),
-      cursor: v('--dnft-pe-cursor'), selection: v('--dnft-pe-selection'), separator: v('--dnft-pe-separator'),
+      cursor: v('--dnft-pe-cursor'), selection: v('--dnft-pe-selection'), drag: v('--dnft-pe-drag') || v('--dnft-pe-selection'),
+      separator: v('--dnft-pe-separator'),
       bookmark: v('--dnft-pe-bookmark'), marker: v('--dnft-pe-marker') || v('--dnft-pe-cursor'),
     };
     const size = parseFloat(style.fontSize) || 13;
@@ -335,13 +336,16 @@ export class PatternView {
     ctx.fillRect(this.gutter - 1, 0, 1, this.height);
 
     // selection (which may go on into other frames), then the cursor
-    if (selection) {
-      const x1 = Math.max(this.gutter, this.columnX(selection.start.channel, selection.start.column)[0]);
-      const [x2, w2] = this.columnX(selection.end.channel, selection.end.column);
-      ctx.fillStyle = c.selection;
+    // (and, as a selection is dragged, where it would land)
+    for (const [area, colour] of [[selection, c.selection], [this.editor.dragTarget, c.drag]]) {
+      if (!area)
+        continue;
+      const x1 = Math.max(this.gutter, this.columnX(area.start.channel, area.start.column)[0]);
+      const [x2, w2] = this.columnX(area.end.channel, area.end.column);
+      ctx.fillStyle = colour;
       if (x2 + w2 > x1)
         places.forEach((place, line) => {
-          if (place && inRows(selection, place.frame, place.row))
+          if (place && inRows(area, place.frame, place.row))
             ctx.fillRect(x1, line * rh, x2 + w2 - x1, rh);
         });
     }

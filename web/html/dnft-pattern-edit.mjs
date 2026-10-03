@@ -325,6 +325,39 @@ export function paste(track, clip, { mode = PASTE.DEFAULT, at = PASTE_AT.CURSOR,
   return { writes: writes.list(), target, repeated };
 }
 
+// Dragging a selection and dropping it (CPatternEditor::PerformDrop(), CPActionDragAndDrop):
+// the cells of `sel` go with their top left corner at `to` ({frame, row, channel, column}; the
+// column matters only to the effect columns of one channel, which can go into another one).
+// Moving clears them first; `copy` (Ctrl) leaves them, and `mix` (Shift, with a copy) keeps
+// what the target has. {writes, target, repeated} as paste() has them, with the target as the
+// selection that shows what was dropped; null for a drop where the selection already is.
+export function moveCells(track, sel, to, { copy = false, mix = false, overflow = false } = {}) {
+  const clip = copyCells(track, sel, sel.start);
+  let column = firstColumn(clip.startField);
+  if (clip.channels === 1 && clip.startField >= FIELD.EFFECT) {
+    const field = to.column == null ? -1 : fieldOfColumn(to.column);
+    column = firstColumn(Math.max(field, FIELD.EFFECT));
+  }
+  if (to.frame === sel.start.frame && to.row === sel.start.row && to.channel === sel.start.channel && column === sel.start.column)
+    return null;
+  const key = (channel, pattern, row) => `${channel}:${pattern}:${row}`;
+  const cleared = copy ? [] : clearCells(track, sel);
+  const left = new Map(cleared.map(w => [key(w.channel, w.pattern, w.row), w.cell]));
+  // the paste sees the cells as the move has left them
+  const seen = {
+    ...track,
+    cell: (frame, channel, row) => left.get(key(channel, track.pattern(frame, channel), row)) ?? track.cell(frame, channel, row),
+  };
+  const { writes, target, repeated } = paste(seen, clip, {
+    mode: copy && mix ? PASTE.MIX : PASTE.DEFAULT, at: PASTE_AT.CURSOR, overflow,
+    cursor: { frame: to.frame, row: to.row, channel: to.channel, column },
+  });
+  const all = new Map(cleared.map(w => [key(w.channel, w.pattern, w.row), w]));
+  for (const w of writes)
+    all.set(key(w.channel, w.pattern, w.row), w);
+  return { writes: [...all.values()], target, repeated };
+}
+
 // Insert with a selection (CPActionInsertAtSel): a row of nothing at the top of the
 // selection's columns; what is below moves down, as far as the end of the selection's last
 // frame

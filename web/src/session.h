@@ -98,6 +98,11 @@ public:
 	void PlayRow(int track, int frame, int row);
 	// Tracker > Kill Sound: stops the player and silences the APU and the channels.
 	void KillSound();
+	// Ctrl+click on a frame while playing (CFrameEditor::OnLButtonUp()): the frame the player
+	// goes to when the one it plays ends, or -1 for none. It is taken with the jump
+	// (CSoundGen::PlayerStepFrame()) and is dropped when the player starts or stops.
+	void SetQueueFrame(int frame);
+	int GetQueueFrame() const;
 	// View > Meter Decay Rate (decay_rate_t: 0 slow, 1 fast)
 	void SetMeterDecayRate(int rate);
 	int GetMeterDecayRate() const { return m_iDecayRate; }

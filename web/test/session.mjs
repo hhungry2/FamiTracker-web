@@ -465,6 +465,47 @@ check('Tracker > Play Row plays the row with its effects, and Kill Sound silence
   s.delete();
 });
 
+check('a queued frame is where the player goes when the frame it plays is done', () => {
+  const s = dnft.createSession(RATE);
+  s.setPatternLength(0, 8);
+  assert.ok(s.insertFrames(0, 1, 3));
+  const frames = () => {
+    const seen = [];
+    for (const e of s.takeRowEvents())
+      if (e.frame >= 0 && seen.at(-1) !== e.frame)
+        seen.push(e.frame);
+    return seen;
+  };
+  // a row is 6 ticks: 8 rows of a frame are 0.8 s
+  s.play(0, 0, 0, 0);
+  render(s, 3500);
+  assert.deepEqual(frames(), [0, 1, 2, 3, 0], 'on its own, the frames in order');
+  // queued: from frame 0 to 3, then on from there
+  s.play(0, 0, 0, 0);
+  assert.equal(s.queueFrame(), -1, 'starting drops what was queued');
+  s.setQueueFrame(3);
+  assert.equal(s.queueFrame(), 3);
+  render(s, 2500);
+  assert.deepEqual(frames(), [0, 3, 0, 1], 'frame 3 follows frame 0, then the song wraps');
+  assert.equal(s.queueFrame(), -1, 'it was taken');
+  // a frame the track does not have, and none while it does not play
+  s.setQueueFrame(9);
+  assert.equal(s.queueFrame(), -1);
+  s.setQueueFrame(2);
+  s.stop();
+  assert.equal(s.queueFrame(), -1, 'stopping drops it');
+  s.setQueueFrame(2);
+  assert.equal(s.queueFrame(), -1, 'nothing to queue on when stopped');
+  // the same frame again: the frame repeats
+  s.play(0, 2, 2, 0);  // from the cursor
+  s.setQueueFrame(2);
+  render(s, 2200);
+  const events = s.takeRowEvents();
+  assert.equal(events.filter(e => e.frame === 2 && e.row === 0).length, 2, 'frame 2 starts twice');
+  assert.deepEqual([...new Set(events.filter(e => e.frame >= 0).map(e => e.frame))], [2, 3]);
+  s.delete();
+});
+
 check('the register state and pitches of the chips', () => {
   const s = dnft.createSession(RATE);
   s.noteOn(0, 10, 4, 0, 16);
