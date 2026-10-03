@@ -1033,12 +1033,8 @@ export class PatternMenu {
     }
     this.midi.access = access;
     this.midi.enabled = true;
-    const listen = () => {
-      for (const input of access.inputs.values())
-        input.onmidimessage = e => this.onMidiMessage(e.data);
-    };
-    listen();
-    access.onstatechange = () => listen();
+    this.listenMidi();
+    access.onstatechange = () => this.listenMidi();
     try {
       localStorage.setItem(MIDI_KEY, '1');
     } catch {
@@ -1048,6 +1044,23 @@ export class PatternMenu {
       const names = [...access.inputs.values()].map(input => input.name).join(', ');
       editor.message(names ? t.midiOn + names : t.midiNoDevices);
     }
+  }
+
+  // The input the Configuration chose, or all of them
+  listenMidi() {
+    const access = this.midi.access;
+    if (!access)
+      return;
+    const chosen = this.editor.config.get('midiInput');
+    const inputs = [...access.inputs.values()];
+    const use = inputs.some(input => input.id === chosen) ? inputs.filter(input => input.id === chosen) : inputs;
+    for (const input of inputs)
+      input.onmidimessage = use.includes(input) ? e => this.onMidiMessage(e.data) : null;
+  }
+
+  // The inputs there are, for the Configuration: [{id, name}]
+  midiInputs() {
+    return this.midi.access ? [...this.midi.access.inputs.values()].map(({ id, name }) => ({ id, name })) : [];
   }
 
   stopMidi() {
@@ -1084,17 +1097,20 @@ export class PatternMenu {
   onMidiMessage(data) {
     const [status, key, velocity] = data;
     const type = status & 0xF0;
-    if (!this.editor.song)
+    const editor = this.editor;
+    if (!editor.song)
       return;
+    // Map MIDI channels to NES channels: channel n plays on the module's channel n, as far as it goes
+    const channel = editor.config.get('midiChannelMap') ? Math.min(status & 0x0F, editor.channelCount - 1) : editor.cursor.channel;
     if (type === 0x90 && velocity > 0)
-      this.midiNoteOn(key, velocity);
+      this.midiNoteOn(key, velocity, channel);
     else if (type === 0x80 || type === 0x90)
-      this.midiNoteOff(key);
+      this.midiNoteOff(key, channel);
   }
 
   // A key of a MIDI keyboard, two octaves down, in the cursor's channel: played, and entered
   // in the edit mode (CFamiTrackerView::TriggerMIDINote())
-  midiNoteOn(key, velocity) {
+  midiNoteOn(key, velocity, channel = this.editor.cursor.channel) {
     const t = this.strings;
     const editor = this.editor;
     const midi = key - 24;
@@ -1102,17 +1118,21 @@ export class PatternMenu {
       return;
     const value = Math.min(midi, OCTAVES * 12 - 1);
     const note = value % 12 + 1, octave = Math.floor(value / 12);
+    // Record velocities: the volume is the velocity's eighth, as the desktop's note does (a velocity
+    // of 127 leaves the volume as it was)
+    const volume = editor.config.get('midiVelocity') && velocity + 1 < 128 ? Math.floor((velocity + 1) / 8) : null;
     if (editor.previews())
-      this.midi.held.set(key, editor.noteOn(editor.cursor.channel, note, octave));
+      this.midi.held.set(`${channel}:${key}`, editor.noteOn(channel, note, octave, editor.config.get('midiVelocity') ? Math.floor(velocity / 8) : undefined));
     if (editor.editMode)
-      editor.enterNote(note, octave, editor.cursor.column === 0);
+      editor.enterNote(note, octave, editor.cursor.column === 0, volume, channel);
     editor.message(t.midiNote.replace('%1', NOTE_NAMES[note - 1]).replace('%2', octave).replace('%3', velocity));
   }
 
-  midiNoteOff(key) {
-    const channel = this.midi.held.get(key);
+  midiNoteOff(key, mapped = this.editor.cursor.channel) {
+    const held = `${mapped}:${key}`;
+    const channel = this.midi.held.get(held);
     if (channel !== undefined) {
-      this.midi.held.delete(key);
+      this.midi.held.delete(held);
       this.editor.noteOff(channel);
     }
   }

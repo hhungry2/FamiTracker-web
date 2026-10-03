@@ -125,7 +125,7 @@ The document is read and changed through the tracker's own functions:
 | | |
 | --- | --- |
 | module | `info()` (title, chips, channels, tracks, comment, engineSpeed...), `setTitle`, `setArtist`, `setCopyright`, `setComment(text, showOnOpen)`, `setExpansion(chips, n163Channels)`, `setMachine(pal)`, `setEngineSpeed(hz)` (0: the machine's), `setVibratoStyle(newStyle)`, `setLinearPitch(enable)`, `detune()`, `setDetune(offsets, semitone, cent)` (Detune Settings), `grooves()`, `setGrooves(list)` (Groove Settings), `mixing()`, `setMixing(levels, hardwareMixing)` (the device mix offsets), `opll()`, `setOpll(external, patches, names)` (the VRC7's patches), `removeUnusedInstruments`, `removeUnusedPatterns`, `removeUnusedSamples` (Cleanup) |
-| tracks | `track(t)` (frames, rows, speed, tempo, highlight, effColumns, frameList, bookmarks), `addTrack`, `removeTrack`, `setTrackTitle`, `setPatternLength`, `setFrameCount`, `setSpeed`, `setTempo`, `setHighlight`, `setEffColumns`, `setGrooveMode(t, groove)`, `moveTrack(t, up)`, `songLength(t)` (intro and loop, in seconds), `bookmarks(t)` and `setBookmarks(t, list)` (frame, row, name, highlight, persist), `swapChannels(t, a, b)` (Swap Channels) |
+| tracks | `track(t)` (frames, rows, speed, tempo, highlight, effColumns, frameList, bookmarks), `addTrack`, `removeTrack`, `setTrackTitle`, `setPatternLength`, `setFrameCount`, `setSpeed`, `setTempo` (0 is the fixed tempo), `setHighlight`, `setEffColumns`, `setGrooveMode(t, groove)`, `moveTrack(t, up)`, `songLength(t)` (intro and loop, in seconds), `bookmarks(t)` and `setBookmarks(t, list)` (frame, row, name, highlight, persist), `swapChannels(t, a, b)` (Swap Channels) |
 | patterns | `pattern(t, channel, pattern)`, `patterns(t)` (every one with something in it), `setCells(t, channel, pattern, row, cells)`, `clearPatterns(t)`, `populateUniquePatterns(t)`, `transposeSong(t, all, semitones, excluded)` (Transpose Song: returns what changed) and `setNotes(changes, after)` (to undo and redo it) |
 | frames | `setFramePattern`, `setFrameList`, `insertFrame`, `removeFrame`, `duplicateFrame`, `cloneFrame`, `moveFrame`, `freePattern`; for the frame editor's clipboard, `insertFrames(t, frame, count)`, `deleteFrames(t, frame, count)` (never the last frame), `setFramePatterns(t, frame, channel, channels, list)` (a block of the frame list) and `clonePatterns(t, frame0, frame1, channel0, channel1)` (each pattern the block plays, to a free number) |
 | instruments | `instruments()`, `instrument(i)` (also the DPCM keys, the FDS's wave, modulation and sequences, the N163's waves, the VRC7's patch and registers, by the kind), `addInstrument(chip, name)`, `removeInstrument`, `cloneInstrument`, `deepCloneInstrument`, `setInstrumentName`, `setInstrumentSequence(i, type, enabled, index)`, `sequence(instType, type, index)`, `setSequence(...)`, `freeSequence`, `nextFreeSequence(i, type)` ("Select next empty slot"), `cloneSequence(i, type)` ("Clone sequence"), `saveInstrument(i)` and `loadInstrument(bytes)` (.fti files) |
@@ -133,7 +133,7 @@ The document is read and changed through the tracker's own functions:
 | DPCM samples | `samples()`, `sample(slot)`, `setSample(slot or -1, name, bytes)`, `removeSample(slot)`, `previewSample(bytes, offset, pitch, deltaStart)`, `stopPreview()` |
 | playing and showing | `takeLevelEvents()`, `setMeterDecayRate(0 slow, 1 fast)`, `meterDecayRate()`, `setAverageBpm(on)` (whether `state().bpm` is the average of the song so far), `registers(chip, addresses)` (a register's value and age, two bytes each), `channelFrequencies(chip, count)`, `fdsModCounter()`, `setQueueFrame(frame)` and `queueFrame()` (the frame queued, or -1; dropped when the player starts or stops) |
 | recording | `recorder()` (the channel and the settings), `setRecordChannel(channel)` (Record To Instrument: "unsupported", "instruments", "sequences" or ""), `setRecorderSettings(interval, count, reset)`, `takeRecordedInstruments()` (the slots made since the last call) |
-| sound | `soundSettings()` and `setSoundSettings(values)`: the Configuration's Sound, Mixer and Emulation pages (bass and treble filters, damping, volume, the FDS and N163 lowpass, the N163's multiplexing, the VRC7's set of patches, the level of each device in tenths of a dB). They are the engine's, for every module, until changed; changing them stops playback |
+| sound | `soundSettings()` and `setSoundSettings(values)`: the Configuration's Sound, Mixer and Emulation pages (bass and treble filters, damping, volume, the FDS and N163 lowpass, `disableN163Multiplexing` (the desktop's "Disable multiplexing", which is on by default: the N163's channels are mixed linearly), the VRC7's set of patches, the level of each device in tenths of a dB). They are the engine's, for every module, until changed; changing them stops playback |
 
 The meters' levels come with the tick that changed one, at the output frame its audio begins at
 (the editor draws a level when the audio has reached it); the register view asks for the registers
@@ -401,7 +401,35 @@ which a browser may keep for its tools: the menu has it too). Record To Instrume
 cursor's channel; the next playback reads its registers tick by tick into the volume,
 arpeggio, pitch and duty sequences of new instruments (the FDS's and the N163's waves too),
 which join the module as it goes, and the header of the channel shows that it is armed.
-The DPCM and VRC7 cannot be recorded, as on the desktop.
+The DPCM and VRC7 cannot be recorded, as on the desktop. The right button on a channel's name
+opens the desktop's header menu (mute or solo the channel or its chip, Unmute All Channels, the
+meters' decay, Record To Instrument). Recall channel state (a command to give a key to) puts the
+state of the cursor's channel in the status line: its instrument, volume and effects at the cursor's
+row, with the tempo, speed or groove there, or what it plays now while the song plays
+(`recallChannelState(track, channel, frame, row)`). Ctrl+Shift+S switches the speed / tempo split
+point between 32 and 21 (`setSpeedSplitPoint`), Ctrl+Shift+M the N163's multiplexing; the Tempo
+box of the song panel has the desktop's Fixed (tempo 0: the frame rate times 2.5, and the speed
+may go up to 255). F2 and F3 go to the pattern and the frame list, ScrollLock toggles Follow,
+Ctrl+P opens the module's panel, Ctrl+O, Ctrl+E and Ctrl+Shift+E open a file and create an NSF or a
+WAV (where the browser lets them through), Ctrl+Insert and Shift+Insert copy and paste, Alt+Backspace
+undoes; the other commands of the desktop's key table (the selections, Find Next, Next Song,
+Insert Frame and so on) have no key until Configuration gives them one. The arrow beside the Add
+button of the instrument list adds an instrument of any chip. Configuration > General has Key
+repeat: with it off, a held note, digit or letter key enters once. It also has the desktop's
+Pattern edit style and the keys that do more than type (Note cut, Note release, Clear field,
+Repeat, Echo buffer):
+FT2 sets a digit at a time and goes a row down; ModPlug shifts the digits in, stays on the row,
+and has the Q, A and Z rows as three octaves of notes (the digits then set the octave of the
+note at the cursor); IT sets the high digit, moves to the low one and goes a row down after it;
+FT2-JP106 is FT2 (the keys are taken by their places, so a Japanese keyboard needs nothing else).
+Repeat enters the note, instrument, volume or effect entered last (or picked up with Pick Up
+Row) in the field at the cursor, Echo an echo-buffer note of the octave in use (0 to 3); neither
+has a key until one is given. Configuration > Appearance saves and loads a theme as the desktop's
+text file (Theme.txt: the colours as 0xBBGGRR, flats, font, size, row height; what the editor has
+no colour for is written and not read). Configuration > MIDI chooses the input (the devices show
+once Enable MIDI is on), maps MIDI channel n to the module's channel n, and records a key's
+velocity as the volume; the desktop's auto arpeggio of chords, sync ticks and output device are
+not in this version (nor its Skip key releases, which the desktop keeps but does not use).
 
 The View menu holds the follow mode, the compact view (only the notes, in narrow channels, and
 the cursor has only the note column), the meters' decay rate (every channel's header has
@@ -422,8 +450,8 @@ the step, whether Shift+F1-F4 wrap a value), Appearance (the colours of the patt
 presets, the font, its size and the height of a row; changes show as they are made),
 Keys (every shortcut can be given other keys, which a key that another command had takes
 away; a few that a browser keeps cannot be chosen), Sound (the bass and treble filters,
-the damping and the volume, the FDS and N163 lowpass filters, the N163's multiplexer, the
-set of VRC7 patches) and Mixer (the level of each device). The sound settings are the
+the damping and the volume, the FDS and N163 lowpass filters, whether the N163's multiplexing is
+disabled, the set of VRC7 patches) and Mixer (the level of each device). The sound settings are the
 engine's, and are put back with the first module the page opens. The Recent menu has the
 modules last opened or saved, with their bytes, in the browser's IndexedDB. Help has the
 keys as they are set now, the effect table (the effects the chips take, with what each

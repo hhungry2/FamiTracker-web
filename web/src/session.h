@@ -98,6 +98,9 @@ public:
 	void PlayRow(int track, int frame, int row);
 	// Tracker > Kill Sound: stops the player and silences the APU and the channels.
 	void KillSound();
+	// Recall channel state: the state of a channel at the row (while the player plays, as it
+	// is now), as the desktop's status line words it; empty for no such channel.
+	std::string RecallChannelState(int track, int channel, int frame, int row);
 	// Ctrl+click on a frame while playing (CFrameEditor::OnLButtonUp()): the frame the player
 	// goes to when the one it plays ends, or -1 for none. It is taken with the jump
 	// (CSoundGen::PlayerStepFrame()) and is dropped when the player starts or stops.

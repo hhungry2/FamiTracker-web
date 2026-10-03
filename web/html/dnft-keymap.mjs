@@ -17,6 +17,15 @@ const STORAGE_KEY = 'dnft-editor.keys';
 // `global`: works wherever in the editor the keyboard is, in the text fields too; `hidden`:
 // not offered for changing. `group` is how the commands are listed.
 export const COMMANDS = [
+  { id: 'open', group: 'file', keys: ['C+KeyO'], global: true, run: e => e.action('open') },
+  { id: 'exportNsf', group: 'file', keys: ['C+KeyE'], global: true, run: e => e.files.exportNsf() },
+  { id: 'exportWave', group: 'file', keys: ['CS+KeyE'], global: true, run: e => e.files.exportWave() },
+  { id: 'moduleProperties', group: 'file', keys: ['C+KeyP'], global: true, run: e => e.openModuleProperties() },
+  { id: 'toggleSpeedSplit', group: 'file', keys: ['CS+KeyS'], global: true, run: e => e.toggleSpeedSplit() },
+  { id: 'toggleN163Multiplexing', group: 'file', keys: ['CS+KeyM'], global: true, run: e => e.toggleN163Multiplexing() },
+  { id: 'toggleControlPanel', group: 'file', keys: [], run: e => e.trackerMenu.setOption('side', !e.trackerMenu.options.side) },
+  { id: 'effectTable', group: 'file', keys: [], run: e => e.trackerMenu.help.openEffects() },
+
   { id: 'playSong', group: 'play', keys: ['F5'], global: true, run: e => e.startPlaying(PLAY.SONG) },
   { id: 'playPattern', group: 'play', keys: ['F6'], global: true, run: e => e.startPlaying(PLAY.PATTERN) },
   { id: 'playCursor', group: 'play', keys: ['F7'], global: true, run: e => e.startPlaying(PLAY.CURSOR) },
@@ -30,13 +39,26 @@ export const COMMANDS = [
   { id: 'toggleChip', group: 'play', keys: ['CA+F9'], run: e => e.trackerMenu.toggleChip(e.cursor.channel, false) },
   { id: 'soloChip', group: 'play', keys: ['CA+F10'], run: e => e.trackerMenu.toggleChip(e.cursor.channel, true) },
 
-  { id: 'undo', group: 'edit', keys: ['C+KeyZ'], run: e => e.undo() },
+  { id: 'undo', group: 'edit', keys: ['C+KeyZ', 'A+Backspace'], run: e => e.undo() },
   { id: 'redo', group: 'edit', keys: ['C+KeyY', 'CS+KeyZ'], run: e => e.redo() },
-  { id: 'copy', group: 'edit', keys: ['C+KeyC'], run: e => e.copy() },
+  { id: 'copy', group: 'edit', keys: ['C+KeyC', 'C+Insert'], run: e => e.copy() },
   { id: 'cut', group: 'edit', keys: ['C+KeyX'], run: e => e.cut() },
-  { id: 'paste', group: 'edit', keys: ['C+KeyV'], run: e => e.paste() },
+  { id: 'paste', group: 'edit', keys: ['C+KeyV', 'S+Insert'], run: e => e.paste() },
   { id: 'pasteMix', group: 'edit', keys: ['C+KeyM'], run: e => e.paste(PASTE.MIX) },
+  { id: 'pasteOverwrite', group: 'edit', keys: [], run: e => e.activeEditor === 'frames' ? e.frameEditor.paste('overwrite') : e.paste(PASTE.OVERWRITE) },
+  { id: 'pasteInsert', group: 'edit', keys: [], run: e => e.paste(PASTE.INSERT) },
+  { id: 'pickUpRow', group: 'edit', keys: [], run: e => e.pickUpRow() },
+  { id: 'expand', group: 'edit', keys: [], run: e => e.stretch([1, 0]) },
+  { id: 'shrink', group: 'edit', keys: [], run: e => e.stretch([2]) },
+  { id: 'stretch', group: 'edit', keys: [], run: e => e.patternMenu.openStretch() },
   { id: 'selectAll', group: 'edit', keys: ['C+KeyA'], run: e => e.selectAll() },
+  { id: 'selectRow', group: 'edit', keys: [], run: e => e.selectScope('row', 'all') },
+  { id: 'selectColumn', group: 'edit', keys: [], run: e => e.selectScope('frame', 'column') },
+  { id: 'selectPattern', group: 'edit', keys: [], run: e => e.activeEditor === 'frames' ? e.frameEditor.selectScope('pattern') : e.selectScope('frame', 'channel') },
+  { id: 'selectFrame', group: 'edit', keys: [], run: e => e.activeEditor === 'frames' ? e.frameEditor.selectScope('frame') : e.selectScope('frame', 'all') },
+  { id: 'selectChannel', group: 'edit', keys: [], run: e => e.activeEditor === 'frames' ? e.frameEditor.selectScope('channel') : e.selectScope('track', 'channel') },
+  { id: 'selectTrack', group: 'edit', keys: [], run: e => e.activeEditor === 'frames' ? e.frameEditor.selectScope('track') : e.selectScope('track', 'all') },
+  { id: 'selectOther', group: 'edit', keys: [], run: e => e.frameEditor.selectInOtherEditor() },
   { id: 'blockStart', group: 'edit', keys: ['A+KeyB'], run: e => e.setBlock(true) },
   { id: 'blockEnd', group: 'edit', keys: ['A+KeyE'], run: e => e.setBlock(false) },
   { id: 'interpolate', group: 'edit', keys: ['C+KeyG'], run: e => e.interpolate() },
@@ -67,6 +89,13 @@ export const COMMANDS = [
   { id: 'nextBookmark', group: 'move', keys: ['C+PageDown'], run: e => e.gotoBookmark(1) },
   { id: 'prevBookmark', group: 'move', keys: ['C+PageUp'], run: e => e.gotoBookmark(-1) },
   { id: 'toggleFind', group: 'move', keys: ['C+KeyF'], run: e => e.patternMenu.toggleFind() },
+  { id: 'findNext', group: 'move', keys: [], run: e => e.patternMenu.findFromMenu(1) },
+  { id: 'findPrevious', group: 'move', keys: [], run: e => e.patternMenu.findFromMenu(-1) },
+  { id: 'focusPattern', group: 'move', keys: ['F2'], global: true, run: e => e.focusPatternEditor() },
+  { id: 'focusFrames', group: 'move', keys: ['F3'], global: true, run: e => e.focusFrameEditor() },
+  { id: 'follow', group: 'move', keys: ['ScrollLock'], global: true, run: e => e.action('follow') },
+  { id: 'nextSong', group: 'move', keys: [], run: e => e.stepTrack(1) },
+  { id: 'prevSong', group: 'move', keys: [], run: e => e.stepTrack(-1) },
   { id: 'goto', group: 'move', keys: ['A+KeyG'], run: e => e.patternMenu.openGoto() },
 
   { id: 'prevInstrument', group: 'song', keys: ['C+ArrowUp'], run: e => e.stepInstrument(-1) },
@@ -76,13 +105,18 @@ export const COMMANDS = [
   { id: 'clonePattern', group: 'song', keys: ['A+KeyD'], run: e => e.songMenu.clonePattern() },
   { id: 'stepIncrease', group: 'song', keys: ['C+NumpadAdd'], run: e => e.setStep(e.step + 1) },
   { id: 'stepDecrease', group: 'song', keys: ['C+NumpadSubtract'], run: e => e.setStep(e.step - 1) },
+  { id: 'insertFrame', group: 'song', keys: [], run: e => e.frameOp('insert') },
+  { id: 'removeFrame', group: 'song', keys: [], run: e => e.frameOp('remove') },
+  { id: 'cloneFrame', group: 'song', keys: [], run: e => e.frameOp('clone') },
+  { id: 'recallChannelState', group: 'song', keys: [], run: e => e.recallChannelState() },
+  { id: 'compact', group: 'song', keys: [], run: e => e.trackerMenu.setOption('compact', !e.trackerMenu.options.compact) },
   { id: 'help', group: 'song', keys: ['F1'], global: true, run: e => e.trackerMenu.help.openTopics() },
 
   // Alt and the numeric keypad set the edit step
   ...Array.from({ length: 10 }, (_, digit) => ({ id: `step${digit}`, group: 'song', keys: [`A+Numpad${digit}`], hidden: true, run: e => e.setStep(digit) })),
 ];
 
-export const GROUPS = ['play', 'edit', 'move', 'song'];
+export const GROUPS = ['file', 'play', 'edit', 'move', 'song'];
 
 // The modifiers and the key of a keyboard event, or null for a modifier alone
 export function comboOf(event) {

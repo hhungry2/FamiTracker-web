@@ -175,7 +175,7 @@ export class PatternView {
       name.title = t.muteHint;
       name.setAttribute('aria-pressed', String(!muted[i]));
       name.addEventListener('click', e => this.editor.toggleMute(i, e.altKey || e.shiftKey));
-      name.addEventListener('contextmenu', e => { e.preventDefault(); this.editor.toggleMute(i, true); });
+      name.addEventListener('contextmenu', e => { e.preventDefault(); this.editor.trackerMenu.openHeaderMenu(i, e.clientX, e.clientY); });
 
       const columns = document.createElement('span');
       columns.className = 'dnft-pv-channel-columns';

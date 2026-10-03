@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <string>
 
 class CSoundGen;
 class CFamiTrackerDoc;
@@ -80,6 +81,9 @@ public:
 	void WriteAPU(int address, uint8_t value);
 	// Tracker > Kill Sound (CSoundGen::OnSilentAll()): the APU and every channel start over
 	void SilentAll();
+	// Recall channel state (CSoundGen::RecallChannelState()): what the channel of that type plays
+	// as it plays, or the state at the view's selection in `track` when the player is stopped
+	std::string RecallChannelState(int track, int channelType);
 
 	// Rendering and playing (Start()); IsPlayerRunning() is about the player alone
 	bool IsPlaying() const;

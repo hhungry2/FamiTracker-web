@@ -255,6 +255,12 @@ public:
 		return m_pSession->GetQueueFrame();
 	}
 
+	//! Recall channel state (the state of the channel at the row, for the status line)
+	std::string recallChannelState(int track, int channel, int frame, int row) {
+		const std::string state = m_pSession->RecallChannelState(track, channel, frame, row);
+		return dnft::detail::ToUtf8(state.c_str(), state.size());
+	}
+
 	//! Tracker > Kill Sound
 	void killSound() {
 		m_pSession->KillSound();
@@ -410,7 +416,7 @@ public:
 		result.set("volume", settings.Sound.iMixVolume);
 		result.set("fdsLowpass", settings.Emulation.iFDSLowpass);
 		result.set("n163Lowpass", settings.Emulation.iN163Lowpass);
-		result.set("n163Multiplexing", settings.Emulation.bNamcoMixing);
+		result.set("disableN163Multiplexing", settings.Emulation.bNamcoMixing);
 		result.set("vrc7Patch", settings.Emulation.iVRC7Patch);
 		val levels = val::array();
 		for (int *level : ChipLevels(theApp.GetSettings()))
@@ -434,8 +440,8 @@ public:
 		number("fdsLowpass", settings.Emulation.iFDSLowpass, 0, 8000);
 		number("n163Lowpass", settings.Emulation.iN163Lowpass, 0, 12000);
 		number("vrc7Patch", settings.Emulation.iVRC7Patch, 0, CAPU::OPLL_TONE_NUM - 1);
-		if (values.hasOwnProperty("n163Multiplexing"))
-			settings.Emulation.bNamcoMixing = values["n163Multiplexing"].as<bool>();
+		if (values.hasOwnProperty("disableN163Multiplexing"))
+			settings.Emulation.bNamcoMixing = values["disableN163Multiplexing"].as<bool>();
 		if (values.hasOwnProperty("levels")) {
 			const std::vector<int> levels = emscripten::vecFromJSArray<int>(values["levels"]);
 			const std::vector<int *> targets = ChipLevels(&settings);
@@ -651,8 +657,9 @@ public:
 	void setTempo(int track, int tempo) {
 		CheckTrack(track);
 		CFamiTrackerDoc &doc = Doc();
-		// CMainFrame::SetTempo()
-		doc.SetSongTempo(track, std::clamp(tempo, doc.GetSpeedSplitPoint(), MAX_TEMPO));
+		// CMainFrame::SetTempo(); 0 is the fixed tempo (CMainFrame::OnToggleFixTempo()): the speed alone
+		// sets the pace, and the F effects of 20 and up set the speed
+		doc.SetSongTempo(track, tempo == 0 ? 0 : std::clamp(tempo, doc.GetSpeedSplitPoint(), MAX_TEMPO));
 		ResetTempo(track);
 	}
 
@@ -1461,6 +1468,13 @@ public:
 		m_pSession->ApplyDocumentProperties();
 	}
 
+	//! Ctrl+Shift+S: the value from which an F effect sets the tempo, not the speed (32, or 21 as
+	//! old modules had it); a value of the range the F effect takes
+	void setSpeedSplitPoint(int point) {
+		Doc().SetSpeedSplitPoint(std::clamp(point, 2, 255));
+		m_pSession->ApplyDocumentProperties();
+	}
+
 	void setVibratoStyle(bool newStyle) {
 		Doc().SetVibratoStyle(newStyle ? VIBRATO_NEW : VIBRATO_OLD);
 		m_pSession->ApplyDocumentProperties();
@@ -1980,6 +1994,7 @@ EMSCRIPTEN_BINDINGS(dnft_session) {
 		.function("playRow", &EditSession::playRow)
 		.function("setQueueFrame", &EditSession::setQueueFrame)
 		.function("queueFrame", &EditSession::queueFrame)
+		.function("recallChannelState", &EditSession::recallChannelState)
 		.function("killSound", &EditSession::killSound)
 		.function("setMeterDecayRate", &EditSession::setMeterDecayRate)
 		.function("meterDecayRate", &EditSession::meterDecayRate)
@@ -2071,6 +2086,7 @@ EMSCRIPTEN_BINDINGS(dnft_session) {
 		.function("setExpansion", &EditSession::setExpansion)
 		.function("setMachine", &EditSession::setMachine)
 		.function("setEngineSpeed", &EditSession::setEngineSpeed)
+		.function("setSpeedSplitPoint", &EditSession::setSpeedSplitPoint)
 		.function("setVibratoStyle", &EditSession::setVibratoStyle)
 		.function("setLinearPitch", &EditSession::setLinearPitch)
 		.function("detune", &EditSession::detune)

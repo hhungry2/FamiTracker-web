@@ -310,6 +310,19 @@ void Session::PlayRow(int track, int frame, int row) {
 	}
 }
 
+std::string Session::RecallChannelState(int track, int channel, int frame, int row) {
+	if (!IsCurrent() || m_bWave)
+		return "";
+	const CFamiTrackerDoc &doc = *m_pDocument;
+	if (track < 0 || track >= static_cast<int>(doc.GetTrackCount()) || channel < 0 || channel >= static_cast<int>(doc.GetChannelCount()))
+		return "";
+	frame = std::clamp(frame, 0, static_cast<int>(doc.GetFrameCount(track)) - 1);
+	row = std::clamp(row, 0, static_cast<int>(doc.GetPatternLength(track)) - 1);
+	detail::Engine &engine = GetEngine();
+	engine.view.SetSelection(frame, row);
+	return engine.host->RecallChannelState(track, doc.GetChannelType(channel));
+}
+
 void Session::KillSound() {
 	if (!IsCurrent() || m_bWave)
 		return;

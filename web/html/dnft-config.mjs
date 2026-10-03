@@ -12,6 +12,9 @@ import { setDisplayFlats } from './dnft-pattern-view.mjs';
 
 const STORAGE_KEY = 'dnft-editor.config';
 
+// A copy of the values that its changes do not reach
+const copyValues = values => ({ ...values, colors: { ...values.colors }, noteKeys: structuredClone(values.noteKeys) });
+
 export const DEFAULTS = {
   rowHex: true,           // row numbers in hexadecimal, or decimal
   flats: false,           // Db, Eb... for C#, D#...
@@ -20,6 +23,18 @@ export const DEFAULTS = {
   pageStep: 16,           // PageUp and PageDown
   noStepMove: false,      // Up and Down by a row, not the edit step
   wrapPatternValue: false, // Shift+F1-F4 take a value round the ends of its range
+  keyRepeat: true,        // a note, digit or letter key held down goes on entering what it enters
+  // how entering works (EDIT_STYLES): 'ft2', 'mpt' (ModPlug), 'it' or 'ft2jp' (FT2 on a JP106 keyboard, which
+  // the key places already are)
+  editStyle: 'ft2',
+  // the keys that do more than type, by the places of the keys (CSettings Keys: Note cut, Note release,
+  // Clear field, Repeat, Echo buffer)
+  // MIDI (CSettings Midi): the input to use ('' for all), whether MIDI channel n plays the module's channel n,
+  // whether a key's velocity is the volume entered
+  midiInput: '',
+  midiChannelMap: false,
+  midiVelocity: false,
+  noteKeys: { cut: ['Digit1'], release: ['Backslash', 'IntlYen', 'IntlRo'], clear: ['Minus'], repeat: [], echo: [] },
   fontFamily: '',         // the pattern's font ('' is the editor's own)
   fontSize: 13,           // pixels
   rowHeight: 145,         // a row's height, as a percentage of the font size
@@ -36,6 +51,79 @@ export const COLORS = [
   ['playRow', '--dnft-pe-play-row', 0.3], ['selection', '--dnft-pe-selection', 0.3], ['bookmark', '--dnft-pe-bookmark'],
   ['separator', '--dnft-pe-separator'], ['header', '--dnft-pe-header'], ['headerText', '--dnft-pe-header-text'],
 ];
+
+// The desktop's theme file (CConfigAppearance::ExportSettings(), ImportSettings()): lines of "name : value",
+// the colours as 0xBBGGRR. The editor has no colour of its own for the highlighted text and the channel
+// header's corner: it writes the text's and the header's, and does not read them.
+const THEME_COLORS = [
+  ['Background', '--dnft-pe-bg'], ['Highlighted background', '--dnft-pe-beat'], ['Highlighted background 2', '--dnft-pe-bar'],
+  ['Pattern text', '--dnft-pe-note'], ['Highlighted pattern text', '--dnft-pe-note', false], ['Highlighted pattern text 2', '--dnft-pe-note', false],
+  ['Instrument column', '--dnft-pe-instrument'], ['Volume column', '--dnft-pe-volume'], ['Effect number column', '--dnft-pe-effect'],
+  ['Selection', '--dnft-pe-selection'], ['Cursor', '--dnft-pe-cursor'], ['Current row (normal mode)', '--dnft-pe-cursor-row'],
+  ['Current row (edit mode)', '--dnft-pe-edit-row'], ['Current row (playing)', '--dnft-pe-play-row'],
+  ['Channel header background', '--dnft-pe-header'], ['Channel header corner', '--dnft-pe-header', false], ['Channel header text', '--dnft-pe-header-text'],
+];
+const SETTING_SEPARATOR = ' : ';
+
+const bgr = hex => {
+  const value = parseInt(hex.slice(1), 16);
+  return `0x${(((value & 0xFF) << 16) | (value & 0xFF00) | (value >> 16)).toString(16).toUpperCase().padStart(6, '0')}`;
+};
+const rgb = bgrText => {
+  const value = parseInt(bgrText, 16);
+  return '#' + (((value & 0xFF) << 16) | (value & 0xFF00) | ((value >> 16) & 0xFF)).toString(16).padStart(6, '0');
+};
+
+// The text of a theme: `colors` by custom property ('#rrggbb'), and the look (flats, font, size, row height)
+export function exportTheme(colors, { flats = false, fontFamily = '', fontSize = 13, rowHeight = 145 } = {}) {
+  return [
+    '# FamiTracker appearance',
+    ...THEME_COLORS.map(([name, property]) => `${name}${SETTING_SEPARATOR}${bgr(colors[property] ?? '#000000')}`),
+    `Pattern colors${SETTING_SEPARATOR}1`,
+    `Flags${SETTING_SEPARATOR}${flats ? 1 : 0}`,
+    `Font${SETTING_SEPARATOR}${fontFamily || 'Courier New'}`,
+    `Font size${SETTING_SEPARATOR}${fontSize}`,
+    `Font percent${SETTING_SEPARATOR}${rowHeight}`,
+    `Channel header font${SETTING_SEPARATOR}${fontFamily || 'Tahoma'}`,
+    `Channel header font size${SETTING_SEPARATOR}${Math.max(8, fontSize - 1)}`,
+    '',
+  ].join('\n');
+}
+
+// What a theme file sets: {colors: {property: '#rrggbb'}, flats, fontFamily, fontSize, rowHeight}, with what it does
+// not have left out; null when no line of it is a setting
+export function importTheme(text) {
+  const result = { colors: {} };
+  let any = false;
+  for (const line of text.split(/\r?\n/)) {
+    const match = /^\s*([^#].*?)\s*:\s*(.*?)\s*$/.exec(line);
+    if (!match)
+      continue;
+    const [, key, value] = match;
+    const number = /^\d+$/.test(value) ? Number(value) : null;
+    const color = THEME_COLORS.find(([name, , read]) => name.toLowerCase() === key.toLowerCase() && read !== false);
+    if (color) {
+      const hex = /^0x([0-9a-f]{1,6})$/i.exec(value);
+      if (hex) {
+        result.colors[color[1]] = rgb(hex[1]);
+        any = true;
+      }
+    } else if (/^flags$/i.test(key) && number !== null) {
+      result.flats = number !== 0;
+      any = true;
+    } else if (/^font$/i.test(key)) {
+      result.fontFamily = value;
+      any = true;
+    } else if (/^font size$/i.test(key) && number) {
+      result.fontSize = Math.max(8, Math.min(32, number));
+      any = true;
+    } else if (/^font percent$/i.test(key) && number) {
+      result.rowHeight = Math.max(100, Math.min(250, number));
+      any = true;
+    }
+  }
+  return any ? result : null;
+}
 
 const PRESETS = {
   light: {
@@ -86,9 +174,18 @@ function rgba(hex, alpha) {
 export class Config {
   constructor(editor) {
     this.editor = editor;
-    this.values = { ...DEFAULTS, ...this.read() };
-    this.values.colors = { ...this.values.colors };
+    this.values = copyValues({ ...DEFAULTS, ...this.read() });
+    // what is kept may lack a role, or hold something else
+    for (const role of Object.keys(DEFAULTS.noteKeys))
+      if (!Array.isArray(this.values.noteKeys[role]))
+        this.values.noteKeys[role] = [...DEFAULTS.noteKeys[role]];
     this.sound = this.values.sound ?? null;   // what was set, to put back in the engine
+    // what the setting was called until the dialog said "emulate" for it: it is CSettings'
+    // bNamcoMixing, which disables the multiplexing when it is on
+    if (this.sound && 'n163Multiplexing' in this.sound) {
+      this.sound.disableN163Multiplexing = this.sound.n163Multiplexing;
+      delete this.sound.n163Multiplexing;
+    }
     this.build();
     this.applyLook();
   }
@@ -118,6 +215,13 @@ export class Config {
     } catch {
       // blocked: it lasts as long as the page
     }
+  }
+
+  // Sound settings changed from outside the dialog (Ctrl+Shift+M): in the engine, and kept
+  async setSound(values) {
+    await this.editor.session.call('setSoundSettings', values);
+    this.sound = { ...(this.sound ?? {}), ...values };
+    this.save();
   }
 
   // The sound settings go to the engine once, with the first module (it keeps them for the
@@ -174,6 +278,7 @@ export class Config {
       ['general', t.configGeneral, () => this.buildGeneral()],
       ['appearance', t.configAppearance, () => this.buildAppearance()],
       ['keys', t.configKeys, () => this.buildKeys()],
+      ['midi', t.configMidi, () => this.buildMidi()],
       ['sound', t.configSound, () => this.buildSound()],
       ['mixer', t.configMixer, () => this.buildMixer()],
     ];
@@ -218,8 +323,8 @@ export class Config {
     d.querySelector('.dnft-dialog-title').textContent = this.strings.configTitle;
     // each tab starts from what is in force now
     this.committed = false;
-    this.original = { ...this.values, colors: { ...this.values.colors } };
-    this.draft = { ...this.values, colors: { ...this.values.colors } };
+    this.original = copyValues(this.values);
+    this.draft = copyValues(this.values);
     this.draftKeys = new Keymap(false);
     this.draftKeys.overrides = structuredClone(this.editor.keymap.overrides);
     this.draftKeys.rebuild();
@@ -257,8 +362,23 @@ export class Config {
         ${check('wrapFrames', t.configWrapFrames, t.configWrapFramesHint)}
         ${check('noStepMove', t.configNoStepMove, t.configNoStepMoveHint)}
         ${check('wrapPatternValue', t.configWrapValues, t.configWrapValuesHint)}
+        ${check('keyRepeat', t.configKeyRepeat, t.configKeyRepeatHint)}
         <label class="dnft-field dnft-field--inline"><span>${escape(t.configPageStep)}</span><input type="number" min="1" max="256" step="1" data-general="pageStep"></label>
-      </div>`;
+        <label class="dnft-field dnft-field--inline" title="${escape(t.configEditStyleHint)}"><span>${escape(t.configEditStyle)}</span>
+          <select data-general="editStyle">${['ft2', 'mpt', 'it', 'ft2jp'].map(style => `<option value="${style}">${escape(t.configEditStyles[style])}</option>`).join('')}</select></label>
+      </div>
+      <fieldset class="dnft-fieldset dnft-note-keys">
+        <legend>${escape(t.configNoteKeys)}</legend>
+        ${Object.keys(DEFAULTS.noteKeys).map(role => `
+          <div class="dnft-field dnft-field--inline" data-notekey="${role}" title="${escape(t.configNoteKeyHints[role])}">
+            <span>${escape(t.configNoteKeyNames[role])}</span>
+            <span class="dnft-key-chips"></span>
+            <button type="button" class="dnft-button" data-add>${escape(t.configKeyAdd)}</button>
+            <button type="button" class="dnft-button" data-reset>${escape(t.configKeyReset)}</button>
+          </div>`).join('')}
+        <p class="dnft-hint" data-role="notekey-message">${escape(t.configNoteKeysNote)}</p>
+      </fieldset>`;
+    this.wireNoteKeys(panel);
     for (const input of panel.querySelectorAll('[data-general]')) {
       const name = input.dataset.general;
       if (input.type === 'checkbox')
@@ -266,7 +386,95 @@ export class Config {
       else
         input.value = this.draft[name];
       input.addEventListener('input', () => {
-        this.draft[name] = input.type === 'checkbox' ? input.checked : Math.max(1, Math.min(256, Math.round(Number(input.value)) || 1));
+        if (input.tagName === 'SELECT')
+          this.draft[name] = input.value;
+        else
+          this.draft[name] = input.type === 'checkbox' ? input.checked : Math.max(1, Math.min(256, Math.round(Number(input.value)) || 1));
+      });
+    }
+  }
+
+  // The five keys that do more than type: each shown as the keys it has, with a button that takes the
+  // next key press (by its place; no modifiers) and one that gives the defaults back
+  wireNoteKeys(panel) {
+    const t = this.strings;
+    const message = text => { panel.querySelector('[data-role="notekey-message"]').textContent = text; };
+    const show = row => {
+      const role = row.dataset.notekey;
+      row.querySelector('.dnft-key-chips').innerHTML = this.draft.noteKeys[role]
+        .map(code => `<span class="dnft-key-chip"><kbd>${escape(formatCombo(code))}</kbd><button type="button" data-remove="${escape(code)}" title="${escape(t.configKeyRemove)}">×</button></span>`).join('');
+      row.querySelector('[data-reset]').disabled = JSON.stringify(this.draft.noteKeys[role]) === JSON.stringify(DEFAULTS.noteKeys[role]);
+    };
+    for (const row of panel.querySelectorAll('[data-notekey]')) {
+      const role = row.dataset.notekey;
+      show(row);
+      row.querySelector('.dnft-key-chips').addEventListener('click', e => {
+        const remove = e.target.closest('[data-remove]');
+        if (!remove)
+          return;
+        this.draft.noteKeys[role] = this.draft.noteKeys[role].filter(code => code !== remove.dataset.remove);
+        show(row);
+      });
+      row.querySelector('[data-reset]').addEventListener('click', () => {
+        this.draft.noteKeys[role] = [...DEFAULTS.noteKeys[role]];
+        show(row);
+        message('');
+      });
+      row.querySelector('[data-add]').addEventListener('click', () => {
+        const d = this.dialog;
+        message(t.configKeyPress);
+        const finish = () => d.removeEventListener('keydown', onKey, true);
+        const onKey = e => {
+          if (!comboOf(e))
+            return;
+          e.preventDefault();
+          e.stopPropagation();
+          if (e.code === 'Escape') {
+            finish();
+            message('');
+            return;
+          }
+          if (e.ctrlKey || e.altKey || e.metaKey) {
+            message(t.configNoteKeyPlain);
+            return;
+          }
+          finish();
+          // a key does one thing: the role that had it loses it
+          for (const other of Object.keys(this.draft.noteKeys))
+            this.draft.noteKeys[other] = this.draft.noteKeys[other].filter(code => code !== e.code);
+          this.draft.noteKeys[role].push(e.code);
+          for (const each of panel.querySelectorAll('[data-notekey]'))
+            show(each);
+          message('');
+        };
+        d.addEventListener('keydown', onKey, true);
+      });
+    }
+  }
+
+  // ---- MIDI ---------------------------------------------------------------------------------------------
+
+  buildMidi() {
+    const t = this.strings;
+    const panel = this.panel('midi');
+    const inputs = this.editor.patternMenu.midiInputs();
+    const check = (name, label, hint) => `<label class="dnft-check" title="${escape(hint)}"><input type="checkbox" data-general="${name}"> <span>${escape(label)}</span></label>`;
+    panel.innerHTML = `
+      <div class="dnft-config-list">
+        <label class="dnft-field dnft-field--inline"><span>${escape(t.configMidiInput)}</span>
+          <select data-general="midiInput"><option value="">${escape(t.configMidiAll)}</option>${inputs.map(input => `<option value="${escape(input.id)}">${escape(input.name)}</option>`).join('')}</select></label>
+        ${check('midiChannelMap', t.configMidiChannelMap, t.configMidiChannelMapHint)}
+        ${check('midiVelocity', t.configMidiVelocity, t.configMidiVelocityHint)}
+      </div>
+      <p class="dnft-hint">${escape(inputs.length ? t.configMidiNote : t.configMidiOff + ' ' + t.configMidiNote)}</p>`;
+    for (const input of panel.querySelectorAll('[data-general]')) {
+      const name = input.dataset.general;
+      if (input.type === 'checkbox')
+        input.checked = this.draft[name];
+      else
+        input.value = this.draft[name];
+      input.addEventListener('input', () => {
+        this.draft[name] = input.type === 'checkbox' ? input.checked : input.value;
       });
     }
   }
@@ -293,6 +501,14 @@ export class Config {
         </div>
       </fieldset>
       <fieldset class="dnft-fieldset">
+        <legend>${escape(t.configTheme)}</legend>
+        <div class="dnft-config-presets">
+          <button type="button" class="dnft-button" data-theme="save" title="${escape(t.configThemeSaveHint)}">${escape(t.configThemeSave)}</button>
+          <button type="button" class="dnft-button" data-theme="load" title="${escape(t.configThemeLoadHint)}">${escape(t.configThemeLoad)}</button>
+          <input type="file" accept=".txt,text/plain" hidden data-role="theme-file">
+        </div>
+      </fieldset>
+      <fieldset class="dnft-fieldset">
         <legend>${escape(t.configColor)}</legend>
         <div class="dnft-swatches">${swatches}</div>
       </fieldset>
@@ -308,7 +524,7 @@ export class Config {
       </fieldset>`;
     // the dialog shows the change as it is made, and Cancel puts it back
     const preview = () => {
-      this.values = { ...this.draft, colors: { ...this.draft.colors } };
+      this.values = copyValues(this.draft);
       this.applyLook();
     };
     for (const input of panel.querySelectorAll('[data-look]')) {
@@ -330,6 +546,33 @@ export class Config {
         preview();
         this.buildAppearance();
       });
+    // the theme as a file, as the desktop's Save and Load buttons have it
+    const file = panel.querySelector('[data-role="theme-file"]');
+    panel.querySelector('[data-theme="save"]').addEventListener('click', () => {
+      const colors = {};
+      for (const [, property] of THEME_COLORS)
+        colors[property] = this.draft.colors[property] ?? toHex(this.editor.root.style.getPropertyValue(property) || style.getPropertyValue(property).trim() || '#000');
+      const text = exportTheme(colors, this.draft);
+      this.editor.files.download('Theme.txt', new Blob([text], { type: 'text/plain' }));
+    });
+    panel.querySelector('[data-theme="load"]').addEventListener('click', () => file.click());
+    file.addEventListener('change', async () => {
+      const chosen = file.files[0];
+      file.value = '';
+      if (!chosen)
+        return;
+      const theme = importTheme(await chosen.text());
+      if (!theme) {
+        this.editor.message(t.configThemeBad, true);
+        return;
+      }
+      const { colors, ...look } = theme;
+      Object.assign(this.draft.colors, colors);
+      Object.assign(this.draft, look);
+      preview();
+      this.buildAppearance();
+      this.editor.message(t.configThemeLoaded);
+    });
   }
 
   // ---- Keys -----------------------------------------------------------------------------------------
@@ -468,7 +711,7 @@ export class Config {
         <legend>${escape(t.configEmulation)}</legend>
         ${this.slider('fdsLowpass', t.configFdsLowpass, 0, 8000, 'Hz')}
         ${this.slider('n163Lowpass', t.configN163Lowpass, 0, 12000, 'Hz')}
-        <label class="dnft-check"><input type="checkbox" data-engine="n163Multiplexing"> <span>${escape(t.configN163Multiplexing)}</span></label>
+        <label class="dnft-check"><input type="checkbox" data-engine="disableN163Multiplexing"> <span>${escape(t.configDisableN163Multiplexing)}</span></label>
         <label class="dnft-field"><span>${escape(t.configVrc7Patch)}</span><select data-engine="vrc7Patch">${t.vrc7PatchSets.slice(0, VRC7_PATCHES).map((name, i) => `<option value="${i}">${escape(name)}</option>`).join('')}</select></label>
       </fieldset>
       <p class="dnft-hint">${escape(t.configSoundNote)}</p>`;
@@ -514,11 +757,12 @@ export class Config {
   async commit() {
     const editor = this.editor;
     this.committed = true;
-    this.values = { ...this.draft, colors: { ...this.draft.colors } };
+    this.values = copyValues(this.draft);
     editor.keymap.overrides = this.draftKeys.overrides;
     editor.keymap.tidy();
     this.applyLook();
     editor.applyConfig();
+    editor.patternMenu.listenMidi();
     if (this.soundDraft) {
       const changed = {};
       for (const key of Object.keys(this.soundDraft))
@@ -539,8 +783,9 @@ export class Config {
   async resetTab() {
     switch (this.tab) {
       case 'general':
-        for (const name of ['rowHex', 'flats', 'wrapCursor', 'wrapFrames', 'pageStep', 'noStepMove', 'wrapPatternValue'])
+        for (const name of ['rowHex', 'flats', 'wrapCursor', 'wrapFrames', 'pageStep', 'noStepMove', 'wrapPatternValue', 'keyRepeat', 'editStyle'])
           this.draft[name] = DEFAULTS[name];
+        this.draft.noteKeys = structuredClone(DEFAULTS.noteKeys);
         this.buildGeneral();
         break;
       case 'appearance':
@@ -548,6 +793,11 @@ export class Config {
         this.values = { ...this.draft, colors: {} };
         this.applyLook();
         this.buildAppearance();
+        break;
+      case 'midi':
+        for (const name of ['midiInput', 'midiChannelMap', 'midiVelocity'])
+          this.draft[name] = DEFAULTS[name];
+        this.buildMidi();
         break;
       case 'keys':
         this.draftKeys.overrides = {};
@@ -559,7 +809,7 @@ export class Config {
         // the desktop's defaults (CSettings::DefaultSettings())
         if (this.engine)
           this.soundDraft = { ...this.engine, bassFilter: 30, trebleFilter: 12000, trebleDamping: 24, volume: 100, fdsLowpass: 2000, n163Lowpass: 12000,
-            n163Multiplexing: true, vrc7Patch: 0, levels: this.engine.levels.map(() => 0) };
+            disableN163Multiplexing: true, vrc7Patch: 0, levels: this.engine.levels.map(() => 0) };
         this.buildSound();
         this.buildMixer();
         break;

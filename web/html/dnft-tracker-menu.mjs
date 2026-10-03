@@ -317,6 +317,33 @@ export class TrackerMenu {
     this.switchToInstrument = !this.switchToInstrument;
   }
 
+  // The right button on a channel's name (IDR_PATTERN_HEADER_POPUP)
+  openHeaderMenu(channel, x, y) {
+    const editor = this.editor;
+    const t = editor.strings;
+    const files = editor.files;
+    files.contextMenu([
+      { label: t.toggleChannel, run: () => editor.toggleMute(channel, false) },
+      { label: t.soloChannel, run: () => editor.toggleMute(channel, true) },
+      { label: t.toggleChip, hint: t.toggleChipHint, run: () => this.toggleChip(channel, false) },
+      { label: t.soloChip, hint: t.soloChipHint, run: () => this.toggleChip(channel, true) },
+      { label: t.unmuteAll, run: () => editor.setMuted(editor.muted.map(() => false)), disabled: () => !editor.muted.some(Boolean) },
+      null,
+      {
+        label: t.meterDecay, hint: t.meterDecayHint, items: [
+          { label: t.decaySlow, radio: true, checked: () => this.options.decay === 0, run: () => this.setOption('decay', 0) },
+          { label: t.decayFast, radio: true, checked: () => this.options.decay === 1, run: () => this.setOption('decay', 1) },
+        ],
+      },
+      null,
+      {
+        label: t.recordToInstrument, hint: t.recordToInstrumentHint, checked: () => this.recording === channel,
+        run: () => { editor.setCursor({ ...editor.cursor, channel }); this.recordToInstrument(); }, disabled: () => editor.playing,
+      },
+      { label: t.recorderSettings, hint: t.recorderSettingsHint, run: () => this.openRecorderSettings(), disabled: () => editor.playing },
+    ], x, y);
+  }
+
   // The row playing now, to the editor's tick
   onPlayRow(play) {
     if (!this.switchToInstrument || !play || !this.editor.playing)

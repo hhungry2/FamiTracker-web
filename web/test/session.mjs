@@ -506,6 +506,53 @@ check('a queued frame is where the player goes when the frame it plays is done',
   s.delete();
 });
 
+check('the speed / tempo split point, the fixed tempo and Recall channel state', () => {
+  const s = dnft.createSession(RATE);
+  // Ctrl+Shift+S: 32, or 21 as old modules had it
+  assert.equal(s.info().speedSplitPoint, 32);
+  s.setSpeedSplitPoint(21);
+  assert.equal(s.info().speedSplitPoint, 21);
+  s.setSpeedSplitPoint(1);
+  assert.equal(s.info().speedSplitPoint, 2, 'brought into the range');
+  s.setSpeedSplitPoint(32);
+  // the fixed tempo (0): the speed may then go up to 255; with a tempo it stops below the split point
+  s.setSpeed(0, 100);
+  assert.equal(s.track(0).speed, 31);
+  s.setTempo(0, 0);
+  assert.equal(s.track(0).tempo, 0);
+  s.setSpeed(0, 100);
+  assert.equal(s.track(0).speed, 100);
+  s.setTempo(0, 150);
+  assert.equal(s.track(0).tempo, 150);
+  s.setSpeed(0, 6);
+  // Recall channel state: what the channel has at the row (CSoundGen::RecallChannelState())
+  s.setCells(0, 0, 0, 2, new Uint8Array(cell(NOTE_C, 4, 0, [[11, 0x47]])));
+  s.setCells(0, 0, 0, 4, new Uint8Array(cell(0, 0, 64, [[1, 0x06]])));
+  assert.equal(s.recallChannelState(0, 0, 0, 1), 'Inst.: None        Vol.: F        Active effects: None');
+  assert.equal(s.recallChannelState(0, 0, 0, 10), 'Inst.: 00        Vol.: F        Active effects: 447        Speed: 6');
+  assert.equal(s.recallChannelState(0, 99, 0, 0), '', 'no such channel');
+  assert.equal(s.recallChannelState(5, 0, 0, 0), '', 'no such track');
+  // and while it plays, what the channel plays now
+  s.play(0, 0, 0, 0);
+  render(s, 400);
+  assert.equal(s.recallChannelState(0, 0, 0, 0), 'Inst.: 00        Vol.: F        Active effects: 447');
+  s.delete();
+});
+
+check('the N163 setting is the desktop\'s "disable multiplexing"', () => {
+  const s = dnft.createSession(RATE);
+  const settings = s.soundSettings();
+  assert.equal(settings.disableN163Multiplexing, true, 'multiplexing is off by default, as the desktop has it');
+  assert.equal('n163Multiplexing' in settings, false);
+  try {
+    s.setSoundSettings({ disableN163Multiplexing: false });
+    assert.equal(s.soundSettings().disableN163Multiplexing, false);
+  } finally {
+    s.setSoundSettings({ disableN163Multiplexing: true });
+  }
+  s.delete();
+});
+
 check('the register state and pitches of the chips', () => {
   const s = dnft.createSession(RATE);
   s.noteOn(0, 10, 4, 0, 16);
@@ -603,11 +650,11 @@ check('the sound settings of the Configuration: kept, in range, and heard', () =
     assert.ok(energy(quieter) < energy(before) * 0.5 && energy(quieter) > energy(before) * 0.05, `${energy(quieter)} against ${energy(before)}`);
     s.setSoundSettings({ volume: 100 });
     assert.ok(equal(heard(), before), 'back to the defaults, the same sound');
-    s.setSoundSettings({ n163Multiplexing: false, vrc7Patch: 99, fdsLowpass: -4 });
-    assert.deepEqual([s.soundSettings().n163Multiplexing, s.soundSettings().vrc7Patch, s.soundSettings().fdsLowpass], [false, 8, 0]);
+    s.setSoundSettings({ disableN163Multiplexing: false, vrc7Patch: 99, fdsLowpass: -4 });
+    assert.deepEqual([s.soundSettings().disableN163Multiplexing, s.soundSettings().vrc7Patch, s.soundSettings().fdsLowpass], [false, 8, 0]);
   } finally {
     // they belong to the engine, not to the session
-    s.setSoundSettings({ bassFilter: 30, trebleFilter: 12000, trebleDamping: 24, volume: 100, n163Multiplexing: true,
+    s.setSoundSettings({ bassFilter: 30, trebleFilter: 12000, trebleDamping: 24, volume: 100, disableN163Multiplexing: true,
       vrc7Patch: 0, fdsLowpass: 2000, n163Lowpass: 12000, levels: [0, 0, 0, 0, 0, 0, 0, 0] });
   }
   s.delete();

@@ -44,6 +44,18 @@ export const NOTE_KEYS = {
   BracketLeft: [5, 2], Equal: [6, 2], BracketRight: [7, 2],
 };
 
+// The ModPlug edit style's keys (CFamiTrackerView::TranslateKeyModplug()): the Q row, the A row and
+// the Z row are three octaves of notes, each from C. The digits there set the octave of the note
+// at the cursor (the editor does that), so they are not here.
+export const NOTE_KEYS_MPT = {
+  KeyQ: [0, 0], KeyW: [1, 0], KeyE: [2, 0], KeyR: [3, 0], KeyT: [4, 0], KeyY: [5, 0], KeyU: [6, 0], KeyI: [7, 0],
+  KeyO: [8, 0], KeyP: [9, 0], BracketLeft: [10, 0], BracketRight: [11, 0],
+  KeyA: [0, 1], KeyS: [1, 1], KeyD: [2, 1], KeyF: [3, 1], KeyG: [4, 1], KeyH: [5, 1], KeyJ: [6, 1], KeyK: [7, 1],
+  KeyL: [8, 1], Semicolon: [9, 1], Quote: [10, 1],
+  KeyZ: [0, 2], KeyX: [1, 2], KeyC: [2, 2], KeyV: [3, 2], KeyB: [4, 2], KeyN: [5, 2], KeyM: [6, 2],
+  Comma: [7, 2], Period: [8, 2], Slash: [9, 2],
+};
+
 export const EMPTY_CELL = Uint8Array.of(NOTE.NONE, 0, MAX_VOLUME, NO_INSTRUMENT, 0, 0, 0, 0, 0, 0, 0, 0);
 
 export function emptyPattern(rows) {

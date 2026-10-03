@@ -216,6 +216,17 @@ void CSoundGenHost::SilentAll() {
 	m_Gen.MakeSilent();
 }
 
+std::string CSoundGenHost::RecallChannelState(int track, int channelType) {
+	CSoundGen &g = m_Gen;
+	// the state is looked up in the track the player last played, which is not the one shown
+	const int playTrack = g.m_iPlayTrack;
+	if (!g.IsPlaying())
+		g.m_iPlayTrack = track;
+	const CString state = g.RecallChannelState(channelType);
+	g.m_iPlayTrack = playTrack;
+	return std::string(state.GetString(), state.GetLength());
+}
+
 void CSoundGenHost::Tick() {
 	CSoundGen &g = m_Gen;
 	if (!g.m_pDocument || !g.m_pSoundStream || !g.m_pDocument->IsFileLoaded())
