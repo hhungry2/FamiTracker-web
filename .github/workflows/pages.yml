@@ -1,0 +1,94 @@
+# The web editor on GitHub Pages: web/ built with Emscripten as `make -C web site` builds it on
+# a desktop (the NSF drivers with cc65's ca65 and ld65), checked with the node tests, and
+# web/dist published. https://hhungry2.github.io/FamiTracker-web/
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'Source/**'
+      - 'demo/**'
+      - 'Dn-FamiTracker.rc'
+      - 'resource.h'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# one publication at a time; a newer push takes over from an older one
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  # what the web build has been made and checked with
+  EMSDK_VERSION: 6.0.9
+  CC65_REF: 2f4e2a34c32c679e4325652e461acce7f615a22e
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Cache Emscripten and cc65
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/emsdk
+            ~/cc65
+          key: tools-emsdk-${{ env.EMSDK_VERSION }}-cc65-${{ env.CC65_REF }}
+
+      - name: Emscripten
+        run: |
+          [ -x ~/emsdk/emsdk ] || git clone --depth 1 https://github.com/emscripten-core/emsdk.git ~/emsdk
+          ~/emsdk/emsdk install "$EMSDK_VERSION"
+          ~/emsdk/emsdk activate "$EMSDK_VERSION"
+
+      - name: cc65's ca65 and ld65 (for the NSF drivers)
+        run: |
+          if [ ! -x ~/cc65/bin/ca65 ] || [ ! -x ~/cc65/bin/ld65 ]; then
+            rm -rf ~/cc65
+            git clone https://github.com/cc65/cc65.git ~/cc65
+            git -C ~/cc65 checkout "$CC65_REF"
+            make -C ~/cc65/src -j"$(nproc)" ca65 ld65
+          fi
+          echo "$HOME/cc65/bin" >> "$GITHUB_PATH"
+
+      - name: Build
+        run: |
+          source ~/emsdk/emsdk_env.sh
+          make -C web -j"$(nproc)" site
+
+      # the seeking test also times itself against playing, which a shared runner does not
+      # keep to; it runs on the desktop before a push
+      - name: Test
+        run: |
+          for suite in smoke session export text instrument dpcm pattern frames ui; do
+            node "web/test/$suite.mjs"
+          done
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

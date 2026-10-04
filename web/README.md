@@ -38,6 +38,12 @@ web/tools/build_cc65.sh ~/cc65  # ~/cc65: cc65's source
 make -C web CA65="node $HOME/cc65/bin/ca65" LD65="node $HOME/cc65/bin/ld65"
 ```
 
+GitHub Pages has `dist/` as the build of `main` leaves it (https://hhungry2.github.io/FamiTracker-web/,
+the editor at `editor.html`): `.github/workflows/pages.yml` builds it on every push to `main` that
+changes `web/`, `Source/` or the demo modules, with Emscripten 6.0.9 and cc65 at the commit above,
+runs the node tests but the seeking one (which times itself), and publishes it. Pages keeps the
+files for ten minutes, so a page opened just after an update may mix them for a while.
+
 Javascript interface
 --------------------
 

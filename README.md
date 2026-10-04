@@ -17,6 +17,8 @@
 
 The audio engine follows the same interface conventions as [ZXTune Web](https://github.com/hhungry2/zxtune-web), designed for standalone browser playback and integration into online platforms like [zxtune.com](https://zxtune.com/).
 
+**Try it:** the [editor](https://hhungry2.github.io/FamiTracker-web/editor.html) and the [player](https://hhungry2.github.io/FamiTracker-web/) on GitHub Pages, built from `main` on every push (`.github/workflows/pages.yml`), and on [zxtune.com](https://zxtune.com/create/famitracker).
+
 ---
 
 ### ✨ Key Features
@@ -195,6 +197,8 @@ FamiTracker-web is licensed under the **GNU General Public License v3 or later**
 プラグインや専用ソフトのインストールなしに、モダンブラウザ上でファミコン系モジュール（`.dnm` / `.0cc` / `.ftm`）の高精度な再生・編集・保存を実現します。
 
 JavaScript API やメッセージ構成は [ZXTune Web](https://github.com/hhungry2/zxtune-web) と互換性を持って設計されており、将来的な [zxtune.com](https://zxtune.com/) への統合や、Web 単体でのトラッカー制作環境の提供を目的としています。
+
+**試す:** GitHub Pages の[エディター](https://hhungry2.github.io/FamiTracker-web/editor.html)と[プレイヤー](https://hhungry2.github.io/FamiTracker-web/)（`main` へのプッシュのたびに `.github/workflows/pages.yml` がビルドして公開）と、[zxtune.com](https://zxtune.com/create/famitracker) で動きます。
 
 ---
 
