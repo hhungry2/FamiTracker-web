@@ -13,6 +13,7 @@
 // The functions that only work on numbers are exported for test/frames.mjs.
 
 import { MAX_FRAMES, MAX_PATTERNS } from './dnft-song.mjs';
+import { TouchGestures } from './dnft-touch.mjs';
 
 // PageUp and PageDown go this many frames (CFrameEditor::OnKeyDown())
 const PAGE_FRAMES = 4;
@@ -128,11 +129,24 @@ export class FrameEditor {
     this.pastEnd = false;     // the cursor on the row after the last frame
     this.drag = null;
     const list = this.list;
-    list.addEventListener('pointerdown', e => this.onPointerDown(e));
-    list.addEventListener('pointermove', e => this.onPointerMove(e));
-    list.addEventListener('pointerup', () => this.endDrag(true));
-    list.addEventListener('pointercancel', () => this.endDrag(false));
+    // the mouse and the pen here; a finger is the gestures' (dnft-touch.mjs): a tap goes to the
+    // pattern, a drag scrolls, a long press and a drag select, a long press alone opens the menu
+    const mouse = handler => e => e.pointerType === 'touch' || handler(e);
+    list.addEventListener('pointerdown', mouse(e => this.onPointerDown(e)));
+    list.addEventListener('pointermove', mouse(e => this.onPointerMove(e)));
+    list.addEventListener('pointerup', mouse(() => this.endDrag(true)));
+    list.addEventListener('pointercancel', mouse(() => this.endDrag(false)));
     list.addEventListener('contextmenu', e => this.onContextMenu(e));
+    this.touch = new TouchGestures(list, {
+      tap: (x, y) => this.touchTap(x, y),
+      scroll: (dx, dy) => this.touchScroll(dx, dy),
+      held: (x, y) => this.touchHeld(x, y),
+      dragStart: (x0, y0, x, y) => this.touchDragStart(x, y),
+      dragMove: (x, y) => this.touchDragMove(x, y),
+      dragEnd: () => this.touchDragEnd(),
+      menu: (x, y) => this.touchMenu(x, y),
+      cancel: () => this.touchCancel(),
+    });
     list.addEventListener('keydown', e => this.onKey(e));
   }
 
@@ -616,7 +630,8 @@ export class FrameEditor {
   onContextMenu(e) {
     const editor = this.editor;
     e.preventDefault();
-    if (!editor.song)
+    // a finger's long press opens it when the finger lifts (touchMenu())
+    if (!editor.song || this.touch.fromTouch())
       return;
     this.focus();
     const place = this.hit(e.clientX, e.clientY);
@@ -625,6 +640,94 @@ export class FrameEditor {
       this.goTo(place);
     }
     editor.files.contextMenu(this.menuItems(), e.clientX, e.clientY, () => this.focus());
+  }
+
+  // ---- the frame list with a finger -----------------------------------------------------------
+
+  touchTap(x, y) {
+    if (!this.editor.song)
+      return;
+    const place = this.hit(x, y);
+    this.focus();
+    this.digits = '';
+    if (!place)
+      return;
+    this.deselect();
+    this.goTo(place);
+  }
+
+  // A drag scrolls the list either way; false at its ends, which stops a fling
+  touchScroll(dx, dy) {
+    const list = this.list;
+    const left = list.scrollLeft, top = list.scrollTop;
+    list.scrollLeft = left - dx;
+    list.scrollTop = top - dy;
+    return list.scrollLeft !== left || list.scrollTop !== top || Math.hypot(dx, dy) < 1;
+  }
+
+  // A long press starts a selection where it is (on the frame numbers, whole frames); a drag then
+  // takes it on, as the mouse does
+  touchHeld(x, y) {
+    const editor = this.editor;
+    if (!editor.song)
+      return;
+    const place = this.hit(x, y);
+    this.touchHold = { place, before: this.state(), cursor: { ...editor.cursor } };
+    if (!place)
+      return;
+    const frame = Math.min(place.frame, editor.tr.frames - 1);
+    const from = { frame, channel: place.channel ?? 0 };
+    this.touchHold.from = from;
+    if (place.channel === null)
+      this.select(from, { frame, channel: editor.channelCount - 1 });
+    else
+      this.select(from, from);
+  }
+
+  touchDragStart(x, y) {
+    const hold = this.touchHold;
+    if (!hold?.from)
+      return;
+    this.drag = { from: hold.from, whole: hold.place.channel === null, moved: true, pointer: { x, y } };
+    this.touchDragMove(x, y);
+  }
+
+  touchDragMove(x, y) {
+    if (!this.drag)
+      return;
+    this.drag.pointer = { x, y };
+    this.dragTo();
+    this.autoScroll();
+  }
+
+  touchDragEnd() {
+    this.touchHold = null;
+    this.endDrag(false);
+  }
+
+  // The long press let go where it was: the frame menu, for the pattern there
+  touchMenu(x, y) {
+    const editor = this.editor;
+    const hold = this.touchHold;
+    this.touchHold = null;
+    if (!hold || !editor.song)
+      return;
+    this.restore(hold.before);
+    const place = hold.place;
+    if (place && !inFrames(this.selection, place.frame, place.channel ?? editor.cursor.channel)) {
+      this.deselect();
+      this.goTo(place);
+    }
+    editor.files.contextMenu(this.menuItems(), x, y, () => this.focus());
+  }
+
+  touchCancel() {
+    const hold = this.touchHold;
+    this.touchHold = null;
+    const dragged = !!this.drag;
+    this.endDrag(false);
+    if (hold && !dragged)
+      this.restore(hold.before);
   }
 
   menuItems() {

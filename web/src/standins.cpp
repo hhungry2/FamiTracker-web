@@ -19,6 +19,9 @@
 #include "VersionChecker.h"
 #include "libsamplerate/include/samplerate.h"
 
+#include <algorithm>
+#include <iterator>
+
 // ---- CFamiTrackerView (see portable/SoundGenUI.h) ------------------------------------------
 
 bool CFamiTrackerView::PlayerGetNote(int Track, int Frame, int Channel, int Row, stChanNote &NoteData)
@@ -55,6 +58,60 @@ bool CFamiTrackerView::PlayerGetNote(int Track, int Frame, int Channel, int Row,
 	}
 
 	return ValidCommand;
+}
+
+void CFamiTrackerView::PlayerTick()
+{
+	// CFamiTrackerView::PlayerTick(): with more than one note held, the arpeggio goes up to the
+	// next of them, around; notes let go are dropped as it passes them
+	if (m_iAutoArpKeyCount == 1 || !theApp.GetSettings()->Midi.bMidiArpeggio)
+		return;
+
+	int OldPtr = m_iAutoArpPtr;
+	do {
+		m_iAutoArpPtr = (m_iAutoArpPtr + 1) & 127;
+		if (m_iAutoArpNotes[m_iAutoArpPtr] == 1) {
+			m_iArpeggiate[m_iAutoArpChannel] = m_iAutoArpPtr;
+			break;
+		}
+		else if (m_iAutoArpNotes[m_iAutoArpPtr] == 2) {
+			m_iAutoArpNotes[m_iAutoArpPtr] = 0;
+		}
+	}
+	while (m_iAutoArpPtr != OldPtr);
+}
+
+int CFamiTrackerView::GetAutoArpeggio(unsigned int Channel)
+{
+	// Return and reset next arpeggio note
+	if (Channel >= static_cast<unsigned>(MAX_CHANNELS))
+		return 0;
+	int ret = m_iArpeggiate[Channel];
+	m_iArpeggiate[Channel] = 0;
+	return ret;
+}
+
+void CFamiTrackerView::MakeSilent()
+{
+	m_iAutoArpPtr = 0;
+	m_iAutoArpKeyCount = 0;
+	std::fill(std::begin(m_iArpeggiate), std::end(m_iArpeggiate), 0);
+	std::fill(std::begin(m_iAutoArpNotes), std::end(m_iAutoArpNotes), 0);
+}
+
+void CFamiTrackerView::AutoArpNote(int MidiNote, bool Held, int Channel)
+{
+	if (Channel < 0 || Channel >= MAX_CHANNELS)
+		return;
+	MidiNote = std::clamp(MidiNote, 0, NOTE_COUNT - 1);
+	if (!Held) {
+		m_iAutoArpNotes[MidiNote] = 2;
+		return;
+	}
+	m_iAutoArpNotes[MidiNote] = 1;
+	m_iAutoArpPtr = MidiNote;
+	m_iAutoArpChannel = Channel;
+	m_iAutoArpKeyCount = static_cast<int>(std::count(std::begin(m_iAutoArpNotes), std::end(m_iAutoArpNotes), 1));
 }
 
 // ---- CVersionChecker -------------------------------------------------------------------------------

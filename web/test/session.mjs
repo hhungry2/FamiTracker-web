@@ -553,6 +553,43 @@ check('the N163 setting is the desktop\'s "disable multiplexing"', () => {
   s.delete();
 });
 
+check('the auto arpeggio goes through the notes held by hand, a tick each, upwards', () => {
+  const s = dnft.createSession(RATE);
+  // the pitch of pulse 1 every half tick, and its changes
+  const pitches = n => Array.from({ length: n }, () => { s.render(heap, 400); return Math.round(s.channelFrequencies(0, 1)[0]); });
+  const changes = list => list.filter((f, i) => i === 0 || f !== list[i - 1]);
+  const hold = (note, octave) => { s.noteOn(0, note, octave, 0, 16); s.arpNote(octave * 12 + note - 1, true, 0); };
+  const [C, E, G] = [523, 658, 782];
+  assert.equal(s.autoArpeggio(), false, 'off by default, as on the desktop');
+  s.setAutoArpeggio(true);
+  try {
+    // one note: no arpeggio
+    hold(NOTE_C, 4);
+    assert.deepEqual(changes(pitches(12)), [C]);
+    // C, E and G held: the new note first, then from the note after it upwards, around
+    // (CFamiTrackerView::PlayerTick())
+    hold(NOTE_E, 4);
+    hold(NOTE_G, 4);
+    assert.deepEqual(changes(pitches(24)), [G, E, G, C, E, G, C, E, G, C, E, G]);
+    // a note let go is left out
+    s.arpNote(4 * 12 + NOTE_E - 1, false, 0);
+    assert.deepEqual(new Set(changes(pitches(24))), new Set([C, G]));
+    // off: the pitch stays
+    s.setAutoArpeggio(false);
+    pitches(2);
+    assert.equal(changes(pitches(24)).length, 1);
+    // the notes are forgotten when the player starts (CFamiTrackerView::MakeSilent())
+    s.setAutoArpeggio(true);
+    s.play(0, 0, 0, 0);
+    s.stop();
+    hold(NOTE_E, 4);
+    assert.deepEqual(changes(pitches(12)), [E], 'only the note held since');
+  } finally {
+    s.setAutoArpeggio(false);
+  }
+  s.delete();
+});
+
 check('the register state and pitches of the chips', () => {
   const s = dnft.createSession(RATE);
   s.noteOn(0, 10, 4, 0, 16);

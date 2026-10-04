@@ -29,6 +29,7 @@ import { TrackerMenu } from './dnft-tracker-menu.mjs';
 import { Displays } from './dnft-displays.mjs';
 import { Keymap } from './dnft-keymap.mjs';
 import { effectHintKey } from './dnft-effect-hints.mjs';
+import { TouchGestures } from './dnft-touch.mjs';
 import { RecentFiles } from './dnft-recent.mjs';
 import { Config } from './dnft-config.mjs';
 import { STRINGS } from './dnft-editor-strings.mjs';
@@ -140,7 +141,10 @@ export class DnFTEditor {
     // moved by `transpose` and get `instrument` (NO_INSTRUMENT: the one in use); outside
     // the edit mode they play on the channel with the id `channel` (-1: the cursor's)
     this.split = { note: -1, channel: -1, instrument: NO_INSTRUMENT, transpose: 0 };
-    this.held = new Map();      // note keys held: code -> channel
+    this.held = new Map();      // note keys held: code -> the voice it plays ({channel, midi})
+    this.handNotes = new Map(); // the notes held by hand: midi -> how many hold it
+    this.lastHandNote = new Map(); // channel -> the note played on it last by hand, which a release stops
+    this.pianoHeld = new Map(); // the piano's keys held: pointer -> {key, voice}
     this.dirty = false;         // changed since last saved to a file
     this.fileName = null;
     this.activeEditor = 'pattern';     // the pattern or the 'frames', which had the keyboard last
@@ -555,9 +559,11 @@ export class DnFTEditor {
     // the pattern
     const scroller = this.view.scroller;
     scroller.tabIndex = 0;
-    scroller.addEventListener('pointerdown', e => this.onGridPointerDown(e));
-    scroller.addEventListener('pointermove', e => this.onGridPointerMove(e));
-    scroller.addEventListener('pointerup', e => {
+    // the mouse and the pen here; a finger is the gestures' (dnft-touch.mjs)
+    const mouse = handler => e => e.pointerType === 'touch' || handler(e);
+    scroller.addEventListener('pointerdown', mouse(e => this.onGridPointerDown(e)));
+    scroller.addEventListener('pointermove', mouse(e => this.onGridPointerMove(e)));
+    scroller.addEventListener('pointerup', mouse(e => {
       // the keys held as the button is let go decide between a move and a copy
       if (this.drag?.dropping) {
         this.drag.copy = e.ctrlKey || e.metaKey;
@@ -565,8 +571,19 @@ export class DnFTEditor {
         this.dragSelection();
       }
       this.endDrag(true);
-    });
-    scroller.addEventListener('pointercancel', () => this.endDrag());
+    }));
+    scroller.addEventListener('pointercancel', mouse(() => this.endDrag()));
+    this.touch = new TouchGestures(this.view.canvas, {
+      tap: (x, y) => this.touchTap(x, y),
+      doubleTap: () => this.touchDoubleTap(),
+      scroll: (dx, dy) => this.touchScroll(dx, dy),
+      held: (x, y) => this.touchHeld(x, y),
+      dragStart: (x0, y0, x, y) => this.touchDragStart(x0, y0, x, y),
+      dragMove: (x, y) => this.touchDragMove(x, y),
+      dragEnd: (x, y) => this.touchDragEnd(x, y),
+      menu: (x, y) => this.touchMenu(x, y),
+      cancel: () => this.touchCancel(),
+    }, { axisLock: true });
     scroller.addEventListener('dblclick', e => this.onGridDoubleClick(e));
     scroller.addEventListener('contextmenu', e => this.onGridContextMenu(e));
     scroller.addEventListener('wheel', e => this.onGridWheel(e), { passive: false });
@@ -588,7 +605,8 @@ export class DnFTEditor {
         this.instrumentEditor.open(Number(item.dataset.instrument));
     });
 
-    // the piano: press a key, slide to others
+    // the piano: press a key, slide to others; each finger plays a key of its own, so that a
+    // touch screen plays chords
     const pianoKey = e => e.target.closest('.dnft-piano-key');
     els.piano.addEventListener('pointerdown', e => {
       const key = pianoKey(e);
@@ -598,16 +616,17 @@ export class DnFTEditor {
       // touch keeps the pointer on the first key otherwise
       if (key.hasPointerCapture?.(e.pointerId))
         key.releasePointerCapture(e.pointerId);
-      this.pianoNote(key, true);
+      this.pianoNote(e.pointerId, key);
     });
     els.piano.addEventListener('pointerover', e => {
       const key = pianoKey(e);
-      if (key && this.pianoHeld && key !== this.pianoHeld.key && e.buttons)
-        this.pianoNote(key, true);
+      const held = this.pianoHeld.get(e.pointerId);
+      if (key && held && key !== held.key && e.buttons)
+        this.pianoNote(e.pointerId, key);
     });
-    const release = () => {
-      if (this.pianoHeld)
-        this.pianoNote(null, false);
+    const release = e => {
+      if (this.pianoHeld.has(e.pointerId))
+        this.pianoNote(e.pointerId, null);
     };
     window.addEventListener('pointerup', release);
     window.addEventListener('pointercancel', release);
@@ -1057,7 +1076,8 @@ export class DnFTEditor {
   }
 
   // Plays a note by hand (CFamiTrackerView::PlayNote()). Outside the edit mode the split
-  // keyboard may send it to its channel; returns the channel that plays it, for noteOff().
+  // keyboard may send it to its channel; returns the voice that plays it ({channel, midi}), for
+  // noteOff(). The note also joins the ones the auto arpeggio goes through (TriggerMIDINote()).
   noteOn(channel, note, octave, volume = MAX_VOLUME) {
     let midi = midiNote(note, octave);
     let instrument = this.instrument;
@@ -1073,34 +1093,63 @@ export class DnFTEditor {
     }
     this.session.resume();
     this.session.send('noteOn', channel, midi % 12 + 1, Math.floor(midi / 12), instrument, volume);
-    return channel;
+    this.session.send('arpNote', midi, true, channel);
+    this.handNotes.set(midi, (this.handNotes.get(midi) ?? 0) + 1);
+    this.lastHandNote.set(channel, midi);
+    this.showArpeggio();
+    return { channel, midi };
   }
 
-  noteOff(channel) {
-    this.session.send('noteOff', channel, false);
+  // A note played by hand let go. Only the note played last on its channel stops it: the others
+  // held go on, as the desktop's keys do (CFamiTrackerView::CutMIDINote()); `stop` false lets it
+  // ring (the IT edit style's keys)
+  noteOff(voice, { stop = true } = {}) {
+    if (!voice)
+      return;
+    this.session.send('arpNote', voice.midi, false, voice.channel);
+    const count = (this.handNotes.get(voice.midi) ?? 1) - 1;
+    if (count > 0)
+      this.handNotes.set(voice.midi, count);
+    else
+      this.handNotes.delete(voice.midi);
+    if (stop && this.lastHandNote.get(voice.channel) === voice.midi) {
+      this.lastHandNote.delete(voice.channel);
+      this.session.send('noteOff', voice.channel, false);
+    }
+    this.showArpeggio();
+  }
+
+  // With the auto arpeggio on, the status line has the notes held as steps up from the lowest
+  // (CFamiTrackerView::UpdateArpDisplay())
+  showArpeggio() {
+    if (!this.config.get('midiArpeggio') || !this.handNotes.size)
+      return;
+    const notes = [...this.handNotes.keys()].sort((a, b) => a - b);
+    this.message(this.strings.autoArpeggioNotes + notes.map(note => note - notes[0]).join(' '));
   }
 
   releaseHeldNotes() {
-    for (const channel of this.held.values())
-      this.noteOff(channel);
+    for (const voice of this.held.values())
+      this.noteOff(voice);
     this.held.clear();
   }
 
-  pianoNote(key, down) {
-    if (this.pianoHeld) {
-      this.noteOff(this.pianoHeld.channel);
-      this.pianoHeld.key.classList.remove('is-down');
-      this.pianoHeld = null;
+  // A finger (or the mouse) on a key of the piano, or off it (key null)
+  pianoNote(pointer, key) {
+    const held = this.pianoHeld.get(pointer);
+    if (held) {
+      this.pianoHeld.delete(pointer);
+      this.noteOff(held.voice);
+      if (![...this.pianoHeld.values()].some(other => other.key === held.key))
+        held.key.classList.remove('is-down');
     }
-    if (!down || !key)
+    if (!key)
       return;
     const semitone = Number(key.dataset.semitone);
     const octave = Math.min(OCTAVES - 1, this.octave + Number(key.dataset.octave));
-    let channel = this.cursor.channel;
     key.classList.add('is-down');
-    if (this.previews())
-      channel = this.noteOn(channel, NOTE.C + semitone, octave);
-    this.pianoHeld = { key, channel };
+    const voice = this.previews() ? this.noteOn(this.cursor.channel, NOTE.C + semitone, octave) : null;
+    this.pianoHeld.set(pointer, { key, voice });
     if (this.editMode && this.cursor.column === 0)
       this.enterNote(NOTE.C + semitone, octave);
   }
@@ -2416,11 +2465,13 @@ export class DnFTEditor {
     (this.activeEditor === 'frames' ? this.els.frames : this.view.scroller).focus({ preventScroll: true });
   }
 
+  // A note key let go: its note stops, but with the IT edit style it rings on
+  // (CFamiTrackerView::HandleKeyboardNote())
   onKeyUp(e) {
-    const channel = this.held.get(e.code);
-    if (channel !== undefined) {
+    const voice = this.held.get(e.code);
+    if (voice !== undefined) {
       this.held.delete(e.code);
-      this.noteOff(channel);
+      this.noteOff(voice, { stop: this.editStyle !== 'it' });
     }
   }
 
@@ -2752,7 +2803,7 @@ export class DnFTEditor {
   // A double click selects the channel in the frame; on the row numbers, the frame
   // (CPatternEditor::OnMouseDblClk())
   onGridDoubleClick(e) {
-    if (e.target !== this.view.canvas || e.shiftKey)
+    if (e.target !== this.view.canvas || e.shiftKey || this.touch.fromTouch())
       return;
     const place = this.view.hit(e.clientX, e.clientY);
     if (place)
@@ -2765,6 +2816,9 @@ export class DnFTEditor {
     if (e.target !== this.view.canvas)
       return;
     e.preventDefault();
+    // a finger's long press opens it when the finger lifts (touchMenu())
+    if (this.touch.fromTouch())
+      return;
     this.endDrag();
     // its commands are the pattern's
     this.view.scroller.focus({ preventScroll: true });
@@ -2773,6 +2827,142 @@ export class DnFTEditor {
     if (place && place.channel !== null)
       this.setCursor(place, { keep: true });
     this.patternMenu.openContextMenu(e.clientX, e.clientY);
+  }
+
+  // ---- the pattern with a finger (dnft-touch.mjs) ------------------------------------------------
+
+  // A tap: the cursor to the cell (on the row numbers, to the row), and no selection
+  touchTap(x, y) {
+    if (!this.song)
+      return;
+    const place = this.view.hit(x, y);
+    this.view.scroller.focus({ preventScroll: true });
+    this.activeEditor = 'pattern';
+    this.touchPlace = place;
+    if (!place)
+      return;
+    this.deselect();
+    this.setCursor(place.channel === null ? { ...this.cursor, frame: place.frame, row: place.row } : place);
+  }
+
+  // Two taps: as a double click, the channel in the frame (on the row numbers, the frame)
+  touchDoubleTap() {
+    if (this.song && this.touchPlace)
+      this.selectScope('frame', this.touchPlace.channel === null ? 'all' : 'channel');
+  }
+
+  // A drag: sideways the channels, up and down the rows, as the wheel moves them (the cursor
+  // stays in the middle line), but not round the ends of the track. False at an end, which
+  // stops a fling.
+  touchScroll(dx, dy) {
+    if (!this.song)
+      return false;
+    let moved = false;
+    if (dx) {
+      const scroller = this.view.scroller;
+      const before = scroller.scrollLeft;
+      scroller.scrollLeft = Math.max(0, Math.min(scroller.scrollWidth - scroller.clientWidth, before - dx));
+      moved = scroller.scrollLeft !== before || Math.abs(dx) < 1;
+    }
+    if (dy) {
+      this.touchRows = (this.touchRows ?? 0) - dy / this.view.rowHeight;
+      const rows = Math.trunc(this.touchRows);
+      moved = true;
+      if (rows) {
+        this.touchRows -= rows;
+        const { rows: length, frames } = this.tr;
+        const at = this.cursor.frame * length + this.cursor.row + rows;
+        const to = Math.max(0, Math.min(length * frames - 1, at));
+        this.setCursor({ ...this.cursor, frame: Math.floor(to / length), row: to % length }, { keep: true });
+        moved = to === at;
+      }
+    }
+    return moved;
+  }
+
+  // A long press: in the selection (editing on), it is picked up and shows where it would go;
+  // elsewhere a selection starts there (whole rows on the row numbers). What it was comes back if
+  // the finger lifts without moving (touchMenu()).
+  touchHeld(x, y) {
+    if (!this.song)
+      return;
+    const place = this.view.hit(x, y);
+    this.touchHold = { place, before: this.editState() };
+    if (!place)
+      return;
+    if (this.editMode && place.channel !== null && this.inSelection(place)) {
+      this.touchHold.move = true;
+      this.dragTarget = this.selection;
+      this.view.invalidate();
+    } else if (place.channel === null) {
+      const last = this.channelCount - 1;
+      this.select({ frame: place.frame, row: place.row, channel: 0, column: 0 },
+        { frame: place.frame, row: place.row, channel: last, column: this.columns(last) - 1 });
+    } else {
+      this.select(place, place);
+    }
+  }
+
+  // ...then a drag: it selects as the mouse does, or moves the selection picked up (no copy: a
+  // finger has no Ctrl)
+  touchDragStart(x0, y0, x, y) {
+    const place = this.touchHold?.place;
+    if (!place)
+      return;
+    if (this.touchHold.move)
+      this.drag = { dropping: true, grab: place, origin: { x: x0, y: y0 }, copy: false, mix: false };
+    else if (place.channel === null)
+      this.drag = { rows: true, start: { frame: place.frame, row: place.row, channel: 0, column: 0 }, moved: true };
+    else
+      this.drag = { start: place, moved: true };
+    this.dragging = true;
+    this.touchDragMove(x, y);
+  }
+
+  touchDragMove(x, y) {
+    if (!this.drag)
+      return;
+    this.drag.pointer = { x, y };
+    this.dragTo();
+    if (this.drag)
+      this.autoScroll();
+  }
+
+  touchDragEnd(x, y) {
+    this.touchHold = null;
+    if (!this.drag)
+      return;
+    this.drag.pointer = { x, y };
+    if (this.drag.dropping)
+      this.dragSelection();
+    this.endDrag(true);
+  }
+
+  // ...or let go where it was: the right button's menu, for the cell (the cursor goes there, the
+  // selection is the one there was)
+  touchMenu(x, y) {
+    const hold = this.touchHold;
+    this.touchHold = null;
+    if (!hold)
+      return;
+    this.dragTarget = null;
+    this.restoreEditState(hold.before);
+    this.view.scroller.focus({ preventScroll: true });
+    this.activeEditor = 'pattern';
+    if (hold.place && hold.place.channel !== null)
+      this.setCursor(hold.place, { keep: true });
+    this.patternMenu.openContextMenu(x, y);
+  }
+
+  touchCancel() {
+    const hold = this.touchHold;
+    this.touchHold = null;
+    const dragged = !!this.drag;
+    this.endDrag();
+    if (hold && !dragged) {
+      this.dragTarget = null;
+      this.restoreEditState(hold.before);
+    }
   }
 
   // The wheel moves the rows; with Ctrl it transposes, with Shift (editing) it changes the

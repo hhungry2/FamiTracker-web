@@ -33,6 +33,7 @@ export const DEFAULTS = {
   // whether a key's velocity is the volume entered
   midiInput: '',
   midiChannelMap: false,
+  midiArpeggio: false,     // Auto arpeggiate chords: the notes held by hand take turns, a tick each
   midiVelocity: false,
   noteKeys: { cut: ['Digit1'], release: ['Backslash', 'IntlYen', 'IntlRo'], clear: ['Minus'], repeat: [], echo: [] },
   fontFamily: '',         // the pattern's font ('' is the editor's own)
@@ -229,6 +230,7 @@ export class Config {
   async applySound() {
     if (this.sound && Object.keys(this.sound).length)
       await this.editor.session.call('setSoundSettings', this.sound);
+    this.editor.session.send('setAutoArpeggio', !!this.get('midiArpeggio'));
   }
 
   // ---- what the settings do to the page ---------------------------------------------------------
@@ -464,6 +466,7 @@ export class Config {
         <label class="dnft-field dnft-field--inline"><span>${escape(t.configMidiInput)}</span>
           <select data-general="midiInput"><option value="">${escape(t.configMidiAll)}</option>${inputs.map(input => `<option value="${escape(input.id)}">${escape(input.name)}</option>`).join('')}</select></label>
         ${check('midiChannelMap', t.configMidiChannelMap, t.configMidiChannelMapHint)}
+        ${check('midiArpeggio', t.configMidiArpeggio, t.configMidiArpeggioHint)}
         ${check('midiVelocity', t.configMidiVelocity, t.configMidiVelocityHint)}
       </div>
       <p class="dnft-hint">${escape(inputs.length ? t.configMidiNote : t.configMidiOff + ' ' + t.configMidiNote)}</p>`;
@@ -763,6 +766,7 @@ export class Config {
     this.applyLook();
     editor.applyConfig();
     editor.patternMenu.listenMidi();
+    editor.session?.send('setAutoArpeggio', !!this.values.midiArpeggio);
     if (this.soundDraft) {
       const changed = {};
       for (const key of Object.keys(this.soundDraft))
@@ -795,7 +799,7 @@ export class Config {
         this.buildAppearance();
         break;
       case 'midi':
-        for (const name of ['midiInput', 'midiChannelMap', 'midiVelocity'])
+        for (const name of ['midiInput', 'midiChannelMap', 'midiVelocity', 'midiArpeggio'])
           this.draft[name] = DEFAULTS[name];
         this.buildMidi();
         break;

@@ -98,6 +98,9 @@ public:
 	void PlayRow(int track, int frame, int row);
 	// Tracker > Kill Sound: stops the player and silences the APU and the channels.
 	void KillSound();
+	// A note played by hand (the keyboard, the piano, MIDI) begins or ends: for the auto
+	// arpeggio (Configuration > MIDI), the note (octave * 12 + semitone) and its channel
+	void ArpNote(int note, bool held, int channel);
 	// Recall channel state: the state of a channel at the row (while the player plays, as it
 	// is now), as the desktop's status line words it; empty for no such channel.
 	std::string RecallChannelState(int track, int channel, int frame, int row);

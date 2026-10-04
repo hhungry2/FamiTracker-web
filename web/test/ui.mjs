@@ -12,6 +12,7 @@ import { STRINGS } from '../html/dnft-editor-strings.mjs';
 import { effectHintKey } from '../html/dnft-effect-hints.mjs';
 import { NOTE_KEYS, NOTE_KEYS_MPT } from '../html/dnft-song.mjs';
 import { DEFAULTS, exportTheme, importTheme } from '../html/dnft-config.mjs';
+import { TOUCH, TouchTracker, flingStep, isDoubleTap } from '../html/dnft-touch.mjs';
 
 let failures = 0;
 function check(name, fn) {
@@ -303,6 +304,75 @@ check('a theme file is the desktop\'s: names and colours as 0xBBGGRR, and comes 
   assert.deepEqual(partial, { colors: { '--dnft-pe-bg': '#ff0000' }, fontSize: 32 });
   assert.equal(importTheme('nothing here'), null);
   assert.equal(importTheme('Background : not a colour'), null);
+});
+
+// ---- a finger on the pattern and the frame list (dnft-touch.mjs) ------------------------------------
+
+check('a finger: a tap, a scroll along its axis, a long press that opens the menu or selects', () => {
+  // a tap, wobbling less than the slop
+  let f = new TouchTracker(100, 100, 0, { axisLock: true });
+  assert.equal(f.move(103, 104, 30), null);
+  assert.deepEqual(f.end(80), { tap: true });
+  // a drag: a scroll, from the press, on the axis it began on (here up and down)
+  f = new TouchTracker(100, 100, 0, { axisLock: true });
+  assert.deepEqual(f.move(103, 88, 20), { scroll: { dx: 0, dy: -12 } });
+  assert.deepEqual(f.move(120, 80, 40), { scroll: { dx: 0, dy: -8 } });
+  assert.equal(f.longPress(), false, 'a scroll is no long press');
+  // without the lock, both ways
+  f = new TouchTracker(100, 100, 0);
+  assert.deepEqual(f.move(110, 90, 20), { scroll: { dx: 10, dy: -10 } });
+  // sideways first: sideways only
+  f = new TouchTracker(100, 100, 0, { axisLock: true });
+  assert.deepEqual(f.move(80, 95, 20), { scroll: { dx: -20, dy: 0 } });
+  // a long press let go where it was: the menu
+  f = new TouchTracker(100, 100, 0);
+  assert.equal(f.longPress(), true);
+  assert.equal(f.move(104, 102, 500), null, 'still within the slop');
+  assert.deepEqual(f.end(600), { menu: true });
+  // a long press, then a drag
+  f = new TouchTracker(100, 100, 0);
+  f.longPress();
+  assert.deepEqual(f.move(100, 120, 500), { drag: 'start' });
+  assert.deepEqual(f.move(100, 140, 520), { drag: 'move' });
+  assert.deepEqual(f.end(540), { dragEnd: true });
+});
+
+check('a finger flung goes on, slower and slower; one that rested first does not', () => {
+  // 30 pixels every 10 ms upwards, lifted at once: about 3 pixels a millisecond
+  let f = new TouchTracker(0, 400, 0, { axisLock: true });
+  for (let i = 1; i <= 6; i++)
+    f.move(0, 400 - 30 * i, 10 * i);
+  const fling = f.end(62).fling;
+  assert.ok(fling && fling.vx === 0 && fling.vy < -2.5 && fling.vy > -3.5, JSON.stringify(fling));
+  // the same, then still for a while before the lift
+  f = new TouchTracker(0, 400, 0, { axisLock: true });
+  for (let i = 1; i <= 6; i++)
+    f.move(0, 400 - 30 * i, 10 * i);
+  assert.deepEqual(f.end(200), { scrollEnd: true });
+  // slowly: no fling
+  f = new TouchTracker(0, 400, 0);
+  for (let i = 1; i <= 10; i++)
+    f.move(0, 400 - 2 * i, 20 * i);
+  assert.deepEqual(f.end(205), { scrollEnd: true });
+  // the fling's steps: the way goes down as the speed does, and stops
+  let v = { vx: 0, vy: -3 }, way = 0, frames = 0;
+  for (; frames < 1000; ++frames) {
+    const step = flingStep(v.vx, v.vy, 16);
+    way += step.dy;
+    v = step;
+    if (step.done)
+      break;
+  }
+  assert.ok(frames > 20 && frames < 200, `${frames} frames`);
+  assert.ok(way < -500 && way > -1500, `${way} pixels`);
+  assert.equal(TOUCH.FLING_DECAY ** 1, flingStep(0, 1, 16).vy);
+});
+
+check('two taps close together, soon after each other, are a double tap', () => {
+  assert.ok(isDoubleTap({ x: 100, y: 100, t: 0 }, { x: 110, y: 105, t: 250 }));
+  assert.ok(!isDoubleTap({ x: 100, y: 100, t: 0 }, { x: 110, y: 105, t: 400 }), 'too late');
+  assert.ok(!isDoubleTap({ x: 100, y: 100, t: 0 }, { x: 160, y: 100, t: 100 }), 'too far');
+  assert.ok(!isDoubleTap(null, { x: 100, y: 100, t: 0 }));
 });
 
 if (failures) {

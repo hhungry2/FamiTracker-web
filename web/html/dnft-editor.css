@@ -470,6 +470,9 @@
 
 .dnft-frame-list {
   user-select: none;
+  /* a finger's drag scrolls it, or selects after a long press (dnft-touch.mjs) */
+  touch-action: none;
+  -webkit-touch-callout: none;
 }
 
 .dnft-instrument-list {
@@ -1006,6 +1009,9 @@
   display: block;
   cursor: text;
   touch-action: none;
+  /* a finger's long press is the editor's (dnft-touch.mjs), not the browser's */
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 
 /* ---- keys and status ---- */

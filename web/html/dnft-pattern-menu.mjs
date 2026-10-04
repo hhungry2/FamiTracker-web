@@ -1125,15 +1125,17 @@ export class PatternMenu {
       this.midi.held.set(`${channel}:${key}`, editor.noteOn(channel, note, octave, editor.config.get('midiVelocity') ? Math.floor(velocity / 8) : undefined));
     if (editor.editMode)
       editor.enterNote(note, octave, editor.cursor.column === 0, volume, channel);
-    editor.message(t.midiNote.replace('%1', NOTE_NAMES[note - 1]).replace('%2', octave).replace('%3', velocity));
+    // with the auto arpeggio on, the status line has its notes (noteOn())
+    if (!editor.config.get('midiArpeggio'))
+      editor.message(t.midiNote.replace('%1', NOTE_NAMES[note - 1]).replace('%2', octave).replace('%3', velocity));
   }
 
   midiNoteOff(key, mapped = this.editor.cursor.channel) {
     const held = `${mapped}:${key}`;
-    const channel = this.midi.held.get(held);
-    if (channel !== undefined) {
+    const voice = this.midi.held.get(held);
+    if (voice !== undefined) {
       this.midi.held.delete(held);
-      this.editor.noteOff(channel);
+      this.editor.noteOff(voice);
     }
   }
 }

@@ -15,6 +15,7 @@
 #pragma once
 
 #include "stdafx.h"
+#include "FamiTrackerTypes.h"
 #include "FamiTrackerViewMessage.h"
 #include "gsl/span"
 #include <cstdint>
@@ -30,10 +31,13 @@ public:
 	unsigned int GetSelectedRow() const { return m_iSelectedRow; }
 	int GetMarkerFrame() const { return m_iSelectedFrame; }
 	int GetMarkerRow() const { return m_iSelectedRow; }
-	void PlayerTick() {}
+	// The auto arpeggio (Configuration > MIDI, CSettings Midi.bMidiArpeggio): a tick at a time,
+	// the next of the notes held goes to the channel (CFamiTrackerView::PlayerTick(),
+	// GetAutoArpeggio()); all of it starts over with the player (MakeSilent())
+	void PlayerTick();
 	bool PlayerGetNote(int Track, int Frame, int Channel, int Row, stChanNote &NoteData);
-	void MakeSilent() {}
-	int GetAutoArpeggio(unsigned int) { return 0; }
+	void MakeSilent();
+	int GetAutoArpeggio(unsigned int Channel);
 	// The sound generator tells the view that a recorded instrument is ready (the instrument
 	// recorder); the host takes it into the document after the tick, as the desktop's view
 	// does when it gets the message.
@@ -50,6 +54,10 @@ public:
 	void SetSelection(unsigned int Frame, unsigned int Row) { m_iSelectedFrame = Frame; m_iSelectedRow = Row; }
 	void SetMutedChannels(uint64_t Mask) { m_iMutedChannels = Mask; }
 	bool IsChannelMuted(int Channel) const { return Channel < 64 && (m_iMutedChannels >> Channel & 1) != 0; }
+	// A note played by hand (the keyboard, the piano, MIDI) begins or ends: what the desktop's
+	// TriggerMIDINote(), CutMIDINote() and ReleaseMIDINote() keep for the auto arpeggio. Its
+	// notes go to the channel of the note begun last (the desktop's go to the cursor's).
+	void AutoArpNote(int MidiNote, bool Held, int Channel);
 
 private:
 	CFamiTrackerDoc *m_pDoc = nullptr;
@@ -57,6 +65,12 @@ private:
 	unsigned int m_iSelectedRow = 0;
 	uint64_t m_iMutedChannels = 0;
 	int m_iPendingDumps = 0;
+	// 0: not held, 1: held, 2: let go (dropped as the arpeggio passes it)
+	unsigned char m_iAutoArpNotes[128] = {};
+	int m_iAutoArpPtr = 0;
+	int m_iAutoArpKeyCount = 0;
+	int m_iAutoArpChannel = 0;
+	int m_iArpeggiate[MAX_CHANNELS] = {};
 };
 
 class CVisualizerWnd : public CWnd {

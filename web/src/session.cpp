@@ -323,6 +323,12 @@ std::string Session::RecallChannelState(int track, int channel, int frame, int r
 	return engine.host->RecallChannelState(track, doc.GetChannelType(channel));
 }
 
+void Session::ArpNote(int note, bool held, int channel) {
+	if (!IsCurrent() || m_bWave)
+		return;
+	GetEngine().view.AutoArpNote(note, held, channel);
+}
+
 void Session::KillSound() {
 	if (!IsCurrent() || m_bWave)
 		return;

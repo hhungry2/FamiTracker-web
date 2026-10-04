@@ -249,6 +249,7 @@ As with players, one session drives the sound generator at a time.
   `dnft-keymap.mjs`: the shortcuts as a table that Configuration changes; `dnft-config.mjs`: the
   Configuration dialog; `dnft-help.mjs`: Help Topics, the effect table, About; `dnft-recent.mjs`:
   the recent files; `dnft-effect-hints.mjs`: which hint the status line gives for an effect;
+  `dnft-touch.mjs`: what a finger does on the pattern and the frame list;
   `dnft-instrument-editor.mjs`: the instrument editor's dialog and the sequences;
   `dnft-instrument-panels.mjs`: its wave editors and the FDS, N163 and VRC7 panels;
   `dnft-dpcm.mjs`: the DPCM panel, the sample editor and the import of WAV files;
@@ -428,8 +429,16 @@ has a key until one is given. Configuration > Appearance saves and loads a theme
 text file (Theme.txt: the colours as 0xBBGGRR, flats, font, size, row height; what the editor has
 no colour for is written and not read). Configuration > MIDI chooses the input (the devices show
 once Enable MIDI is on), maps MIDI channel n to the module's channel n, and records a key's
-velocity as the volume; the desktop's auto arpeggio of chords, sync ticks and output device are
-not in this version (nor its Skip key releases, which the desktop keeps but does not use).
+velocity as the volume, and has the desktop's Auto arpeggiate chords: the notes held by hand
+take turns on their channel, a tick each, upwards from the one after the note pressed last
+(CFamiTrackerView::PlayerTick(); the engine's `setAutoArpeggio(on)`, and `arpNote(note, held,
+channel)` for each note pressed or let go), with the keyboard and the piano as well as MIDI, as
+the desktop's keyboard does too; the status line shows the notes as steps from the lowest. The
+desktop sends the arpeggio to the cursor's channel, this one to the channel of the note pressed
+last. The desktop's sync ticks and output device are not in this version (nor its Skip key
+releases, which the desktop keeps but does not use). A note key let go stops its channel only
+if its note is the one played last there, so the other notes held go on (CutMIDINote()), and
+with the IT edit style not at all.
 
 The View menu holds the follow mode, the compact view (only the notes, in narrow channels, and
 the cursor has only the note column), the meters' decay rate (every channel's header has
@@ -441,7 +450,14 @@ spectrum (beside the toolbar; a click switches), where the frame list is (in the
 panel, or above the pattern) and whether the side panels show. What is chosen there is kept
 in the browser. On a phone the file buttons and the menus are a strip that scrolls
 sideways, a menu opens as a sheet at the bottom of the window, and the side panels start
-closed (the button with three bars opens them).
+closed (the button with three bars opens them). On a touch screen the pattern and the frame
+list take the finger themselves (`dnft-touch.mjs`): a tap puts the cursor there, two taps are
+a double click, a drag scrolls (in the pattern the rows up and down or the channels sideways,
+along the way it began, and on for a while when flung; not round the ends of the track), a long
+press and then a drag selects (in the pattern, inside the selection with editing on, it moves
+the selection instead: a finger has no Ctrl to copy), and a long press let go where it was
+opens the right button's menu (Android's own long-press menu is held back). The piano plays a
+key for each finger, so chords can be played on it.
 
 The button after Recent opens the Configuration, which the desktop's has as File >
 Configuration: General (hexadecimal or decimal rows, flats, whether the cursor wraps round

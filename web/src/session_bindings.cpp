@@ -261,6 +261,21 @@ public:
 		return dnft::detail::ToUtf8(state.c_str(), state.size());
 	}
 
+	//! Configuration > MIDI > Auto arpeggiate chords: the engine's setting (CSettings
+	//! Midi.bMidiArpeggio); with it on, the notes held by hand take turns, a tick each
+	void setAutoArpeggio(bool on) {
+		theApp.GetSettings()->Midi.bMidiArpeggio = on;
+	}
+
+	bool autoArpeggio() const {
+		return theApp.GetSettings()->Midi.bMidiArpeggio;
+	}
+
+	//! A note played by hand begins or ends (the notes the auto arpeggio goes through)
+	void arpNote(int note, bool held, int channel) {
+		m_pSession->ArpNote(note, held, channel);
+	}
+
 	//! Tracker > Kill Sound
 	void killSound() {
 		m_pSession->KillSound();
@@ -1995,6 +2010,9 @@ EMSCRIPTEN_BINDINGS(dnft_session) {
 		.function("setQueueFrame", &EditSession::setQueueFrame)
 		.function("queueFrame", &EditSession::queueFrame)
 		.function("recallChannelState", &EditSession::recallChannelState)
+		.function("setAutoArpeggio", &EditSession::setAutoArpeggio)
+		.function("autoArpeggio", &EditSession::autoArpeggio)
+		.function("arpNote", &EditSession::arpNote)
 		.function("killSound", &EditSession::killSound)
 		.function("setMeterDecayRate", &EditSession::setMeterDecayRate)
 		.function("meterDecayRate", &EditSession::meterDecayRate)
