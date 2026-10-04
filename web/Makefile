@@ -9,7 +9,8 @@
 # assertions on.
 
 ROOT := ..
-SRC := $(ROOT)/Source
+DESKTOP := $(ROOT)/desktop
+SRC := $(DESKTOP)/Source
 
 ifdef debug
 BUILD := build/debug
@@ -21,7 +22,7 @@ DIST := dist
 CXX := em++
 CC := emcc
 
-# The part of Source/ that loads, plays and exports modules. Everything else there is
+# The part of desktop/Source/ that loads, plays and exports modules. Everything else there is
 # user interface code.
 CORE_SOURCES := \
 	FamiTrackerDoc DocumentFile SimpleFile ModuleException \
@@ -53,10 +54,10 @@ CORE_OBJECTS := \
 OBJECTS := $(CORE_OBJECTS) $(addprefix $(BUILD)/web/,$(addsuffix .o,$(WEB_SOURCES)))
 
 DEFINES := -DDNFT_PORTABLE
-# compat/ goes first: it answers <afx.h>, <windows.h> and friends. The repository root
-# and Source/ match the include directories of the desktop project; generated/ has
-# what the build makes, such as the NSF drivers that Source/Driver.h includes.
-INCLUDES := -Icompat -Isrc -I$(ROOT) -I$(SRC) -I$(SRC)/APU -I$(BUILD)/generated
+# compat/ goes first: it answers <afx.h>, <windows.h> and friends. desktop/ and
+# desktop/Source/ match the include directories of the desktop project; generated/
+# has what the build makes, such as the NSF drivers that Source/Driver.h includes.
+INCLUDES := -Icompat -Isrc -I$(DESKTOP) -I$(SRC) -I$(SRC)/APU -I$(BUILD)/generated
 
 ifdef debug
 OPT := -O0 -g -DDNFT_DEBUG
@@ -117,14 +118,14 @@ $(BUILD)/web/%.o: src/%.cpp
 	$(CXX) $(CXXFLAGS) $(WEB_WARNINGS) -c $< -o $@
 
 # Message texts come from the string tables of the desktop resource script
-$(BUILD)/generated/strings.inc: $(ROOT)/Dn-FamiTracker.rc $(ROOT)/resource.h tools/rc_strings.py
+$(BUILD)/generated/strings.inc: $(DESKTOP)/Dn-FamiTracker.rc $(DESKTOP)/resource.h tools/rc_strings.py
 	@mkdir -p $(dir $@)
-	python3 tools/rc_strings.py $(ROOT)/Dn-FamiTracker.rc $(ROOT)/resource.h > $@
+	python3 tools/rc_strings.py $(DESKTOP)/Dn-FamiTracker.rc $(DESKTOP)/resource.h > $@
 
 $(BUILD)/web/dnft_compat.o: $(BUILD)/generated/strings.inc
 
 # The NSF drivers, which the NSF export puts around the music: assembled from
-# Source/drivers/asm by the script the desktop build runs (Source/drivers/build.cmd),
+# desktop/Source/drivers/asm by the script the desktop build runs (Source/drivers/build.cmd),
 # which calls ca65 and ld65. A build of cc65 made with emcc runs under node:
 #   make CA65="node <cc65>/bin/ca65" LD65="node <cc65>/bin/ld65"   (see tools/build_cc65.sh)
 # The script calls the tools by those names: commands by the names that run CA65 and

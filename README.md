@@ -8,6 +8,48 @@
 
 [English](#english) | [日本語 (Japanese)](#日本語-japanese)
 
+### Screenshot / 画面キャプチャー
+
+[![FamiTracker-web editor with a demo module loaded / デモ曲を開いたウェブ版エディター](docs/screenshots/web-editor.jpg)](https://hhungry2.github.io/FamiTracker-web/editor.html)
+
+Web editor with “Trapped Within a Memory” by AtomicMelodies loaded.
+デモ曲「Trapped Within a Memory」（AtomicMelodies）を開いたウェブ版エディターです。
+
+### Repository layout / ファイル構成
+
+```text
+FamiTracker-web/
+├── web/                       # Browser application / ウェブ版
+│   ├── html/                  # Player and editor UI (HTML, CSS, JavaScript)
+│   ├── src/                   # WebAssembly bindings and browser integration
+│   ├── compat/                # MFC / Win32 compatibility layer
+│   ├── test/                  # Browser engine and editor tests
+│   ├── tools/                 # Web build tools
+│   ├── Makefile               # Emscripten build
+│   └── dist/                  # Generated website (ignored by Git)
+├── desktop/                   # Windows application / デスクトップ版
+│   ├── Source/                # Original C++ application; engine reused by web/
+│   ├── res/                   # Windows resources
+│   ├── Dn-help/               # Desktop manual (Git submodule)
+│   ├── cmake/                 # Desktop CMake configuration
+│   ├── Dn-FamiTracker.sln      # Visual Studio entry point
+│   ├── CMakeLists.txt         # CMake entry point
+│   └── release.bat            # Desktop release packaging
+├── demo/                      # Modules shared by both versions / 共通のデモ曲
+├── docs/                      # Format specifications and development notes / 共通資料
+└── LICENSE*                   # Licenses for both versions / 共通ライセンス
+```
+
+Start with [web/README.md](web/README.md) for the browser build or
+[desktop/README.md](desktop/README.md) for the Windows build.
+The web build compiles the engine from `desktop/Source/` with `web/compat/`;
+the C++ source is maintained in one place.
+
+ウェブ版は [web/README.md](web/README.md)、デスクトップ版は
+[desktop/README.md](desktop/README.md) が入口です。ウェブ版は
+`desktop/Source/` のエンジンを `web/compat/` と組み合わせてビルドします。
+共通の C++ コードは複製せず、一か所で管理します。
+
 ---
 
 <a name="english"></a>
@@ -24,7 +66,7 @@ The audio engine follows the same interface conventions as [ZXTune Web](https://
 ### ✨ Key Features
 
 #### 1. High-Accuracy WebAssembly Sound Engine
-- **Authentic Chip Emulation**: Compiles the original `Source/` sound driver and emulation cores (2A03/NES APU, VRC6, VRC7, FDS, MMC5, Namco 163, Sunsoft 5B).
+- **Authentic Chip Emulation**: Compiles the original `desktop/Source/` sound driver and emulation cores (2A03/NES APU, VRC6, VRC7, FDS, MMC5, Namco 163, Sunsoft 5B).
 - **Format Support**: Plays native `.dnm`, `.0cc`, and `.ftm` modules through the exact same synthesis path as the desktop tracker's WAV export.
 - **Full Playback Control**: Sample-accurate seeking, loop handling, channel mute/solo masks, and multi-track (subsong) switching.
 - **AudioWorklet & Web Worker Architecture**: Glitch-free, low-latency audio rendering with the browser owning the audio clock. No `SharedArrayBuffer` or COOP/COEP headers required.
@@ -168,10 +210,10 @@ const savedBytes = session.save(); // Uint8Array of .dnm file
 
 ### ⚙️ How It Works
 
-- **Zero Core Rewrites**: Compiles the original desktop C++ codebase in `Source/` using Emscripten. Win32 and MFC dependencies (`CString`, `CFile`, memory files, window stubs) are seamlessly handled by the lightweight compatibility layer in [`web/compat/`](web/compat/).
+- **Zero Core Rewrites**: Compiles the original desktop C++ codebase in `desktop/Source/` using Emscripten. Win32 and MFC dependencies (`CString`, `CFile`, memory files, window stubs) are seamlessly handled by the lightweight compatibility layer in [`web/compat/`](web/compat/).
 - **Decoupled Audio Threading**: Instead of relying on OS audio threads, [`web/src/soundgen_host.cpp`](web/src/soundgen_host.cpp) steps `CSoundGen` frame by frame and collects synthesized audio samples through the exact same pipeline used by the desktop's WAV export.
 - **Fresh APU per Playback**: Each playback start initializes a clean APU state, preventing residual chip state leakage (e.g. Namco 163 wave RAM registers) from affecting consecutive plays.
-- **Minimal Upstream Footprint**: Only minor portability tweaks and `#ifdef DNFT_PORTABLE` hooks are added to `Source/`, ensuring seamless synchronization with upstream Dn-FamiTracker releases.
+- **Minimal Upstream Footprint**: Only minor portability tweaks and `#ifdef DNFT_PORTABLE` hooks are added to `desktop/Source/`, ensuring seamless synchronization with upstream Dn-FamiTracker releases.
 
 ---
 
@@ -205,7 +247,7 @@ JavaScript API やメッセージ構成は [ZXTune Web](https://github.com/hhung
 ### ✨ 主な機能・特徴
 
 #### 1. 高精度な WebAssembly 再生エンジン
-- **オリジナル再現度のチップエミュレーション**: `Source/` のサウンドドライバとエミュレータコア（2A03 / VRC6 / VRC7 / FDS / MMC5 / N163 / Sunsoft 5B）をそのまま Emscripten でビルド。
+- **オリジナル再現度のチップエミュレーション**: `desktop/Source/` のサウンドドライバとエミュレータコア（2A03 / VRC6 / VRC7 / FDS / MMC5 / N163 / Sunsoft 5B）をそのまま Emscripten でビルド。
 - **WAV 書き出しと同一の合成経路**: デスクトップ版の「WAV ファイル書き出し」と同一の内部処理で 1 フレームずつ波形を生成し、サンプル単位で正確な音を再現。
 - **完全な再生制御**: サンプル精度のシーク、ループ再生、チャンネル別ミュート・ソロ、複数曲（サブソング）選択に対応。
 - **AudioWorklet & Web Worker 構成**: ブラウザがオーディオクロックを保持し、メインスレッドをブロックしない低遅延・安定再生。COOP/COEP ヘッダー不要。
@@ -302,10 +344,10 @@ node web/test/compare.mjs <モジュール> <書き出し.wav>  # デスクト�
 
 ### ⚙️ 仕組みと技術的工夫
 
-- **本体コードを無改造でコンパイル**: `Source/` 配下のデスクトップ版 C++ ソースコードを可能な限り改変せずそのまま使用。MFC / Win32 特有の型や API（`CString`, `CFile`, インメモリファイル操作）は [`web/compat/`](web/compat/) の軽量互換レイヤーが代替します。
+- **本体コードを無改造でコンパイル**: `desktop/Source/` 配下のデスクトップ版 C++ ソースコードを可能な限り改変せずそのまま使用。MFC / Win32 特有の型や API（`CString`, `CFile`, インメモリファイル操作）は [`web/compat/`](web/compat/) の軽量互換レイヤーが代替します。
 - **オーディオスレッドのホスト化**: デスクトップ版のオーディオスレッドの代わりに [`web/src/soundgen_host.cpp`](web/src/soundgen_host.cpp) がフレームごとに `CSoundGen` を駆動し、WAV エクスポートと同一の経路で PCM サンプルを取得。
 - **再生ごとの APU リセット**: 再生開始ごとに APU インスタンスを新しく生成することで、N163 の波形 RAM などの内部レジスタ残存による音色のブレを完全に排除。
-- **上流追従性の維持**: `Source/` への改変は MSVC 以外のコンパイラ（Clang/GCC）対応と `#ifdef DNFT_PORTABLE` のフックのみにとどめ、本家 Dn-FamiTracker のアップデートをスムーズに取り込める構造にしています。
+- **上流追従性の維持**: `desktop/Source/` への改変は MSVC 以外のコンパイラ（Clang/GCC）対応と `#ifdef DNFT_PORTABLE` のフックのみにとどめ、本家 Dn-FamiTracker のアップデートをスムーズに取り込める構造にしています。
 
 ---
 

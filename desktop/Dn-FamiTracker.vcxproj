@@ -693,6 +693,7 @@
     <CustomBuild Include="resource.h">
       <Message>Generating map file for help compiler.</Message>
       <Command>call $(SolutionDir)generate-helpmap.bat</Command>
+      <AdditionalInputs>$(SolutionDir)..\LICENSE.md;$(SolutionDir)..\LICENSE-GPLv2.txt;$(SolutionDir)..\LICENSE-GPLv3.txt;$(SolutionDir)..\LICENSE-MIT-0.txt;%(AdditionalInputs)</AdditionalInputs>
       <Outputs>Dn-help\hlp\HTMLDefines.h;%(Outputs)</Outputs>
       <BuildInParallel>true</BuildInParallel>
     </CustomBuild>

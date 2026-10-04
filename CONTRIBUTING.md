@@ -8,6 +8,15 @@ Welcome! Thank you for contributing to Dn-FamiTracker. The following serves as a
 
 ## Dependencies and building
 
+The browser application lives in [`web/`](web/README.md); its build and tests use
+Emscripten and Node.js. The Windows application lives in [`desktop/`](desktop/README.md).
+The dependencies below are for the desktop build. Both builds reuse the engine in
+`desktop/Source/` without keeping a second copy.
+
+Open `desktop/Dn-FamiTracker.sln` in Visual Studio, or configure CMake with
+`cmake -S desktop -B desktop/build`. Initialize the help submodule with
+`git submodule update --init --recursive` before building the desktop application.
+
 To edit and/or build the source, you may use Visual Studio 2022, or alternatively, any IDE that supports CMake. You will need the following dependencies:
 
 - [HTML Help Workshop](https://docs.microsoft.com/en-us/previous-versions/windows/desktop/htmlhelp/microsoft-html-help-downloads) to build the manual.
@@ -38,7 +47,7 @@ To edit and/or build the source, you may use Visual Studio 2022, or alternativel
 		- C++ ATL for latest v143 build tools (x86 & x64)
 		- C++ MFC for latest v143 build tools (x86 & x64)
 		- Windows 11 SDK (10.0.26100.0)
-- Alternatively, you can install the components mentioned via the [provided .vsconfig file](../Dn-FT_VS_Dependencies.vsconfig).
+- Alternatively, you can install the components mentioned via the [provided .vsconfig file](desktop/Dn-FT_VS_Dependencies.vsconfig).
 
 ---
 

@@ -10,7 +10,7 @@
 // Out-of-line parts of the MFC/Win32 compatibility layer (compat/).
 
 #include "stdafx.h"
-#include "../resource.h"
+#include "resource.h"
 #include "dnft_compat.h"
 
 #include <cstdio>

@@ -14,8 +14,9 @@ import sys
 
 WEB = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROOT = os.path.dirname(WEB)
-SRC = os.path.join(ROOT, 'Source')
-INCLUDE_DIRS = [os.path.join(WEB, 'compat'), os.path.join(WEB, 'src'), ROOT, SRC, os.path.join(SRC, 'APU')]
+DESKTOP = os.path.join(ROOT, 'desktop')
+SRC = os.path.join(DESKTOP, 'Source')
+INCLUDE_DIRS = [os.path.join(WEB, 'compat'), os.path.join(WEB, 'src'), DESKTOP, SRC, os.path.join(SRC, 'APU')]
 INCLUDE = re.compile(r'\s*#\s*include\s*([<"])([^>"]+)[>"]')
 
 

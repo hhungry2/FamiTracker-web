@@ -8,10 +8,12 @@ on:
     branches: [main]
     paths:
       - 'web/**'
-      - 'Source/**'
+      - 'desktop/Source/**'
       - 'demo/**'
-      - 'Dn-FamiTracker.rc'
-      - 'resource.h'
+      - 'desktop/Dn-FamiTracker.rc'
+      - 'desktop/resource.h'
+      - 'desktop/name.h'
+      - 'desktop/version.h'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 

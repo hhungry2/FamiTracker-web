@@ -29,6 +29,5 @@ Format
 
 Notice:
 - Please fill in the details appropriately.
-- Be sure to update CHANGELOG.md in the `Unreleased` section, as well as the date last updated.
+- Be sure to update desktop/CHANGELOG.md in the `Unreleased` section, as well as the date last updated.
 - Check [commit_changelog_format.md](https://github.com/Dn-Programming-Core-Management/Dn-FamiTracker/blob/main/docs/commit_changelog_format.md) for better details on commit and change log style.
-

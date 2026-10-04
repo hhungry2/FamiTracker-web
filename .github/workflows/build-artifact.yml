@@ -39,9 +39,10 @@ jobs:
         configuration: "${{ matrix.configuration }}"
         commithash: "${{ env.commithash }}"
     - run: call release.bat ${{ matrix.configuration }} ${{ matrix.platform }} ${{ env.commithash }}_${{ github.run_id }}
+      working-directory: desktop
       shell: cmd
     - name: Upload binaries
       uses: actions/upload-artifact@v4
       with:
         name: Dn-FamiTracker_${{ env.commithash }}_${{ github.run_id }}_${{ matrix.platform }}_${{ matrix.configuration }}
-        path: distribute/*_${{ matrix.platform }}_${{ matrix.configuration }}.7z
+        path: desktop/distribute/*_${{ matrix.platform }}_${{ matrix.configuration }}.7z

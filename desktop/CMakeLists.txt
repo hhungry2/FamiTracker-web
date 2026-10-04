@@ -8,6 +8,13 @@ include(cmake_user_begin.cmake OPTIONAL)
 
 project(${project})
 
+# The upstream help scripts read licenses from their solution directory.
+# Keep the canonical files shared at the repository root and copy them for that build.
+foreach(license LICENSE.md LICENSE-GPLv2.txt LICENSE-GPLv3.txt LICENSE-MIT-0.txt)
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/../${license}"
+                   "${CMAKE_CURRENT_SOURCE_DIR}/${license}" COPYONLY)
+endforeach()
+
 # libsamplerate ships with 3 sinc tables of different qualities.
 # SRC_SINC_BEST_QUALITY uses a massive 1.36 megabyte sinc table,
 # and we don't even use SRC_SINC_BEST_QUALITY.

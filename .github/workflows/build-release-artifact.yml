@@ -41,12 +41,13 @@ jobs:
         configuration: "Release"
         commithash: "${{ env.commithash }}"
     - run: call release.bat Release ${{ matrix.platform }}
+      working-directory: desktop
       shell: cmd
     - name: Upload binaries
       uses: actions/upload-artifact@v4
       with:
         name: Dn-FamiTracker_${{ env.commithash }}_${{ github.run_id }}_${{ matrix.platform }}
-        path: distribute/*_${{ matrix.platform }}_Release.7z
+        path: desktop/distribute/*_${{ matrix.platform }}_Release.7z
   publish-build:
     needs: build-matrix-publish
     runs-on: windows-2022

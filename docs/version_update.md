@@ -3,18 +3,18 @@
 listing out things to do so i won't forget to do them -persune
 
 - [ ] Update changelogs:
-	- [CHANGELOG.md](Dn-FamiTracker/CHANGELOG.md), which will update [../Dn-Help/hlp/changelog_shell.htm](changelog_shell.htm) upon build
+	- [CHANGELOG.md](../desktop/CHANGELOG.md), which will update [desktop/Dn-help/hlp/changelog.htm](../desktop/Dn-help/hlp/changelog.htm) upon build
 	- see [commit changelog format](commit_changelog_format.md)
 - [ ] Update copyright years in:
 	- [LICENSE.md](../LICENSE.md)
 	- [README.md](../README.md)
-	- [Dn-FamiTracker.rc](../Dn-FamiTracker.rc)
+	- [Dn-FamiTracker.rc](../desktop/Dn-FamiTracker.rc)
 - [ ] Edit every file with version info:`
-	- [version.h](../version.h)
-		- [Dn-FamiTracker.rc](../Dn-FamiTracker.rc) gets its version constants from here through a build script
-	- [Readme.txt](../Readme.txt)
+	- [version.h](../desktop/version.h)
+		- [Dn-FamiTracker.rc](../desktop/Dn-FamiTracker.rc) gets its version constants from here through a build script
+	- [Readme.txt](../desktop/Readme.txt)
 - [ ] **IMPORTANT**: update ConfigVersion.cpp
-- [ ] [Dn-help update](../Dn-help/version_update.md)
+- [ ] [Dn-help update](../desktop/Dn-help/version_update.md)
 - [ ] ***important***: set date of release at the last moment!
 - [ ] Create and push Version Tag to the repo
 	- Format: `Dnx.y.z.b`
