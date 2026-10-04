@@ -19,6 +19,7 @@
 #pragma once
 
 #include "engine.h"
+#include "nsf_import.h"
 
 #include <cstdint>
 #include <memory>
@@ -54,6 +55,10 @@ public:
 	// importer's message; `warning` gets what it reported about a file it did read (a
 	// JSON block it could not parse).
 	static std::shared_ptr<Session> ImportText(const uint8_t *data, size_t size, uint32_t sampleRate, std::string &warning);
+	// Import NSF: the module made from an NSF's frame log (the NSF analyzer's, see
+	// nsf_import.h). Throws LoadError when the log holds nothing to make one of.
+	static std::shared_ptr<Session> ImportNsf(const uint8_t *log, size_t size, uint32_t sampleRate,
+		const NsfImportOptions &options, NsfImportResult &result);
 	~Session();
 	Session(const Session &) = delete;
 	Session &operator=(const Session &) = delete;

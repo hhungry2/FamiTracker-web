@@ -1254,6 +1254,23 @@
   color: var(--dnft-muted);
 }
 
+/* the NSF import: what the file says of itself */
+.dnft-nsf-about {
+  display: grid;
+  gap: 2px;
+  overflow-wrap: anywhere;
+}
+
+.dnft-nsf-line {
+  font-size: 12px;
+  color: var(--dnft-muted);
+}
+
+strong.dnft-nsf-line {
+  font-size: 14px;
+  color: inherit;
+}
+
 .dnft-comment-body {
   display: grid;
   gap: 10px;

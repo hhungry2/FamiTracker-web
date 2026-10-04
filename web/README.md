@@ -6,7 +6,9 @@ loader, sound driver and chip emulation, taken unchanged from `desktop/Source/`,
 layer that stands in for MFC and Windows. It plays `.dnm`, `.0cc` and `.ftm` modules,
 rendering them the way the desktop tracker's WAV export does, and edits them, with the
 desktop's exports (WAV, NSF and the other kinds of its NSF export, text, JSON, rows) and
-imports (text, the tracks and instruments of another module).
+imports (text, the tracks and instruments of another module). It also makes modules of
+NSFs, which it plays with [NSFPlay](https://github.com/bbbradsmith/nsfplay) to write down
+what their chips do, frame by frame (see [NSF import](#nsf-import)).
 
 The javascript interface follows the one of the [ZXTune web build](https://github.com/hhungry2/zxtune-web/tree/web/apps/zxtune-web),
 so a page can drive either engine the same way.
@@ -17,9 +19,10 @@ Directory layout
 ----------------
 
 `html/` contains the player and editor UI, `src/` the WebAssembly integration,
-`compat/` the Windows/MFC compatibility layer, `test/` the Node.js test suites, and
-`tools/` the build helpers. `Makefile` builds into the ignored `build/` and `dist/`
-directories. Run the commands below from the repository root.
+`compat/` the Windows/MFC compatibility layer, `test/` the Node.js test suites,
+`tools/` the build helpers, and `third_party/nsfplay/` the part of NSFPlay the NSF import
+plays NSFs with. `Makefile` builds into the ignored `build/` and `dist/` directories. Run
+the commands below from the repository root.
 
 The Windows application and the original C++ engine live in
 [`../desktop/`](../desktop/README.md). The web build selects the reusable engine
@@ -27,7 +30,8 @@ sources from `../desktop/Source/` and resource strings from
 `../desktop/Dn-FamiTracker.rc`. Shared demo modules remain in `../demo/`.
 
 ウェブ版の画面は `html/`、WASM との連携は `src/`、互換レイヤーは `compat/`、
-テストは `test/`、ビルド補助ツールは `tools/` にあります。デスクトップ版は
+テストは `test/`、ビルド補助ツールは `tools/`、NSF の読み込みに使う NSFPlay の一部は
+`third_party/nsfplay/` にあります。デスクトップ版は
 `../desktop/` にあり、共通エンジンは `../desktop/Source/` から再利用します。
 ビルド結果は `dist/`、共通のデモ曲は `../demo/` です。
 
@@ -41,7 +45,7 @@ the NSF drivers the NSF export puts around the music. The build assembles them f
 
 ```sh
 source <emsdk>/emsdk_env.sh
-make -C web -j$(nproc)          # dist/dnft.mjs, dist/dnft.wasm
+make -C web -j$(nproc)          # dist/dnft.mjs, dist/dnft.wasm, dist/dnft-nsf.mjs, dist/dnft-nsf.wasm
 make -C web site                # plus the demo page and the demo modules in dist/
 python3 -m http.server -d web/dist
 ```
@@ -573,6 +577,99 @@ to it, bit for bit, as with the other chips (`test/seek.mjs`). The FDS and the V
 buffers of the same kind; 300 s of a module of each did not drift, and they are as they
 were.
 
+### NSF import
+
+An NSF is a program for the NES's CPU, not a list of notes, so the import plays it and
+writes down what its driver does to each channel, frame by frame. It comes in two halves,
+in two modules:
+
+- `src/nsf_analyzer.cpp`, built with NSFPlay (`third_party/nsfplay/`) into
+  `dist/dnft-nsf.mjs`, which the editor loads the first time it opens an NSF (the engine
+  compiles changed copies of some of NSFPlay's chips, which would clash with NSFPlay's
+  own). NSFPlay runs the NSF's init and play routines; a CPU logger of the analyzer's own
+  sees every write and every call of the play routine, and when the routine returns the
+  analyzer writes down the state of each channel of the chips the NSF uses: whether it
+  sounds (the length and linear counters and the sweep's muting as they are at the end of
+  the frame), its period or frequency, volume (envelopes included: one a write restarted
+  counts from 15, which the next clock of the frame counter starts it at), duty or timbre,
+  and what the frame's writes did (a note restarted, a sample started or stopped, the delta
+  counter, the 2A03's sweep register, the 5B's envelope), with a hash of the sound
+  registers the frame wrote and their values. Waves (FDS, N163), modulation
+  tables, VRC7 patches and DPCM samples (read from the bus as the sample starts) are listed
+  once. The CPU reads RAM and the program straight from NSFPlay's memory: going through
+  the chips on NSFPlay's bus took most of the time (a three-minute song with the N163
+  took 10 s, now 3 s; one for the 2A03 alone takes about 1 s). The frame log's format is
+  in `src/nsf_log.h`.
+- `src/nsf_import.cpp`, in the engine: a new module, a row for each frame (speed 1 at tempo
+  150 or 125, or at no tempo, speed alone, when the NSF plays at another rate, which becomes
+  the engine speed). Each channel's state becomes the cells that make the tracker play it:
+  a note where the channel starts sounding or its driver restarts it (where the driver
+  rewrites the register that does so every frame, as the tracker's own does for the
+  triangle, only where it starts sounding or comes back from volume 0), the note nearest to
+  the pitch with the Pxx that makes the register value the NSF's (the N163's moves 64 at a
+  time, so of the notes beside the nearest one, the one that comes closest), a note with
+  the `&&` instrument where the pitch leaves the note by more than three quarters of a
+  semitone without a restart; `---`, or `===` for the VRC7's sustained release and a
+  stopped sample; the volume column; Vxx for the duty (the noise's mode, the 5B's tone,
+  noise and envelope bits, the N163's wave); Hxy and Ixy where the 2A03's sweep unit moves
+  the pitch, more finely than rows can (the tracker leaves the period to the sweep as the
+  NSF did); =00 where the driver restarts a pulse's phase and the tracker would not; the
+  DPCM's Zxx; the FDS's modulation (Hxx, Ixx, Jxx); the 5B's noise period and envelope
+  (Wxx, Hxx, Ixx, Jxx). The rows are what changes from one frame's state to the next, and
+  a state keeps its values between notes as the tracker does. The instruments have no
+  sequences: one for each chip, one for each FDS wave with its modulation table, one for
+  each place in the N163's RAM with up to 64 waves, one for each VRC7 patch, and DPCM
+  instruments with the samples on their keys (from C-3 up).
+
+Where the song starts to repeat itself for good, it jumps back there (Bxx; D00 ends the
+part before it short of a pattern). The driver writes the same again where its song
+repeats, so the periods come from the frames' writes, each seen at least twice over and
+through at least two seconds and a quarter of the frames played (a note held where the
+frames end repeats its writes too) (the Z-function of the writes read backwards); the
+channels' states repeat from there or up to
+a period later (a state depends on the writes before it), and not always quite (the frame
+counter that clocks the envelopes and the length counters does not keep time with the
+play routine), so each period starts where the states repeat best, with at most a tenth
+of its frames different, and the shortest song wins. The loop starts a frame into the
+repeating part: its first row writes whatever the frame before it and the loop's last
+frame leave different (on a silent channel, the next row that sounds does), so that it
+stands for both ways in. A song silent for its last three seconds stops a frame after its
+last sound (C00), and so does one that does not repeat within the time played. Silent
+frames before the first sound are left out. Patterns with the same rows are shared, and
+patterns get longer when the song would need more than 256 frames.
+
+Made of the tracker's own NSF exports, the modules sound like the modules they came from:
+`test/nsf.mjs` compares each channel alone by its short-time spectra (the phase can differ
+where the NSF driver restarts a channel and the tracker's playback does not), and they
+match for every channel of every chip but the noise, whose random sequence drifts apart
+wherever the drivers write at other moments. A round trip (module, NSF, import, NSF again)
+gives the same frame states for the 2A03 and the VRC6 wherever they are heard. The test
+also builds an NSF of its own that leaves its sound to the hardware as old drivers do
+(envelopes, length counters, the linear counter, the sweep, a DPCM sample), and compares
+the import with NSFPlay playing it (`nsfRender()`): each channel is as close to NSFPlay as
+the tracker's own modules are (the two emulations differ a little anyway: about 0.97 to
+0.99 for the tones, by the measure of the test).
+
+In the editor, Import > Open an NSF (and Open, and a drop, of `.nsf` and `.nsfe` files)
+reads the file's header (`nsfInfo`), then plays the song chosen for the time chosen in
+the editor's worker (`importNsf`, with its progress and a cancel) and opens the module
+made. The javascript side:
+
+```js
+const nsf = await createDnFTNsf();                  // dist/dnft-nsf.mjs
+const info = nsf.nsfInfo(at, size);                 // {error, title, artist, copyright, songs, start,
+                                                    //  chips, regions, preferred, tracks: [{title, time, fade}]...}
+const analysis = new nsf.NsfAnalysis();
+analysis.load(at, size);                            // '' or why the file is not read
+analysis.start(song, -1, 5 * 60 * 60);              // the file's region, five minutes at most
+while (!analysis.done()) analysis.run(600);         // frames at a time; analysis.frames()
+const log = analysis.log();                         // Uint8Array
+analysis.delete();
+const session = dnft.importNsf(logAt, log.length, 48000, { patternLength: 128, loop: true, trimSilence: true });
+session.nsfReport();                                // {rows, loopRow, stops, trimmed, rate, warnings}
+nsf.nsfRender(at, size, song, seconds, 44100, 0);   // Int16Array: NSFPlay playing it (mask: channels muted)
+```
+
 ### Changes to desktop/Source/
 
 Small and meant to be harmless for the desktop build:
@@ -622,6 +719,7 @@ node web/test/dpcm.mjs                           # the editor's page code that w
 node web/test/pattern.mjs                        # the pattern editor's commands, on cells
 node web/test/frames.mjs                         # the frame editor's selections and clipboard
 node web/test/ui.mjs                             # the key table, the register view's texts, the effect table
+node web/test/nsf.mjs                            # the NSF import: the demo modules and every chip through NSFs, an NSF of its own against NSFPlay
 node web/test/render.mjs <module> [out.wav]      # render and report
 node web/test/compare.mjs <module> <export.wav>  # against the desktop WAV export
 ```
@@ -641,4 +739,5 @@ License
 
 Dn-FamiTracker, and this port with it, is free software under the GNU General Public
 License v3 or later (see `../LICENSE.md` for the libraries it includes). Whoever serves
-the wasm build to browsers distributes it and has to offer its source.
+the wasm build to browsers distributes it and has to offer its source. NSFPlay, in
+`third_party/nsfplay/`, may be reused without restriction (its `readme.txt`).

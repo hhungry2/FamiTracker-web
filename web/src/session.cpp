@@ -75,6 +75,19 @@ std::shared_ptr<Session> Session::ImportText(const uint8_t *data, size_t size, u
 	return std::shared_ptr<Session>(new Session(std::move(pDoc), sampleRate));
 }
 
+std::shared_ptr<Session> Session::ImportNsf(const uint8_t *log, size_t size, uint32_t sampleRate,
+	const NsfImportOptions &options, NsfImportResult &result)
+{
+	std::unique_ptr<CFamiTrackerDoc> pDoc = detail::NewDocument();
+	try {
+		result = dnft::ImportNsf(*pDoc, log, size, options);
+	}
+	catch (const std::runtime_error &e) {
+		throw LoadError(e.what());
+	}
+	return std::shared_ptr<Session>(new Session(std::move(pDoc), sampleRate));
+}
+
 Session::Session(std::unique_ptr<CFamiTrackerDoc> document, uint32_t sampleRate) :
 	m_pDocument(std::move(document)),
 	m_iSampleRate(sampleRate)

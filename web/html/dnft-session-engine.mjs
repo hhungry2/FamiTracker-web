@@ -8,10 +8,13 @@
 // Messages from the page:
 //   {type: 'engine'} + port                 the worklet's end of the audio channel
 //   {type: 'call', id, method, args}        -> {type: 'result', id, value} | {type: 'error', id, reason}
-//   {type: 'cancel', id}                    calls off a call that takes a while (exportWave)
+//   {type: 'cancel', id}                    calls off a call that takes a while (exportWave, importNsf)
 // Methods: 'create' (sampleRate) and 'open' (bytes, sampleRate) start a session and
 // return snapshot(); 'importText' (bytes, sampleRate) too, for a text export, with the
-// importer's `warning`; 'snapshot', 'trackData' (track); 'play' takes a number for the
+// importer's `warning`; 'importNsf' (bytes, options, sampleRate) too, for an NSF, which it
+// plays with the NSF analyzer (dnft-nsf.mjs) first, sending {type: 'progress', id, value}
+// on the way, with the import's `report` (see importNsf()); 'nsfInfo' (bytes) reads an
+// NSF's header; 'snapshot', 'trackData' (track); 'play' takes a number for the
 // playback besides the session's arguments; 'beginImport' (bytes) reads a module to
 // import from; 'exportWave' (options, see exportWave()) renders wave files, sending
 // {type: 'progress', id, value} on the way; 'registerView' (requests) reads the registers
@@ -180,6 +183,70 @@ async function exportWave(id, { track, passes, seconds, rate, muted = 0, separat
   return files;
 }
 
+// ---- NSF import ----------------------------------------------------------------------------
+
+// The NSF analyzer (dnft-nsf.mjs: NSFPlay and what writes down the frames), loaded the first
+// time an NSF is looked at
+let nsfReady = null;
+const nsfAnalyzer = () => nsfReady ??= import('./dnft-nsf.mjs').then(module => module.default());
+
+function inNsfHeap(nsf, bytes, fn) {
+  const at = nsf._malloc(bytes.length);
+  nsf.HEAPU8.set(bytes, at);
+  try {
+    return fn(at, bytes.length);
+  } finally {
+    nsf._free(at);
+  }
+}
+
+// What the file's header tells: {error, title, artist, copyright, songs, start, chips,
+// regions, preferred, periodNtsc, periodPal, tracks: [{title, time, fade}]...}
+async function nsfInfo(bytes) {
+  const nsf = await nsfAnalyzer();
+  return inNsfHeap(nsf, bytes, (at, size) => nsf.nsfInfo(at, size));
+}
+
+const NSF_RUN_FRAMES = 60;   // frames played between looks at the clock
+
+// Import NSF: plays the song for at most `seconds` and makes a module of it (the session's
+// importNsf()). options: {song (from 0), region (-1 the file's, 0 NTSC, 1 PAL), seconds,
+// patternLength, loop, trimSilence}. Returns snapshot() with report (the session's
+// nsfReport()); sends {type: 'progress', id, value} while the song plays.
+async function importNsf(id, bytes, options, sampleRate) {
+  const nsf = await nsfAnalyzer();
+  const analysis = new nsf.NsfAnalysis();
+  let log;
+  try {
+    const info = inNsfHeap(nsf, bytes, (at, size) => nsf.nsfInfo(at, size));
+    const error = inNsfHeap(nsf, bytes, (at, size) => analysis.load(at, size));
+    if (error)
+      throw new Error(error);
+    const region = options.region ?? -1;
+    const pal = region === 1 || (region < 0 && info.preferred !== 0);
+    const frames = Math.max(1, Math.round((options.seconds ?? 300) * 1e6 / ((pal ? info.periodPal : info.periodNtsc) || 16639)));
+    if (!analysis.start(options.song ?? info.start, region, frames))
+      throw new Error(`no song ${(options.song ?? 0) + 1}`);
+    while (!analysis.done()) {
+      const started = performance.now();
+      while (!analysis.done() && performance.now() - started < WORK_SLICE_MS)
+        analysis.run(NSF_RUN_FRAMES);
+      self.postMessage({ type: 'progress', id, value: Math.min(1, analysis.frames() / frames) });
+      // the worklet and the page get their turn
+      await new Promise(resolve => setTimeout(resolve));
+      if (cancelled.has(id))
+        throw new Error('cancelled');
+    }
+    log = analysis.log();
+  } finally {
+    analysis.delete();
+    cancelled.delete(id);
+  }
+  // a module that cannot be made leaves the one open as it is
+  const snapshot = inHeap(log, (at, size) => begin(dnft.importNsf(at, size, sampleRate, options)));
+  return { ...snapshot, report: session.nsfReport() };
+}
+
 function call(method, args, id) {
   switch (method) {
     case 'create':
@@ -190,6 +257,10 @@ function call(method, args, id) {
       const snapshot = inHeap(args[0], (at, size) => begin(dnft.importText(at, size, args[1])));
       return { ...snapshot, warning: session.takeWarning() };
     }
+    case 'nsfInfo':
+      return nsfInfo(args[0]);
+    case 'importNsf':
+      return importNsf(id, args[0], args[1], args[2]);
   }
   if (!session)
     throw new Error('no module is open');

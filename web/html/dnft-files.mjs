@@ -1,9 +1,10 @@
 // Dn-FamiTracker web port - the editor's files besides the module: what the desktop
 // tracker's File menu exports (Create WAV, the NSF export dialog's NSF, NSFe, NSF2, NES,
-// BIN, PRG and ASM, Export Text, Export JSON, Export Rows) and imports (Import Text, and
-// the tracks and instruments of another module, from the module properties). The engine
-// does the work (src/export.h, src/session.h); this is the menus, the dialogs and the
-// downloads. Exports that write several files download them as one zip file.
+// BIN, PRG and ASM, Export Text, Export JSON, Export Rows) and imports (Import Text, the
+// tracks and instruments of another module, from the module properties, and an NSF made
+// into a module). The engine does the work (src/export.h, src/session.h, src/nsf_import.h);
+// this is the menus, the dialogs and the downloads. Exports that write several files
+// download them as one zip file.
 //
 //   const files = new FileMenu(editor);   // adds its menus to the editor's toolbar
 
@@ -19,6 +20,12 @@ const NSF_TYPES = ['nsf', 'nsfe', 'nsf2', 'nes', 'bin', 'prg', 'asm'];
 const EXTENSIONS = { nsf: 'nsf', nsfe: 'nsfe', nsf2: 'nsf', nes: 'nes', bin: 'bin', prg: 'prg', asm: 'asm' };
 const CHIP_NAMES = [['VRC6', 1], ['VRC7', 2], ['FDS', 4], ['MMC5', 8], ['N163', 16], ['5B', 32]];
 const N163 = 16;
+// The NSF import: how long a song is played to find where it repeats (twice over), and
+// the most a module holds at 60 frames a second (256 frames of 256 rows)
+const DEFAULT_NSF_SECONDS = 5 * 60;
+const NSF_MAX_SECONDS = 18 * 60;
+const NSF_PATTERN_ROWS = [64, 128, 256];
+const DEFAULT_NSF_ROWS = 128;
 
 const pad2 = n => String(n).padStart(2, '0');
 // what a file name may hold
@@ -43,6 +50,8 @@ export class FileMenu {
     this.nsfType = NSF_TYPES[0];   // the desktop dialog keeps the last kind
     this.waveTask = null;          // the wave export running
     this.importName = null;        // the file of the module import
+    this.nsfFile = null;           // {name, bytes, info} of the NSF import's dialog
+    this.nsfTask = null;           // the NSF import running
     this.build();
   }
 
@@ -63,8 +72,10 @@ export class FileMenu {
 
     this.textInput = this.fileInput('.txt', file => this.importText(file));
     this.moduleInput = this.fileInput('.dnm,.0cc,.ftm', file => this.importModule(file));
+    this.nsfInput = this.fileInput('.nsf,.nsfe', file => this.importNsf(file));
     const importMenu = this.menu(t.importMenu, t.importMenuHint, [
       { label: t.importText, hint: t.importTextHint, run: () => this.textInput.click() },
+      { label: t.importNsf, hint: t.importNsfHint, run: () => this.nsfInput.click() },
       { label: t.importModule, hint: t.importModuleHint, run: () => this.moduleInput.click() },
     ]);
     const exportMenu = this.menu(t.exportMenu, t.exportMenuHint, [
@@ -75,7 +86,7 @@ export class FileMenu {
       { label: t.exportJson, hint: t.exportJsonHint, run: () => this.exportFile('exportJSON', 'json', 'application/json') },
       { label: t.exportRows, hint: t.exportRowsHint, run: () => this.exportFile('exportRows', 'csv', 'text/csv') },
     ]);
-    save.after(importMenu, exportMenu, this.textInput, this.moduleInput);
+    save.after(importMenu, exportMenu, this.textInput, this.moduleInput, this.nsfInput);
 
     // menus close on a click elsewhere
     document.addEventListener('pointerdown', e => {
@@ -95,6 +106,7 @@ export class FileMenu {
     this.buildWaveDialog();
     this.buildNsfDialog();
     this.buildImportDialog();
+    this.buildNsfImportDialog();
   }
 
   fileInput(accept, open) {
@@ -673,5 +685,190 @@ export class FileMenu {
       editor.message(t.imported.replace('{name}', name).replace('{n}', count));
     else
       editor.message(t.importFailed + (result.messages || name), true);
+  }
+
+  // ---- NSF import ----------------------------------------------------------------------
+  //
+  // The NSF is played with NSFPlay in the editor's worker and becomes a new module, a row for
+  // each frame (src/nsf_import.h); the song is chosen here, and how long it is played.
+
+  buildNsfImportDialog() {
+    const t = this.strings;
+    const group = `dnft-nsf-region-${++dialogs}`;
+    const d = this.nsfImportDialog = this.dialog('dnft-nsf-import-dialog', `
+      <div class="dnft-nsf-about" data-role="about"></div>
+      <label class="dnft-field"><span data-t="nsfImportSong"></span><select data-role="song"></select></label>
+      <fieldset class="dnft-fieldset" data-role="regions">
+        <legend data-t="nsfImportRegion"></legend>
+        <div class="dnft-choices">
+          <label class="dnft-check"><input type="radio" name="${group}" value="0"> NTSC</label>
+          <label class="dnft-check"><input type="radio" name="${group}" value="1"> PAL</label>
+        </div>
+      </fieldset>
+      <label class="dnft-field dnft-field--inline"><span data-t="nsfImportLength"></span><input type="text" data-role="time" inputmode="numeric" spellcheck="false"><span data-t="nsfImportLengthAfter"></span></label>
+      <label class="dnft-field dnft-field--inline"><span data-t="nsfImportRows"></span><select data-role="rows"></select></label>
+      <label class="dnft-check"><input type="checkbox" data-role="loop" checked> <span data-t="nsfImportLoop"></span></label>
+      <label class="dnft-check"><input type="checkbox" data-role="trim" checked> <span data-t="nsfImportTrim"></span></label>
+      <p class="dnft-hint" data-t="nsfImportAbout"></p>
+      <div class="dnft-progress" data-role="progress" hidden><progress max="1" value="0"></progress><span></span></div>`, `
+      <button type="button" class="dnft-button dnft-button--primary" data-role="start" data-t="nsfImportStart"></button>
+      <button type="button" class="dnft-button" data-role="close"></button>`);
+    const $ = role => d.querySelector(`[data-role="${role}"]`);
+    $('rows').append(...NSF_PATTERN_ROWS.map(rows => new Option(rows, rows)));
+    $('rows').value = DEFAULT_NSF_ROWS;
+    $('loop').closest('label').title = t.nsfImportLoopHint;
+    $('time').title = t.nsfImportLengthHint;
+    $('time').addEventListener('change', () => {
+      $('time').value = formatTime(this.nsfSeconds() ?? DEFAULT_NSF_SECONDS);
+    });
+    $('song').addEventListener('change', () => this.setNsfLength());
+    $('start').addEventListener('click', () => this.startNsfImport());
+    $('close').addEventListener('click', () => {
+      if (this.nsfTask)
+        this.nsfTask.cancel();
+      else
+        d.close();
+    });
+    d.addEventListener('cancel', e => {
+      // Escape calls a running import off rather than hiding it
+      if (this.nsfTask) {
+        e.preventDefault();
+        this.nsfTask.cancel();
+      }
+    });
+    d.addEventListener('close', () => { this.nsfFile = null; });
+  }
+
+  // The length typed, within what a module holds
+  nsfSeconds() {
+    const seconds = parseTime(this.nsfImportDialog.querySelector('[data-role="time"]').value);
+    return seconds === null ? null : Math.min(NSF_MAX_SECONDS, seconds);
+  }
+
+  // How long to play the song chosen: long enough to hear it twice when the file tells its
+  // length (NSFe), else five minutes
+  setNsfLength() {
+    const d = this.nsfImportDialog;
+    const song = Number(d.querySelector('[data-role="song"]').value);
+    const known = this.nsfFile?.info.tracks[song]?.time ?? -1;
+    const seconds = known > 0 ? Math.max(DEFAULT_NSF_SECONDS, Math.ceil(known * 2 / 1000) + 10) : DEFAULT_NSF_SECONDS;
+    d.querySelector('[data-role="time"]').value = formatTime(Math.min(NSF_MAX_SECONDS, seconds));
+  }
+
+  // File > Import > NSF: the file's songs, then the dialog
+  async importNsf(file) {
+    const t = this.strings;
+    const editor = this.editor;
+    const d = this.nsfImportDialog;
+    const $ = role => d.querySelector(`[data-role="${role}"]`);
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let info;
+    try {
+      info = await this.session.call('nsfInfo', bytes);
+    } catch (e) {
+      editor.message(t.nsfImportFailed + e.message, true);
+      return;
+    }
+    if (info.error) {
+      editor.message(t.nsfImportFailed + info.error, true);
+      return;
+    }
+    this.nsfFile = { name: file.name, bytes, info };
+    d.querySelector('.dnft-dialog-title').textContent = `${t.nsfImportTitle}: ${file.name}`;
+    // what the file says of itself, which goes in as text
+    const lines = [
+      [info.title, true],
+      [[info.artist, info.copyright].filter(Boolean).join(' · ')],
+      [t.nsfImportChips + ['2A03', ...CHIP_NAMES.filter(([, bit]) => info.chips & bit).map(([name]) => name)].join(' + ') +
+        ' · ' + t.nsfImportSongs.replace('{n}', info.songs)],
+    ];
+    $('about').replaceChildren(...lines.filter(([text]) => text).map(([text, strong]) => {
+      const line = document.createElement(strong ? 'strong' : 'div');
+      line.className = 'dnft-nsf-line';
+      line.textContent = text;
+      return line;
+    }));
+    $('song').replaceChildren(...Array.from({ length: info.songs }, (_, i) => {
+      const track = info.tracks[i] ?? {};
+      const time = track.time > 0 ? ` (${formatTime(Math.round(track.time / 1000))})` : '';
+      return new Option(`#${pad2(i + 1)} ${track.title || ''}${time}`.trim(), i);
+    }));
+    $('song').value = info.start;
+    // the region is a choice when the file plays on both
+    const both = (info.regions & 3) === 3;
+    $('regions').hidden = !both;
+    d.querySelector(`input[type="radio"][value="${info.preferred === 1 ? 1 : 0}"]`).checked = true;
+    this.setNsfLength();
+    this.showNsfImportProgress(null);
+    d.showModal();
+  }
+
+  showNsfImportProgress(value) {
+    const d = this.nsfImportDialog;
+    const box = d.querySelector('[data-role="progress"]');
+    box.hidden = value === null;
+    box.querySelector('progress').value = value ?? 0;
+    box.querySelector('span').textContent = value === null ? '' : `${Math.floor(value * 100)}%`;
+    const running = value !== null;
+    d.querySelectorAll('.dnft-dialog-body input, .dnft-dialog-body select').forEach(el => { el.disabled = running; });
+    d.querySelector('[data-role="start"]').disabled = running;
+    d.querySelector('[data-role="close"]').textContent = running ? this.strings.cancel : this.strings.close;
+  }
+
+  async startNsfImport() {
+    const t = this.strings;
+    const editor = this.editor;
+    const d = this.nsfImportDialog;
+    const $ = role => d.querySelector(`[data-role="${role}"]`);
+    if (!this.nsfFile || (editor.dirty && !confirm(t.confirmOpen)))
+      return;
+    const { name, bytes, info } = this.nsfFile;
+    const song = Number($('song').value);
+    const options = {
+      song,
+      region: $('regions').hidden ? -1 : Number(d.querySelector('input[type="radio"]:checked')?.value ?? -1),
+      seconds: this.nsfSeconds() ?? DEFAULT_NSF_SECONDS,
+      patternLength: Number($('rows').value),
+      loop: $('loop').checked,
+      trimSilence: $('trim').checked,
+    };
+    editor.stopPlaying();
+    this.showNsfImportProgress(0);
+    this.nsfTask = this.session.task('importNsf', [bytes, options, this.session.sampleRate],
+      value => this.showNsfImportProgress(value));
+    let snapshot;
+    try {
+      snapshot = await this.nsfTask.promise;
+    } catch (e) {
+      if (e.message === 'cancelled')
+        editor.message(t.nsfImportCancelled);
+      else
+        editor.message(t.nsfImportFailed + e.message, true);
+      return;
+    } finally {
+      this.nsfTask = null;
+      this.showNsfImportProgress(null);
+    }
+    d.close();
+    editor.setSong(snapshot);
+    editor.fileName = name.replace(/\.nsfe?$/i, '') + (info.songs > 1 ? ` - ${pad2(song + 1)}` : '');
+    // not saved as a module yet
+    editor.dirty = true;
+    editor.renderToolbar();
+    const report = snapshot.report;
+    // m:ss, or the frames when it is shorter than a second
+    const time = rows => {
+      const rate = report.rate || 60;
+      if (rows < rate)
+        return t.nsfImportFrames.replace('{n}', rows);
+      const seconds = Math.round(rows / rate);
+      return `${Math.floor(seconds / 60)}:${pad2(seconds % 60)}`;
+    };
+    const how = report.loopRow >= 0
+      ? t.nsfImportLooped.replace('{intro}', time(report.loopRow)).replace('{loop}', time(report.rows - report.loopRow))
+      : t.nsfImportStops.replace('{length}', time(report.rows));
+    const warnings = report.warnings.map(code => t.nsfImportWarnings[code] ?? code);
+    editor.message(`${t.nsfImported}${name} — ${[how, ...warnings].join(' · ')}`, warnings.length > 0);
+    editor.saveToBrowser();
   }
 }

@@ -167,7 +167,7 @@ export class DnFTEditor {
           <button type="button" class="dnft-button" data-action="new"></button>
           <button type="button" class="dnft-button" data-action="open"></button>
           <button type="button" class="dnft-button" data-action="save"><span></span><i class="dnft-dirty" hidden></i></button>
-          <input type="file" class="dnft-file" accept=".dnm,.0cc,.ftm" hidden>
+          <input type="file" class="dnft-file" accept=".dnm,.0cc,.ftm,.nsf,.nsfe" hidden>
           <input type="file" class="dnft-instrument-file" accept=".fti" multiple hidden>
           <select class="dnft-demos" hidden></select>
         </div>
@@ -710,6 +710,9 @@ export class DnFTEditor {
     // a text export (File > Import Text)
     if (/\.txt$/i.test(file.name))
       return this.files.importText(file);
+    // an NSF becomes a module of its own (its dialog chooses the song)
+    if (/\.nsfe?$/i.test(file.name))
+      return this.files.importNsf(file);
     if (/\.fti$/i.test(file.name))
       return this.loadInstruments([file]);
     if (this.dirty && !confirm(this.strings.confirmOpen))

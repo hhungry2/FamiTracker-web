@@ -86,6 +86,7 @@ The audio engine follows the same interface conventions as [ZXTune Web](https://
 - **Expansion Chips**: Toggle expansion audio chips on the fly, with channel-level mute and solo support.
 - **Exports**: WAV (by song passes or time, chosen channels, one file per channel, sample rate), NSF / NSFe / NSF2 / NES / BIN / PRG / ASM through the desktop's own NSF compiler and drivers, and text, JSON and CSV rows, as the desktop's File menu makes them.
 - **Imports**: Text exports, and the tracks, instruments, grooves and detune tables of another module.
+- **NSF Import**: Opens a song of an NSF or NSFe (any driver, every expansion chip) as a module: [NSFPlay](https://github.com/bbbradsmith/nsfplay) plays it, and every frame becomes a row (speed 1) with notes and Pxx at the NSF's exact periods, the volume column, the duty, the 2A03's hardware sweep and each chip's effects; instruments for its waves, patches and DPCM samples; a jump back where the song starts to repeat itself.
 - **Bilingual Interface**: Native support for English and Japanese.
 
 ---
@@ -106,6 +107,7 @@ The audio engine follows the same interface conventions as [ZXTune Web](https://
 | **NSF / NSFe / NSF2 / NES / BIN / PRG / ASM Export** | ✅ Operational | The desktop's NSF compiler and drivers; exported NSFs play in ZXTune, and an NSF assembled from ASM with extra data plays the same |
 | **Text / JSON / CSV Export, Text Import** | ✅ Operational | A text export read back exports the same text and plays the same |
 | **Import from Another Module** | ✅ Operational | Imported tracks play as they did in their module |
+| **NSF Import** | ✅ Operational | Made of the tracker's own NSF exports of the demo modules and of modules for each expansion chip, every channel sounds like the module it came from, its loop included; an NSF made in the test that leaves envelopes, length counters and the sweep to the hardware, as old drivers do, sounds as close to NSFPlay playing it as the tracker's own modules do (`web/test/nsf.mjs`). Not yet tried on game NSFs |
 | **Titles, Comments and Names** | ✅ Operational | Read in Windows-1252, Shift-JIS (code page 932) or UTF-8; written in the code page the desktop shows them in, else UTF-8 |
 | **Instrument Editor** | ✅ Operational | Every kind of instrument, `.fti` files, DPCM samples and the sample editor (`web/test/instrument.mjs`, `web/test/dpcm.mjs`); damaged `.fti` files are refused without harm to the module |
 
@@ -140,6 +142,7 @@ node web/test/smoke.mjs                            # Interface checks against de
 node web/test/session.mjs                          # Editing sessions and .dnm save/load verification
 node web/test/export.mjs                           # Exports and imports (WAV, NSF..., text, JSON, rows)
 node web/test/text.mjs                             # Module texts: Windows-1252, Shift-JIS and UTF-8
+node web/test/nsf.mjs                              # NSF import: demo modules and every expansion chip, through NSFs
 node web/test/render.mjs <module> [output.wav]     # Render module to WAV
 node web/test/compare.mjs <module> <export.wav>    # Compare against desktop WAV export
 ```
@@ -276,6 +279,7 @@ JavaScript API やメッセージ構成は [ZXTune Web](https://github.com/hhung
 - **モジュールの設定**: NTSC / PAL、エンジン速度、ビブラートの方式、ピッチモード（Linear pitch）、スピードとグルーヴの切り替え。
 - **書き出し**: WAV（演奏回数または時間、チャンネルの選択、チャンネルごとのファイル、サンプリング周波数）、デスクトップ版の NSF コンパイラーとドライバーによる NSF / NSFe / NSF2 / NES / BIN / PRG / ASM、テキスト・JSON・行の一覧（CSV）。デスクトップ版の File メニューと同じ内容で書き出します。
 - **読み込み**: テキストで書き出した曲、別のモジュールの曲・音色・グルーヴ・デチューンの表。
+- **NSF の読み込み**: NSF・NSFe の曲（ドライバーを問わず、拡張音源もすべて）をモジュールとして開けます。[NSFPlay](https://github.com/bbbradsmith/nsfplay) で演奏し、1 フレームを 1 行（speed 1）にして書き取ります。音の高さは NSF の周期どおりのノートと Pxx、音量は音量列、デューティや 2A03 のハードウェア・スイープ、各チップのエフェクトも再現し、波形・パッチ・DPCM サンプルは音色になります。曲が繰り返し始めるところにはループ（Bxx）を置きます。
 - **日英バイリンガル対応**: 日本語と英語の UI 切り替えに対応。
 
 ---
@@ -296,6 +300,7 @@ JavaScript API やメッセージ構成は [ZXTune Web](https://github.com/hhung
 | **NSF / NSFe / NSF2 / NES / BIN / PRG / ASM 書き出し** | ✅ 動作 | デスクトップ版の NSF コンパイラーとドライバー。書き出した NSF は ZXTune で再生でき、補助データ付きの ASM から組み立てた NSF も同じように鳴る |
 | **テキスト / JSON / CSV 書き出し、テキスト読み込み** | ✅ 動作 | テキストで書き出して読み込み直すと、同じテキストになり同じ音で鳴る |
 | **別のモジュールからの取り込み** | ✅ 動作 | 取り込んだ曲は元のモジュールと同じ音で鳴る |
+| **NSF の読み込み** | ✅ 動作 | デモ曲と各拡張音源の曲を NSF に書き出して読み込むと、全チャンネルが元の曲と同じ音で鳴り、ループも一致。エンベロープ・長さカウンタ・スイープをハードウェアに任せる昔のドライバー風の NSF をテスト内で作って読み込むと、NSFPlay での演奏に、FamiTracker 自身の曲と同じくらい近い音で鳴る（`web/test/nsf.mjs`）。ゲームの NSF での確認はまだ |
 | **曲名・コメント・音色名などの文字** | ✅ 動作 | Windows-1252・Shift-JIS（コードページ 932）・UTF-8 を読める。保存はデスクトップ版で表示できるコードページで行い、収まらない文字は UTF-8 |
 | **音色エディター** | ✅ 動作 | 全種類の音色、`.fti` ファイル、DPCM サンプルとサンプルエディター（`web/test/instrument.mjs`、`web/test/dpcm.mjs`）。壊れた `.fti` は曲に影響なく拒否 |
 | **パターン編集（Edit / Pattern メニュー）** | ✅ 動作 | 貼り付けの各モード・補間・伸縮・検索置換・ブックマークなどをデスクトップ版のコードに沿って実装（`web/test/pattern.mjs`）。ブックマークは保存・再読み込みで保たれる（`web/test/session.mjs`） |
@@ -336,6 +341,7 @@ node web/test/text.mjs                             # 曲名などの文字コー
 node web/test/pattern.mjs                          # パターン編集（貼り付け・補間・検索置換・ブックマークなど）の検証
 node web/test/frames.mjs                           # フレームエディター（選択・コピー・貼り付け・削除）の検証
 node web/test/ui.mjs                               # キー割り当て・レジスタ表示・エフェクト表の検証
+node web/test/nsf.mjs                              # NSF の読み込み（デモ曲と各拡張音源の曲を NSF にして）の検証
 node web/test/render.mjs <モジュール> [出力.wav]      # WAV への書き出しテスト
 node web/test/compare.mjs <モジュール> <書き出し.wav>  # デスクトップ版の WAV 出力との波形比較
 ```

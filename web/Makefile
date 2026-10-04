@@ -46,7 +46,7 @@ CORE_C_SOURCES := \
 
 # The port itself: compatibility layer, stand-ins for the user interface, the player,
 # the editing session, the exports and their javascript bindings.
-WEB_SOURCES := dnft_compat app standins soundgen_host engine bindings session export session_bindings text_encoding
+WEB_SOURCES := dnft_compat app standins soundgen_host engine bindings session export session_bindings text_encoding nsf_import
 
 CORE_OBJECTS := \
 	$(addprefix $(BUILD)/core/,$(addsuffix .o,$(CORE_SOURCES))) \
@@ -88,14 +88,45 @@ LDFLAGS := $(OPT) -fwasm-exceptions -lembind \
 
 TARGET := $(DIST)/dnft.mjs
 
+# The first half of the NSF import (src/nsf_analyzer.cpp): NSFPlay plays the NSF, and the
+# state of its chips is written down frame by frame; the engine turns that into a module
+# (src/nsf_import.cpp). The engine compiles changed copies of some of NSFPlay's chips
+# (desktop/Source/APU/nsfplay), which would clash with NSFPlay's own, so this is a module
+# of its own, which the editor loads when it imports an NSF.
+NSFPLAY := third_party/nsfplay
+NSFPLAY_CPP_SOURCES := \
+	xgm/devices/Audio/MedianFilter xgm/devices/Audio/echo xgm/devices/Audio/filter xgm/devices/Audio/rconv \
+	xgm/devices/CPU/nes_cpu \
+	xgm/devices/Memory/nes_bank xgm/devices/Memory/nes_mem xgm/devices/Memory/nsf2_vectors xgm/devices/Memory/ram64k \
+	xgm/devices/Misc/detect xgm/devices/Misc/log_cpu xgm/devices/Misc/nes_detect xgm/devices/Misc/nsf2_irq \
+	xgm/devices/Sound/nes_apu xgm/devices/Sound/nes_dmc xgm/devices/Sound/nes_fds xgm/devices/Sound/nes_fme7 \
+	xgm/devices/Sound/nes_mmc5 xgm/devices/Sound/nes_n106 xgm/devices/Sound/nes_vrc6 xgm/devices/Sound/nes_vrc7 \
+	xgm/player/nsf/nsf xgm/player/nsf/nsfconfig xgm/player/nsf/nsfplay xgm/player/nsf/pls/ppls \
+	xgm/player/nsf/pls/sstream xgm/fileutil vcm/group vcm/value
+NSFPLAY_C_SOURCES := xgm/devices/Sound/legacy/emu2149 xgm/devices/Sound/legacy/emu2212 xgm/devices/Sound/legacy/emu2413
+NSF_SOURCES := nsf_analyzer nsf_bindings
+NSF_OBJECTS := \
+	$(addprefix $(BUILD)/nsfplay/,$(addsuffix .o,$(NSFPLAY_CPP_SOURCES))) \
+	$(addprefix $(BUILD)/nsfplay/,$(addsuffix .c.o,$(NSFPLAY_C_SOURCES))) \
+	$(addprefix $(BUILD)/nsf/,$(addsuffix .o,$(NSF_SOURCES)))
+NSF_TARGET := $(DIST)/dnft-nsf.mjs
+# as NSFPlay's own build for Linux and macOS (its contrib/Makefile)
+NSFPLAY_FLAGS := $(OPT) $(if $(debug),,-DNDEBUG) -I$(NSFPLAY) -MMD -MP
+NSF_LDFLAGS := $(OPT) -lembind \
+	-sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createDnFTNsf \
+	-sENVIRONMENT=web,worker,node -sFILESYSTEM=0 \
+	-sALLOW_MEMORY_GROWTH=1 \
+	-sEXPORTED_FUNCTIONS=_malloc,_free \
+	-sEXPORTED_RUNTIME_METHODS=HEAPU8
+
 .PHONY: all core site clean
-all: $(TARGET)
+all: $(TARGET) $(NSF_TARGET)
 core: $(CORE_OBJECTS)
 
 # The demo page next to the engine, with the demo modules: serve dist/ over http
 # (module scripts do not load from file://), e.g. python3 -m http.server -d dist
 HTML := $(wildcard html/*)
-site: $(TARGET) $(HTML)
+site: $(TARGET) $(NSF_TARGET) $(HTML)
 	cp $(HTML) $(DIST)/
 	mkdir -p $(DIST)/demo
 	for f in $(ROOT)/demo/*.dnm $(ROOT)/demo/*.0cc $(ROOT)/demo/*.ftm; do 		if [ -e "$$f" ]; then cp "$$f" $(DIST)/demo/; fi; 	done
@@ -116,6 +147,23 @@ $(BUILD)/core/%.c.o: $(SRC)/%.c
 $(BUILD)/web/%.o: src/%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(WEB_WARNINGS) -c $< -o $@
+
+$(NSF_TARGET): $(NSF_OBJECTS)
+	@mkdir -p $(dir $@)
+	$(CXX) $(NSF_LDFLAGS) -o $@ $^
+
+# NSFPlay is compiled as it is (third_party/nsfplay/README.md)
+$(BUILD)/nsfplay/%.o: $(NSFPLAY)/%.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) -std=c++17 $(NSFPLAY_FLAGS) -w -c $< -o $@
+
+$(BUILD)/nsfplay/%.c.o: $(NSFPLAY)/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(NSFPLAY_FLAGS) -w -c $< -o $@
+
+$(BUILD)/nsf/%.o: src/%.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) -std=c++17 $(NSFPLAY_FLAGS) -Isrc $(WEB_WARNINGS) -c $< -o $@
 
 # Message texts come from the string tables of the desktop resource script
 $(BUILD)/generated/strings.inc: $(DESKTOP)/Dn-FamiTracker.rc $(DESKTOP)/resource.h tools/rc_strings.py
@@ -155,4 +203,4 @@ $(BUILD)/core/Compiler.o: $(DRIVERS_BUILT)
 clean:
 	rm -rf build $(DIST)
 
--include $(OBJECTS:.o=.d)
+-include $(OBJECTS:.o=.d) $(NSF_OBJECTS:.o=.d)

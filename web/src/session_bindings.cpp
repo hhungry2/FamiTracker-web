@@ -1798,6 +1798,30 @@ public:
 		m_sWarning = std::move(warning);
 	}
 
+	//! What the NSF import made (see importNsf()): {rows (the frames the song plays before
+	//! it loops or stops), loopRow (where it jumps back to, -1 for none), stops, trimmed (the
+	//! silent frames left out at the start), rate (frames a second), warnings: [codes, see
+	//! nsf_import.h]}; null for other sessions
+	val nsfReport() const {
+		if (!m_pNsfReport)
+			return val::null();
+		val report = val::object();
+		report.set("rows", m_pNsfReport->rows);
+		report.set("loopRow", m_pNsfReport->loopRow);
+		report.set("stops", m_pNsfReport->stops);
+		report.set("trimmed", m_pNsfReport->trimmed);
+		report.set("rate", m_pNsfReport->rate);
+		val warnings = val::array();
+		for (const std::string &w : m_pNsfReport->warnings)
+			warnings.call<void>("push", w);
+		report.set("warnings", warnings);
+		return report;
+	}
+
+	void setNsfReport(const dnft::NsfImportResult &report) {
+		m_pNsfReport = std::make_unique<dnft::NsfImportResult>(report);
+	}
+
 private:
 	CFamiTrackerDoc &Doc() const {
 		return m_pSession->GetDocument();
@@ -1930,6 +1954,7 @@ private:
 
 	std::shared_ptr<dnft::Session> m_pSession;
 	std::string m_sWarning;
+	std::unique_ptr<dnft::NsfImportResult> m_pNsfReport;
 };
 
 std::shared_ptr<EditSession> createSession(uint32_t sampleRate) {
@@ -1948,6 +1973,25 @@ std::shared_ptr<EditSession> importText(uint32_t data, uint32_t size, uint32_t s
 	std::string warning;
 	auto session = std::make_shared<EditSession>(dnft::Session::ImportText(static_cast<const uint8_t *>(HeapPointer(data)), size, sampleRate, warning));
 	session->setWarning(std::move(warning));
+	return session;
+}
+
+//! Import NSF: a session on the module made from an NSF's frame log at the heap offset (the
+//! NSF analyzer's, dnft-nsf.mjs). options: {patternLength (rows), loop (end the song where
+//! it repeats itself, with a jump back), trimSilence (leave out the silence before the first
+//! sound)}. Throws when the log holds nothing to import; the session's nsfReport() tells
+//! what was made.
+std::shared_ptr<EditSession> importNsf(uint32_t data, uint32_t size, uint32_t sampleRate, val options) {
+	dnft::NsfImportOptions o;
+	if (options["patternLength"].isNumber())
+		o.patternLength = std::clamp(options["patternLength"].as<int>(), 1, MAX_PATTERN_LENGTH);
+	if (!options["loop"].isUndefined())
+		o.loop = options["loop"].as<bool>();
+	if (!options["trimSilence"].isUndefined())
+		o.trimSilence = options["trimSilence"].as<bool>();
+	dnft::NsfImportResult report;
+	auto session = std::make_shared<EditSession>(dnft::Session::ImportNsf(static_cast<const uint8_t *>(HeapPointer(data)), size, sampleRate, o, report));
+	session->setNsfReport(report);
 	return session;
 }
 
@@ -2126,11 +2170,13 @@ EMSCRIPTEN_BINDINGS(dnft_session) {
 		.function("beginImport", &EditSession::beginImport)
 		.function("finishImport", &EditSession::finishImport)
 		.function("cancelImport", &EditSession::cancelImport)
-		.function("takeWarning", &EditSession::takeWarning);
+		.function("takeWarning", &EditSession::takeWarning)
+		.function("nsfReport", &EditSession::nsfReport);
 
 	emscripten::function("createSession", &createSession);
 	emscripten::function("openSession", &openSession);
 	emscripten::function("importText", &importText);
+	emscripten::function("importNsf", &importNsf);
 	emscripten::function("effects", &effectTable);
 	emscripten::function("decodeText", &decodeText);
 	emscripten::function("encodeText", &encodeText);
