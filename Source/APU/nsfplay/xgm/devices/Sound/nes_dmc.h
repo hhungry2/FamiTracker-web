@@ -121,6 +121,9 @@ namespace xgm
     void FrameSequence(int s);
     int GetDamp(){ return (damp<<1)|dac_lsb ; }
     void TickFrameSequence (UINT32 clocks);
+    // How far Tick() and TickFrameSequence() may go together before the frame sequencer
+    // acts on the channels: the longest step that leaves their state as small steps would.
+    UINT32 ClocksUntilFrameSequence() const;
 
     virtual void Reset ();
     virtual void Tick (UINT32 clocks);

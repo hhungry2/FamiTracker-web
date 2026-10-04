@@ -85,8 +85,17 @@ bool HasFile(const std::string &path) {
 	return Files().count(path) != 0;
 }
 
-void SetMessageHandler(MessageHandler handler) {
+std::vector<std::string> ListFiles() {
+	std::vector<std::string> paths;
+	for (const auto &file : Files())
+		paths.push_back(file.first);
+	return paths;
+}
+
+MessageHandler SetMessageHandler(MessageHandler handler) {
+	MessageHandler previous = std::move(Handler());
 	Handler() = std::move(handler);
+	return previous;
 }
 
 int ReportMessage(const char *text, unsigned int type) {
@@ -116,12 +125,8 @@ const char *LoadStringResource(unsigned int id) {
 
 // ---- CString -------------------------------------------------------------------------------
 
-void CString::Format(UINT nFormatID, ...) {
-	CString format = StringOrId(nFormatID);
-	va_list args;
-	va_start(args, nFormatID);
-	FormatV(format, args);
-	va_end(args);
+CString CString::LoadFormat(UINT nID) {
+	return StringOrId(nID);
 }
 
 BOOL CString::LoadString(UINT nID) {
@@ -318,14 +323,24 @@ BOOL CStdioFile::ReadString(CString &rString) {
 		any = true;
 		if (ch == '\n')
 			break;
-		if (ch != '\r')
+		if (ch != '\r' || !m_bText)
 			rString += ch;
 	}
 	return any;
 }
 
 void CStdioFile::WriteString(LPCTSTR lpsz) {
-	Write(lpsz, static_cast<UINT>(std::strlen(lpsz)));
+	if (!m_bText) {
+		Write(lpsz, static_cast<UINT>(std::strlen(lpsz)));
+		return;
+	}
+	std::string text;
+	for (const char *p = lpsz; *p; ++p) {
+		if (*p == '\n')
+			text += '\r';
+		text += *p;
+	}
+	Write(text.data(), static_cast<UINT>(text.size()));
 }
 
 // ---- application framework ------------------------------------------------------------------

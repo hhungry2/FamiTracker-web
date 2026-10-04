@@ -24,8 +24,37 @@ export const CHIP = { NONE: 0, VRC6: 1, VRC7: 2, FDS: 4, MMC5: 8, N163: 16, S5B:
 export const CHANNEL_ID = { NOISE: 3, DPCM: 4 };
 // Instrument.h
 export const INST = { NONE: 0, '2A03': 1, VRC6: 2, VRC7: 3, FDS: 4, N163: 5, S5B: 6 };
-// Instruments with volume, arpeggio, pitch, hi-pitch and duty sequences
+// Instruments with volume, arpeggio, pitch, hi-pitch and duty sequences (numbered ones, the
+// module's; the FDS's are its own)
 export const SEQUENCE_INSTRUMENTS = new Set([INST['2A03'], INST.VRC6, INST.N163, INST.S5B]);
+// The chip whose channels play an instrument of the kind
+export const INSTRUMENT_CHIP = {
+  [INST['2A03']]: CHIP.NONE, [INST.VRC6]: CHIP.VRC6, [INST.VRC7]: CHIP.VRC7,
+  [INST.FDS]: CHIP.FDS, [INST.N163]: CHIP.N163, [INST.S5B]: CHIP.S5B,
+};
+
+// The desktop's note keys, by the key's place on the keyboard: [semitone, octave offset]
+export const NOTE_KEYS = {
+  KeyZ: [0, 0], KeyS: [1, 0], KeyX: [2, 0], KeyD: [3, 0], KeyC: [4, 0], KeyV: [5, 0], KeyG: [6, 0],
+  KeyB: [7, 0], KeyH: [8, 0], KeyN: [9, 0], KeyJ: [10, 0], KeyM: [11, 0],
+  Comma: [0, 1], KeyL: [1, 1], Period: [2, 1], Semicolon: [3, 1], Slash: [4, 1],
+  KeyQ: [0, 1], Digit2: [1, 1], KeyW: [2, 1], Digit3: [3, 1], KeyE: [4, 1], KeyR: [5, 1], Digit5: [6, 1],
+  KeyT: [7, 1], Digit6: [8, 1], KeyY: [9, 1], Digit7: [10, 1], KeyU: [11, 1],
+  KeyI: [0, 2], Digit9: [1, 2], KeyO: [2, 2], Digit0: [3, 2], KeyP: [4, 2],
+  BracketLeft: [5, 2], Equal: [6, 2], BracketRight: [7, 2],
+};
+
+// The ModPlug edit style's keys (CFamiTrackerView::TranslateKeyModplug()): the Q row, the A row and
+// the Z row are three octaves of notes, each from C. The digits there set the octave of the note
+// at the cursor (the editor does that), so they are not here.
+export const NOTE_KEYS_MPT = {
+  KeyQ: [0, 0], KeyW: [1, 0], KeyE: [2, 0], KeyR: [3, 0], KeyT: [4, 0], KeyY: [5, 0], KeyU: [6, 0], KeyI: [7, 0],
+  KeyO: [8, 0], KeyP: [9, 0], BracketLeft: [10, 0], BracketRight: [11, 0],
+  KeyA: [0, 1], KeyS: [1, 1], KeyD: [2, 1], KeyF: [3, 1], KeyG: [4, 1], KeyH: [5, 1], KeyJ: [6, 1], KeyK: [7, 1],
+  KeyL: [8, 1], Semicolon: [9, 1], Quote: [10, 1],
+  KeyZ: [0, 2], KeyX: [1, 2], KeyC: [2, 2], KeyV: [3, 2], KeyB: [4, 2], KeyN: [5, 2], KeyM: [6, 2],
+  Comma: [7, 2], Period: [8, 2], Slash: [9, 2],
+};
 
 export const EMPTY_CELL = Uint8Array.of(NOTE.NONE, 0, MAX_VOLUME, NO_INSTRUMENT, 0, 0, 0, 0, 0, 0, 0, 0);
 

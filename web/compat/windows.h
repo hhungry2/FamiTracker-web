@@ -20,10 +20,15 @@
 #include <cstring>
 #include <cstdarg>
 #include <cctype>
+#include <climits>
 #include <cwchar>
 #include <strings.h>
 
 #include "msvc_crt.h"
+
+// The C library's <limits.h> defines PAGE_SIZE, a name the NSF compiler gives one of
+// its constants (CCompiler::PAGE_SIZE). Windows has no such macro.
+#undef PAGE_SIZE
 
 #ifndef _WIN32_WINNT_VISTA
 #define _WIN32_WINNT_VISTA 0x0600

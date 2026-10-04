@@ -36,8 +36,8 @@ public:
 	const CString& ExportFile(LPCTSTR FileName, CFamiTrackerDoc *pDoc);
 	const CString& ExportRows(LPCTSTR FileName, CFamiTrackerDoc *pDoc);		// // //
 private:		// // //
-	bool ImportHex(CString& sToken, int& i, int line, int column, CString& sResult);
+	bool ImportHex(const CString& sToken, int& i, int line, int column, CString& sResult);
 	CString ExportString(const CString& s);
 	bool ImportCellText(CFamiTrackerDoc* pDoc, Tokenizer &t, unsigned int track, unsigned int pattern, unsigned int channel, unsigned int row, CString& sResult);
-	const char* Charify(CString& s);
+	const char* Charify(const CString& s);
 };

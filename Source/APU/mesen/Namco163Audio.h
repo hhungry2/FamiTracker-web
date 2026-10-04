@@ -99,7 +99,9 @@ public:
 		_mixLinear = mixLinear;
 	}
 
-	void UpdateChannel(int channel)
+	/// Updates the channel `times` times, as its turns come without a register changing
+	/// in between: the phase moves that many steps, the output is that of the last.
+	void UpdateChannel(int channel, uint32_t times = 1)
 	{
 		uint32_t phase = GetPhase(channel);
 		uint32_t freq = GetFrequency(channel);
@@ -110,7 +112,7 @@ public:
 		if(length == 0) {
 			phase = 0;
 		} else {
-			phase = (phase + freq) % (length << 16);
+			phase = (uint32_t)(((uint64_t)phase + (uint64_t)freq * times) % ((uint64_t)length << 16));
 		}
 		
 		uint8_t samplePosition = ((phase >> 16) + offset) & 0xFF;
@@ -164,6 +166,40 @@ public:
 	void SkipClockAudio(uint32_t clocks)
 	{
 		_updateCounter += clocks;
+	}
+
+	/// Leaves the chip where calling ClockAudio() that many times would, without the
+	/// output of each call: one update for every 15 clocks, going round the channels.
+	/// The registers do not change in between (they only do between calls of this).
+	void SkipAudio(uint32_t clocks)
+	{
+		if(_disableSound) {
+			return;
+		}
+
+		uint32_t total = _updateCounter + clocks;
+		uint32_t updates = total / 15;
+		_updateCounter = (uint8_t)(total % 15);
+		if(updates == 0) {
+			return;
+		}
+
+		int first = 7 - GetNumberOfChannels();
+		if(_currentChannel < first) {
+			// fewer channels than before: this one has its turn, then the round starts
+			UpdateChannel(_currentChannel);
+			_currentChannel = 7;
+			--updates;
+		}
+
+		// the turns of the round, by position, going down from channel 7
+		uint32_t count = 8 - first;
+		uint32_t start = 7 - _currentChannel;
+		for(uint32_t i = 0; i < count && i < updates; i++) {
+			uint32_t times = updates / count + (i < updates % count ? 1 : 0);
+			UpdateChannel(7 - (int)((start + i) % count), times);
+		}
+		_currentChannel = (int8_t)(7 - (start + updates) % count);
 	}
 
 	Namco163Audio()

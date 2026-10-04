@@ -385,7 +385,7 @@ public:
 
 // =============================================================================
 
-bool CTextExport::ImportHex(CString& sToken, int& i, int line, int column, CString& sResult)
+bool CTextExport::ImportHex(const CString& sToken, int& i, int line, int column, CString& sResult)
 {
 	i = 0;
 	for (int d=0; d < sToken.GetLength(); ++d)
@@ -653,7 +653,7 @@ CTextExport::~CTextExport()
 
 #define CHECK_COLON() CHECK_SYMBOL(":")
 
-const char* CTextExport::Charify(CString& s)		// // //
+const char* CTextExport::Charify(const CString& s)		// // //
 {
 	// NOTE if Famitracker is switched to unicode, need to do a conversion here
 	return s.GetString();
@@ -1186,9 +1186,10 @@ const CString& CTextExport::ImportFile(LPCTSTR FileName, CFamiTrackerDoc *pDoc)
 					pMark->m_iFrame = i;
 					CHECK(t.ReadHex(i, 0, (int)pDoc->GetPatternLength(track - 1) - 1, &sResult));
 					pMark->m_iRow = i;
-					CHECK(t.ReadInt(i, 0, MAX_PATTERN_LENGTH, &sResult));
+					// -1: the bookmark leaves the highlight as it is
+					CHECK(t.ReadInt(i, -1, MAX_PATTERN_LENGTH, &sResult));
 					pMark->m_Highlight.First = i;
-					CHECK(t.ReadInt(i, 0, MAX_PATTERN_LENGTH, &sResult));
+					CHECK(t.ReadInt(i, -1, MAX_PATTERN_LENGTH, &sResult));
 					pMark->m_Highlight.Second = i;
 					CHECK(t.ReadInt(i, 0, 1, &sResult));
 					pMark->m_bPersist = static_cast<bool>(i);
@@ -1643,7 +1644,8 @@ const CString& CTextExport::ExportFile(LPCTSTR FileName, CFamiTrackerDoc *pDoc)
 
 	for (unsigned int t=0; t < pDoc->GetTrackCount(); ++t)
 	{
-		const char* zpTitle = pDoc->GetTrackTitle(t).GetString();
+		const CString title = pDoc->GetTrackTitle(t);
+		const char* zpTitle = title.GetString();
 		if (zpTitle == NULL) zpTitle = "";
 
 		f.WriteString(_T("# track HEADER block\n"));
@@ -1740,8 +1742,8 @@ const CString& CTextExport::ExportFile(LPCTSTR FileName, CFamiTrackerDoc *pDoc)
 	{
 		json j = pDoc->InterfaceToOptionalJSON();
 		if (!j.is_null()) {
-			std::string& jsondump = j.dump(4, ' ', true);
-			std::string& delimiter = std::string("\n");
+			const std::string& jsondump = j.dump(4, ' ', true);
+			const std::string& delimiter = std::string("\n");
 			std::string::size_type pos = 0, prev = 0;
 			while ((pos = jsondump.find(delimiter, prev)) != std::string::npos) {
 				s.Format(_T("%s %s\n"), CT[CT_JSON], ExportString(jsondump.substr(prev, pos - prev).c_str()));

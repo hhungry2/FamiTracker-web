@@ -24,10 +24,13 @@ void PutFile(const std::string &path, std::vector<uint8_t> content);
 // Removes the file and returns what it held (empty when there was no such file).
 std::vector<uint8_t> TakeFile(const std::string &path);
 bool HasFile(const std::string &path);
+// The paths of all files, in order
+std::vector<std::string> ListFiles();
 
 // Messages the desktop build shows in message boxes. `type` carries the MB_ICON* bits.
-// The handler's return value answers yes/no questions (IDYES, IDNO...).
+// The handler's return value answers yes/no questions (IDYES, IDNO...). Returns the
+// handler set before.
 using MessageHandler = std::function<int(const std::string &text, unsigned int type)>;
-void SetMessageHandler(MessageHandler handler);
+MessageHandler SetMessageHandler(MessageHandler handler);
 
 } // namespace dnft_compat

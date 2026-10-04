@@ -84,7 +84,7 @@ struct stNSFeFooter {		// !! !!
 
 struct driver_t;
 class CChunk;
-enum chunk_type_t;
+enum chunk_type_t : int;
 class CDSample;		 // // //
 class CFamiTrackerDoc;		// // //
 class CSequence;		// // //

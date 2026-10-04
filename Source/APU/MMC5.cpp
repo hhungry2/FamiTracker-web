@@ -86,7 +86,8 @@ void CMMC5::Process(uint32_t Time, Blip_Buffer& Output)
 	};
 
 	while (now < Time) {
-		auto dclocks = vmin(m_MMC5.ClocksUntilLevelChange(), Time - now);
+		// While skipping, the counters may take all the time in one step
+		auto dclocks = m_bSkipping ? Time - now : vmin(m_MMC5.ClocksUntilLevelChange(), Time - now);
 		get_output(dclocks, now, Output);
 		now += dclocks;
 	}

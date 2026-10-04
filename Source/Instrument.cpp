@@ -21,6 +21,7 @@
 #include "stdafx.h"
 #include "InstrumentManagerInterface.h"		// // //
 #include "Instrument.h"
+#include "ModuleException.h"
 
 /*
  * Class CInstrument, base class for instruments
@@ -87,16 +88,27 @@ void CInstrumentFile::WriteChar(unsigned char Value)
 	Write(&Value, sizeof(char));
 }
 
+// A file that ends inside a value is not an instrument: the value would be whatever the
+// variable held
+static void RaiseEndOfInstrumentFile()
+{
+	CModuleException *e = new CModuleException();
+	e->AppendError("Unexpected end of instrument file");
+	e->Raise();
+}
+
 unsigned int CInstrumentFile::ReadInt()
 {
-	unsigned int Value;
-	Read(&Value, sizeof(int));
+	unsigned int Value = 0;
+	if (Read(&Value, sizeof(int)) != sizeof(int))
+		RaiseEndOfInstrumentFile();
 	return Value;
 }
 
 unsigned char CInstrumentFile::ReadChar()
 {
-	unsigned char Value;
-	Read(&Value, sizeof(char));
+	unsigned char Value = 0;
+	if (Read(&Value, sizeof(char)) != sizeof(char))
+		RaiseEndOfInstrumentFile();
 	return Value;
 }

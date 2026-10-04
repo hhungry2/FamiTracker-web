@@ -5,8 +5,9 @@
 // Keys follow the desktop's defaults: the Z and Q rows of the keyboard enter notes, 1 a
 // note cut, \ a release, hex digits the other columns; Space toggles editing, Enter plays
 // the frame or stops, F5-F8 play from the start, loop the pattern, play from the cursor
-// and stop. Edits of the patterns, the frames and the song's settings can be undone.
-// The module is kept in the browser (localStorage) as it changes.
+// and stop; the rest of the desktop's shortcuts are in dnft-keymap.mjs. Edits of the patterns, the
+// frames, the bookmarks and the song's settings can be undone. The module is kept in the
+// browser (localStorage) as it changes.
 //
 //   import { DnFTEditor } from './dnft-editor.mjs';
 //   const editor = await DnFTEditor.create(element, { base: '.', lang: 'ja' });
@@ -14,26 +15,34 @@
 import { DnFTSession, PLAY, unsupportedReason } from './dnft-session.mjs';
 import {
   Song, History, CELL, NOTE, MAX_VOLUME, NO_INSTRUMENT, HOLD_INSTRUMENT, MAX_INSTRUMENTS, MAX_FRAMES,
-  MAX_PATTERNS, MAX_ROWS, OCTAVES, CHIP, CHANNEL_ID, EMPTY_CELL,
+  MAX_PATTERNS, MAX_ROWS, OCTAVES, CHIP, CHANNEL_ID, EMPTY_CELL, NOTE_KEYS, NOTE_KEYS_MPT, INSTRUMENT_CHIP,
 } from './dnft-song.mjs';
 import { PatternView, columnCount, columnKind } from './dnft-pattern-view.mjs';
+import * as edit from './dnft-pattern-edit.mjs';
+import { PASTE, PASTE_AT, fieldOfColumn, normalizeSelection } from './dnft-pattern-edit.mjs';
 import { InstrumentEditor } from './dnft-instrument-editor.mjs';
+import { FileMenu } from './dnft-files.mjs';
+import { PatternMenu } from './dnft-pattern-menu.mjs';
+import { FrameEditor } from './dnft-frame-editor.mjs';
+import { SongMenu } from './dnft-song-menu.mjs';
+import { TrackerMenu } from './dnft-tracker-menu.mjs';
+import { Displays } from './dnft-displays.mjs';
+import { Keymap } from './dnft-keymap.mjs';
+import { effectHintKey } from './dnft-effect-hints.mjs';
+import { TouchGestures } from './dnft-touch.mjs';
+import { RecentFiles } from './dnft-recent.mjs';
+import { Config } from './dnft-config.mjs';
 import { STRINGS } from './dnft-editor-strings.mjs';
 
 const AUTOSAVE_KEY = 'dnft-editor.autosave';
 const AUTOSAVE_DELAY = 1500;
-const PAGE_ROWS = 16;
-
-// The desktop's note keys, by the key's place on the keyboard: [semitone, octave offset]
-const NOTE_KEYS = {
-  KeyZ: [0, 0], KeyS: [1, 0], KeyX: [2, 0], KeyD: [3, 0], KeyC: [4, 0], KeyV: [5, 0], KeyG: [6, 0],
-  KeyB: [7, 0], KeyH: [8, 0], KeyN: [9, 0], KeyJ: [10, 0], KeyM: [11, 0],
-  Comma: [0, 1], KeyL: [1, 1], Period: [2, 1], Semicolon: [3, 1], Slash: [4, 1],
-  KeyQ: [0, 1], Digit2: [1, 1], KeyW: [2, 1], Digit3: [3, 1], KeyE: [4, 1], KeyR: [5, 1], Digit5: [6, 1],
-  KeyT: [7, 1], Digit6: [8, 1], KeyY: [9, 1], Digit7: [10, 1], KeyU: [11, 1],
-  KeyI: [0, 2], Digit9: [1, 2], KeyO: [2, 2], Digit0: [3, 2], KeyP: [4, 2],
-  BracketLeft: [5, 2], Equal: [6, 2], BracketRight: [7, 2],
-};
+// Engine ticks per second a module may ask for (CSpeedDlg)
+const ENGINE_RATE_MIN = 16;
+const ENGINE_RATE_MAX = 400;
+// Characters of a comment, well within what a module file holds (session_bindings.cpp)
+const COMMENT_MAX = 20000;
+// How far in pixels the pointer goes before a press in the selection drags it (SM_CXDRAG)
+const DRAG_DISTANCE = 4;
 
 const CHIPS = [['VRC6', CHIP.VRC6], ['VRC7', CHIP.VRC7], ['FDS', CHIP.FDS], ['MMC5', CHIP.MMC5], ['N163', CHIP.N163], ['5B', CHIP.S5B]];
 
@@ -49,8 +58,8 @@ function hexOfKey(event) {
   return -1;
 }
 
-// A cell's fields: 0 note (with its octave), 1 instrument, 2 volume, 3-6 the effects
-const fieldOfColumn = column => column === 0 ? 0 : column <= 2 ? 1 : column === 3 ? 2 : 3 + Math.floor((column - 4) / 3);
+// The note of a key, octave * 12 + semitone (FamiTrackerTypes.h MIDI_NOTE())
+const midiNote = (note, octave) => octave * 12 + note - 1;
 
 function copyField(from, to, field) {
   if (field === 0) { to[0] = from[0]; to[1] = from[1]; }
@@ -92,6 +101,7 @@ export class DnFTEditor {
     demos = null,
   } = {}) {
     this.base = base;
+    this.lang = lang;
     this.strings = STRINGS[lang] ?? STRINGS.en;
     this.autosave = autosave;
     this.source = source;
@@ -101,22 +111,46 @@ export class DnFTEditor {
     this.song = null;
     this.track = 0;
     this.cursor = { frame: 0, row: 0, channel: 0, column: 0 };
-    this.selection = null;      // {frame, rowStart, rowEnd, channelStart, columnStart, channelEnd, columnEnd}
-    this.anchor = null;         // where a selection being made started
+    this.selection = null;      // normalized {start, end} places (dnft-pattern-edit.mjs), or null
+    this.selStart = null;       // the place the selection was started at, and its other end
+    this.selEnd = null;
+    this.block = false;         // made with Alt+B / Alt+E: moving the cursor keeps it
+    this.dragTarget = null;     // where a dragged selection would land (a selection)
     this.editMode = true;
     this.follow = true;
     this.playing = false;
     this.play = null;           // {frame, row} heard now while the song plays
+    this.playingTrack = 0;      // the track it plays
+    this.queueFrame = -1;       // the frame queued with Ctrl+click: the one the song goes to next
     this.muted = [];
     this.octave = 3;
     this.step = 1;
     this.instrument = 0;
     this.history = new History();
-    this.clipboard = null;
-    this.held = new Map();      // note keys held: code -> channel
+    this.clipboard = null;      // copyCells() (dnft-pattern-edit.mjs)
+    this.pastePos = PASTE_AT.CURSOR;   // Edit > Paste Special: where Paste goes
+    this.overflowPaste = false;        // the desktop's "Overflow paste mode"
+    this.maskInstrument = false;       // Edit > Instrument Mask: notes entered keep the cell's
+    this.maskVolume = true;            // Edit > Volume Mask: off, notes get the last volume
+    this.lastVolume = MAX_VOLUME;      // typed last, or picked up from a row
+    this.lastNote = null;              // {note, octave} entered last, for the Repeat key
+    this.lastInstrument = 0;           // the instrument last selected, or picked up from a row
+    this.lastEffect = 0;               // the effect number and parameter entered last
+    this.lastEffectParam = 0;
+    // Edit > Split Keyboard: notes up to `note` (octave * 12 + semitone, -1: off) are
+    // moved by `transpose` and get `instrument` (NO_INSTRUMENT: the one in use); outside
+    // the edit mode they play on the channel with the id `channel` (-1: the cursor's)
+    this.split = { note: -1, channel: -1, instrument: NO_INSTRUMENT, transpose: 0 };
+    this.held = new Map();      // note keys held: code -> the voice it plays ({channel, midi})
+    this.handNotes = new Map(); // the notes held by hand: midi -> how many hold it
+    this.lastHandNote = new Map(); // channel -> the note played on it last by hand, which a release stops
+    this.pianoHeld = new Map(); // the piano's keys held: pointer -> {key, voice}
     this.dirty = false;         // changed since last saved to a file
     this.fileName = null;
-    this.frameDigits = '';
+    this.activeEditor = 'pattern';     // the pattern or the 'frames', which had the keyboard last
+    this.marker = null;                // Tracker > Set Row Marker: {frame, row}, or none
+    this.compact = false;              // View > Compact View
+    this.keymap = new Keymap();        // the shortcuts (dnft-keymap.mjs)
 
     this.build(container);
   }
@@ -134,6 +168,7 @@ export class DnFTEditor {
           <button type="button" class="dnft-button" data-action="open"></button>
           <button type="button" class="dnft-button" data-action="save"><span></span><i class="dnft-dirty" hidden></i></button>
           <input type="file" class="dnft-file" accept=".dnm,.0cc,.ftm" hidden>
+          <input type="file" class="dnft-instrument-file" accept=".fti" multiple hidden>
           <select class="dnft-demos" hidden></select>
         </div>
         <div class="dnft-group">
@@ -149,11 +184,13 @@ export class DnFTEditor {
           <label class="dnft-field dnft-field--inline"><span class="dnft-label"></span><select data-role="instrument"></select></label>
         </div>
         <div class="dnft-group">
+          <button type="button" class="dnft-button dnft-toggle dnft-side-toggle" data-action="toggle-side" aria-pressed="false">☰</button>
           <button type="button" class="dnft-button dnft-toggle" data-action="edit"></button>
           <button type="button" class="dnft-button dnft-toggle" data-action="follow"></button>
           <button type="button" class="dnft-button" data-action="undo"></button>
           <button type="button" class="dnft-button" data-action="redo"></button>
         </div>
+        <canvas class="dnft-visualizer" aria-hidden="true" hidden></canvas>
         <label class="dnft-group dnft-volume"><span class="dnft-label"></span><input type="range" min="0" max="1" step="0.01" value="0.8" data-role="volume"></label>
       </div>
       <div class="dnft-main">
@@ -164,15 +201,25 @@ export class DnFTEditor {
               <label class="dnft-field"><span data-text="title"></span><input type="text" data-song="title" spellcheck="false"></label>
               <label class="dnft-field"><span data-text="artist"></span><input type="text" data-song="artist" spellcheck="false"></label>
               <label class="dnft-field"><span data-text="copyright"></span><input type="text" data-song="copyright" spellcheck="false"></label>
+              <label class="dnft-field"><span data-text="comment"></span><button type="button" class="dnft-button dnft-comment-button" data-action="comment"></button></label>
               <div class="dnft-field dnft-track">
                 <span data-text="track"></span>
                 <select data-role="track"></select>
                 <button type="button" class="dnft-icon-button" data-action="add-track">+</button>
                 <button type="button" class="dnft-icon-button" data-action="remove-track">−</button>
+                <button type="button" class="dnft-icon-button" data-action="track-up">↑</button>
+                <button type="button" class="dnft-icon-button" data-action="track-down">↓</button>
               </div>
+              <label class="dnft-field"><span data-text="trackTitle"></span><input type="text" data-role="track-title" spellcheck="false"></label>
               <div class="dnft-grid">
-                <label class="dnft-field"><span data-text="speed"></span><input type="number" data-setting="speed" min="1" max="255"></label>
-                <label class="dnft-field"><span data-text="tempo"></span><input type="number" data-setting="tempo" min="32" max="255"></label>
+                <div class="dnft-field">
+                  <span class="dnft-field-head"><span data-text="speed"></span><label class="dnft-check dnft-mini-check"><input type="checkbox" data-role="groove-mode"> <span data-text="grooveMode"></span></label></span>
+                  <input type="number" data-setting="speed" min="1" max="255">
+                </div>
+                <div class="dnft-field">
+                  <span class="dnft-field-head"><span data-text="tempo"></span><label class="dnft-check dnft-mini-check"><input type="checkbox" data-role="tempo-fixed"> <span data-text="tempoFixed"></span></label></span>
+                  <input type="number" data-setting="tempo" min="32" max="255">
+                </div>
                 <label class="dnft-field"><span data-text="rows"></span><input type="number" data-setting="rows" min="1" max="${MAX_ROWS}"></label>
                 <label class="dnft-field"><span data-text="frames"></span><input type="number" data-setting="frames" min="1" max="${MAX_FRAMES}"></label>
                 <label class="dnft-field"><span data-text="highlight"></span><span class="dnft-pair"><input type="number" data-setting="beat" min="0" max="${MAX_ROWS}"><input type="number" data-setting="bar" min="0" max="${MAX_ROWS}"></span></label>
@@ -185,6 +232,14 @@ export class DnFTEditor {
               <div class="dnft-field"><span data-text="chips"></span><div class="dnft-chips"></div></div>
               <label class="dnft-field dnft-field--inline"><span data-text="n163Channels"></span><input type="number" data-role="n163" min="1" max="8" value="1"></label>
               <label class="dnft-field dnft-field--inline"><span data-text="machine"></span><select data-role="machine"><option value="0">NTSC</option><option value="1">PAL</option></select></label>
+              <div class="dnft-field"><span data-text="engineSpeed"></span>
+                <span class="dnft-pair dnft-engine-speed">
+                  <select data-role="engine-mode"><option value="0" data-text="engineDefault"></option><option value="1" data-text="engineCustom"></option></select>
+                  <input type="number" data-role="engine-rate" min="${ENGINE_RATE_MIN}" max="${ENGINE_RATE_MAX}"><span>Hz</span>
+                </span>
+              </div>
+              <label class="dnft-field"><span data-text="vibrato"></span><select data-role="vibrato"><option value="1" data-text="vibratoNew"></option><option value="0" data-text="vibratoOld"></option></select></label>
+              <label class="dnft-field"><span data-text="pitchMode"></span><select data-role="linear-pitch"><option value="0" data-text="pitchPeriod"></option><option value="1" data-text="pitchLinear"></option></select></label>
             </div>
           </details>
           <section class="dnft-panel dnft-frames-panel">
@@ -200,21 +255,35 @@ export class DnFTEditor {
                 <button type="button" class="dnft-icon-button" data-action="pattern-up">+</button>
               </span>
             </header>
+            <label class="dnft-check dnft-mini-check dnft-frame-option"><input type="checkbox" data-role="change-all"> <span data-text="changeAll"></span></label>
             <div class="dnft-frame-list" tabindex="0"></div>
           </section>
           <section class="dnft-panel dnft-instruments-panel">
             <header class="dnft-panel-head"><span data-text="instruments"></span>
               <span class="dnft-panel-tools">
                 <button type="button" class="dnft-icon-button" data-action="add-instrument"></button>
+                <button type="button" class="dnft-icon-button" data-action="add-instrument-of">▾</button>
                 <button type="button" class="dnft-icon-button" data-action="clone-instrument"></button>
+                <button type="button" class="dnft-icon-button" data-action="deep-clone-instrument"></button>
                 <button type="button" class="dnft-icon-button" data-action="remove-instrument"></button>
                 <button type="button" class="dnft-icon-button" data-action="edit-instrument"></button>
+                <button type="button" class="dnft-icon-button" data-action="load-instrument"></button>
+                <button type="button" class="dnft-icon-button" data-action="save-instrument"></button>
               </span>
             </header>
             <ul class="dnft-instrument-list" role="listbox"></ul>
           </section>
         </aside>
-        <div class="dnft-pattern"></div>
+        <div class="dnft-center">
+          <div class="dnft-frames-slot" hidden></div>
+          <div class="dnft-center-row">
+            <div class="dnft-pattern"></div>
+            <aside class="dnft-registers" hidden>
+              <header class="dnft-panel-head"><span data-text="registerState"></span><button type="button" class="dnft-icon-button" data-role="close-registers">✕</button></header>
+              <div class="dnft-registers-body"><canvas></canvas></div>
+            </aside>
+          </div>
+        </div>
       </div>
       <div class="dnft-keys">
         <div class="dnft-piano" aria-hidden="true"></div>
@@ -232,7 +301,17 @@ export class DnFTEditor {
         <span class="dnft-source"></span>
       </div>
       <div class="dnft-drop" hidden></div>
-      <div class="dnft-loading"></div>`;
+      <div class="dnft-loading"></div>
+      <dialog class="dnft-dialog dnft-comment-dialog">
+        <form method="dialog" class="dnft-dialog-head">
+          <strong class="dnft-dialog-title" data-text="comment"></strong>
+          <button type="submit" class="dnft-button" data-text="close"></button>
+        </form>
+        <div class="dnft-comment-body">
+          <textarea class="dnft-comment-text" spellcheck="false" maxlength="${COMMENT_MAX}"></textarea>
+          <label class="dnft-check"><input type="checkbox" data-role="show-comment"> <span data-text="showComment"></span></label>
+        </div>
+      </dialog>`;
     container.append(root);
 
     const $ = selector => root.querySelector(selector);
@@ -244,6 +323,7 @@ export class DnFTEditor {
     label('new', t.newSong, t.newHint);
     label('open', t.open, t.openHint);
     label('save', t.save, t.saveHint);
+    root.querySelector('[data-action="toggle-side"]').title = t.sidePanelsHint;
     label('play', `▶ ${t.play}`, t.playHint);
     label('play-song', t.playSong, t.playSongHint);
     label('play-pattern', t.playPattern, t.playPatternHint);
@@ -262,11 +342,17 @@ export class DnFTEditor {
     root.querySelector('[data-action="pattern-down"]').title = t.patternDown;
     root.querySelector('[data-action="pattern-up"]').title = t.patternUp;
     label('add-instrument', '＋', t.addInstrumentHint);
-    label('clone-instrument', '⧉', t.cloneInstrument);
+    root.querySelector('[data-action="add-instrument-of"]').title = t.addInstrumentOf;
+    label('clone-instrument', '⧉', t.cloneInstrumentHint);
+    label('deep-clone-instrument', '⎘', t.deepCloneInstrumentHint);
     label('remove-instrument', '✕', t.removeInstrument);
     label('edit-instrument', '✎', t.editInstrument);
+    label('load-instrument', '⤓', t.loadInstrumentHint);
+    label('save-instrument', '⤒', t.saveInstrumentHint);
     label('add-track', '+', t.addTrack);
     label('remove-track', '−', t.removeTrack);
+    label('track-up', '↑', t.trackUp);
+    label('track-down', '↓', t.trackDown);
     label('note-cut', '---', t.noteCutHint);
     label('note-release', '===', t.noteReleaseHint);
     label('clear', t.clearField, t.clearFieldHint);
@@ -280,9 +366,19 @@ export class DnFTEditor {
     $('.dnft-volume .dnft-label').textContent = t.volume;
     root.querySelectorAll('[data-text]').forEach(el => { el.textContent = t[el.dataset.text]; });
     $('[data-setting="speed"]').title = t.speedHint;
+    $('[data-setting="speed"]').setAttribute('aria-label', t.speed);
+    $('[data-role="groove-mode"]').closest('label').title = t.grooveModeHint;
+    $('[data-role="tempo-fixed"]').closest('label').title = t.tempoFixedHint;
+    $('[data-role="change-all"]').closest('label').title = t.changeAllHint;
     $('[data-setting="rows"]').title = t.rowsHint;
     $('[data-setting="beat"]').title = t.highlightHint;
     $('[data-setting="bar"]').title = t.highlightHint;
+    $('[data-action="comment"]').title = t.commentHint;
+    $('.dnft-engine-speed').title = t.engineSpeedHint;
+    $('[data-role="engine-mode"]').setAttribute('aria-label', t.engineSpeed);
+    $('[data-role="engine-rate"]').setAttribute('aria-label', `${t.engineSpeed} (Hz)`);
+    $('[data-role="vibrato"]').title = t.vibratoHint;
+    $('[data-role="linear-pitch"]').title = t.pitchModeHint;
     $('.dnft-drop').textContent = t.dropHere;
     $('.dnft-loading').textContent = t.loading;
     const source = $('.dnft-source');
@@ -302,20 +398,35 @@ export class DnFTEditor {
     }));
 
     this.els = {
-      toolbar: $('.dnft-toolbar'), file: $('.dnft-file'), dirty: $('.dnft-dirty'),
+      toolbar: $('.dnft-toolbar'), file: $('.dnft-file'), instrumentFile: $('.dnft-instrument-file'), dirty: $('.dnft-dirty'),
       octave: $('[data-spin="octave"] output'), step: $('[data-spin="step"] output'),
       instrument: $('[data-role="instrument"]'), volume: $('[data-role="volume"]'),
-      track: $('[data-role="track"]'), n163: $('[data-role="n163"]'), machine: $('[data-role="machine"]'),
+      track: $('[data-role="track"]'), trackTitle: $('[data-role="track-title"]'), grooveMode: $('[data-role="groove-mode"]'), tempoFixed: $('[data-role="tempo-fixed"]'),
+      n163: $('[data-role="n163"]'), machine: $('[data-role="machine"]'),
+      engineMode: $('[data-role="engine-mode"]'), engineRate: $('[data-role="engine-rate"]'),
+      vibrato: $('[data-role="vibrato"]'), linearPitch: $('[data-role="linear-pitch"]'),
+      comment: $('[data-action="comment"]'), commentDialog: $('.dnft-comment-dialog'),
+      commentText: $('.dnft-comment-text'), showComment: $('[data-role="show-comment"]'),
       chips: $('.dnft-chips'), frames: $('.dnft-frame-list'), instruments: $('.dnft-instrument-list'),
       pattern: $('.dnft-pattern'), piano: $('.dnft-piano'), position: $('.dnft-position'),
+      visualizer: $('.dnft-visualizer'), registers: $('.dnft-registers'),
       message: $('.dnft-message'), drop: $('.dnft-drop'), loading: $('.dnft-loading'),
     };
 
     this.view = new PatternView(this.els.pattern, this);
     this.view.scroller.setAttribute('aria-label', t.pattern);
     this.instrumentEditor = new InstrumentEditor(this);
+    this.files = new FileMenu(this);
+    this.recent = new RecentFiles(this);
+    this.config = new Config(this);
+    this.patternMenu = new PatternMenu(this);
+    this.songMenu = new SongMenu(this);
+    this.frameEditor = new FrameEditor(this);
+    this.displays = new Displays(this);
+    this.trackerMenu = new TrackerMenu(this);
     this.buildPiano();
     this.wire();
+    this.trackerMenu.applyOptions();
     if (this.demos)
       this.listDemos($('.dnft-demos'));
   }
@@ -395,12 +506,21 @@ export class DnFTEditor {
       if (!root.contains(e.relatedTarget))
         els.drop.hidden = true;
     });
+    els.instrumentFile.addEventListener('change', () => {
+      const files = [...els.instrumentFile.files];
+      els.instrumentFile.value = '';
+      if (files.length)
+        this.loadInstruments(files);
+    });
     root.addEventListener('drop', e => {
       e.preventDefault();
       els.drop.hidden = true;
-      const file = e.dataTransfer.files[0];
-      if (file)
-        this.openFile(file);
+      const files = [...e.dataTransfer.files];
+      // instrument files are added to the module; anything else is a module to open
+      if (files.length && files.every(file => /\.fti$/i.test(file.name)))
+        this.loadInstruments(files);
+      else if (files[0])
+        this.openFile(files[0]);
     });
 
     els.instrument.addEventListener('change', () => this.selectInstrument(Number(els.instrument.value)));
@@ -418,25 +538,60 @@ export class DnFTEditor {
     els.chips.addEventListener('change', () => this.setExpansion());
     els.n163.addEventListener('change', () => this.setExpansion());
     els.machine.addEventListener('change', () => this.setMachine(els.machine.value === '1'));
+    els.trackTitle.addEventListener('change', () => this.setTrackTitle(els.trackTitle.value));
+    els.grooveMode.addEventListener('change', () => this.setGrooveMode(els.grooveMode.checked));
+    // CMainFrame::OnToggleFixTempo(): 0 is the fixed tempo, 150 the one it comes back to
+    els.tempoFixed.addEventListener('change', () => this.setSetting('tempo', els.tempoFixed.checked ? 0 : 150));
+    els.engineMode.addEventListener('change', async () => {
+      const custom = els.engineMode.value === '1';
+      // a custom speed starts from the one playing now, as the desktop's dialog does
+      await this.setEngineSpeed(custom ? this.song.info.frameRate : 0);
+      if (custom)
+        els.engineRate.select();
+    });
+    els.engineRate.addEventListener('change', () => this.setEngineSpeed(Number(els.engineRate.value)));
+    els.vibrato.addEventListener('change', () => this.setVibratoStyle(els.vibrato.value === '1'));
+    els.linearPitch.addEventListener('change', () => this.setLinearPitch(els.linearPitch.value === '1'));
+    els.commentText.addEventListener('change', () => this.saveComment());
+    els.showComment.addEventListener('change', () => this.saveComment());
+    els.commentDialog.addEventListener('close', () => this.saveComment());
 
     // the pattern
     const scroller = this.view.scroller;
     scroller.tabIndex = 0;
-    scroller.addEventListener('pointerdown', e => this.onGridPointerDown(e));
-    scroller.addEventListener('pointermove', e => this.onGridPointerMove(e));
-    scroller.addEventListener('pointerup', () => { this.dragging = false; });
-    scroller.addEventListener('pointercancel', () => { this.dragging = false; });
+    // the mouse and the pen here; a finger is the gestures' (dnft-touch.mjs)
+    const mouse = handler => e => e.pointerType === 'touch' || handler(e);
+    scroller.addEventListener('pointerdown', mouse(e => this.onGridPointerDown(e)));
+    scroller.addEventListener('pointermove', mouse(e => this.onGridPointerMove(e)));
+    scroller.addEventListener('pointerup', mouse(e => {
+      // the keys held as the button is let go decide between a move and a copy
+      if (this.drag?.dropping) {
+        this.drag.copy = e.ctrlKey || e.metaKey;
+        this.drag.mix = e.shiftKey;
+        this.dragSelection();
+      }
+      this.endDrag(true);
+    }));
+    scroller.addEventListener('pointercancel', mouse(() => this.endDrag()));
+    this.touch = new TouchGestures(this.view.canvas, {
+      tap: (x, y) => this.touchTap(x, y),
+      doubleTap: () => this.touchDoubleTap(),
+      scroll: (dx, dy) => this.touchScroll(dx, dy),
+      held: (x, y) => this.touchHeld(x, y),
+      dragStart: (x0, y0, x, y) => this.touchDragStart(x0, y0, x, y),
+      dragMove: (x, y) => this.touchDragMove(x, y),
+      dragEnd: (x, y) => this.touchDragEnd(x, y),
+      menu: (x, y) => this.touchMenu(x, y),
+      cancel: () => this.touchCancel(),
+    }, { axisLock: true });
+    scroller.addEventListener('dblclick', e => this.onGridDoubleClick(e));
+    scroller.addEventListener('contextmenu', e => this.onGridContextMenu(e));
     scroller.addEventListener('wheel', e => this.onGridWheel(e), { passive: false });
 
-    // the frames
-    els.frames.addEventListener('click', e => {
-      const cell = e.target.closest('[data-frame]');
-      if (!cell)
-        return;
-      const channel = cell.dataset.channel !== undefined ? Number(cell.dataset.channel) : this.cursor.channel;
-      this.setCursor({ ...this.cursor, frame: Number(cell.dataset.frame), channel, column: channel === this.cursor.channel ? this.cursor.column : 0 });
-    });
-    els.frames.addEventListener('keydown', e => this.onFrameKey(e));
+    // the editor that takes the Edit menu's commands (the frame list's own handlers are
+    // FrameEditor's)
+    scroller.addEventListener('focus', () => { this.activeEditor = 'pattern'; });
+    els.frames.addEventListener('focus', () => { this.activeEditor = 'frames'; });
 
     // the instruments
     els.instruments.addEventListener('click', e => {
@@ -450,7 +605,8 @@ export class DnFTEditor {
         this.instrumentEditor.open(Number(item.dataset.instrument));
     });
 
-    // the piano: press a key, slide to others
+    // the piano: press a key, slide to others; each finger plays a key of its own, so that a
+    // touch screen plays chords
     const pianoKey = e => e.target.closest('.dnft-piano-key');
     els.piano.addEventListener('pointerdown', e => {
       const key = pianoKey(e);
@@ -460,16 +616,17 @@ export class DnFTEditor {
       // touch keeps the pointer on the first key otherwise
       if (key.hasPointerCapture?.(e.pointerId))
         key.releasePointerCapture(e.pointerId);
-      this.pianoNote(key, true);
+      this.pianoNote(e.pointerId, key);
     });
     els.piano.addEventListener('pointerover', e => {
       const key = pianoKey(e);
-      if (key && this.pianoHeld && key !== this.pianoHeld.key && e.buttons)
-        this.pianoNote(key, true);
+      const held = this.pianoHeld.get(e.pointerId);
+      if (key && held && key !== held.key && e.buttons)
+        this.pianoNote(e.pointerId, key);
     });
-    const release = () => {
-      if (this.pianoHeld)
-        this.pianoNote(null, false);
+    const release = e => {
+      if (this.pianoHeld.has(e.pointerId))
+        this.pianoNote(e.pointerId, null);
     };
     window.addEventListener('pointerup', release);
     window.addEventListener('pointercancel', release);
@@ -515,10 +672,14 @@ export class DnFTEditor {
   setSong(snapshot) {
     this.stopPlaying();
     this.session.clearRows();
+    this.trackerMenu.onSong();
+    // what it holds was the previous song's (saveComment())
+    if (this.els.commentDialog.open)
+      this.els.commentDialog.close();
     this.song = new Song(snapshot);
     this.track = 0;
     this.cursor = { frame: 0, row: 0, channel: 0, column: 0 };
-    this.selection = this.anchor = null;
+    this.deselect();
     this.muted = this.song.channels.map(() => false);
     this.instrument = this.song.instruments[0]?.index ?? 0;
     this.history.clear();
@@ -532,6 +693,7 @@ export class DnFTEditor {
     this.renderInstruments();
     this.renderToolbar();
     this.updateStatus();
+    this.patternMenu.refresh();
   }
 
   async newSong() {
@@ -545,6 +707,11 @@ export class DnFTEditor {
   }
 
   async openFile(file) {
+    // a text export (File > Import Text)
+    if (/\.txt$/i.test(file.name))
+      return this.files.importText(file);
+    if (/\.fti$/i.test(file.name))
+      return this.loadInstruments([file]);
     if (this.dirty && !confirm(this.strings.confirmOpen))
       return;
     const bytes = new Uint8Array(await file.arrayBuffer());
@@ -556,12 +723,24 @@ export class DnFTEditor {
     }
     this.fileName = file.name.replace(/\.(dnm|0cc|ftm)$/i, '');
     this.dirty = false;
+    this.recent.add(file.name, bytes);
     this.message(this.strings.opened + file.name);
     this.saveToBrowser();
     this.renderToolbar();
+    // as the desktop does for a module that asks for it
+    if (this.song.info.showComment && this.song.info.comment)
+      this.openComment();
+  }
+
+  // The name the module's files get, without an extension
+  fileBase() {
+    return (this.fileName || this.song.info.title || 'untitled').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim() || 'untitled';
   }
 
   async saveFile() {
+    // Ctrl+S while the comment is being written
+    if (this.els.commentDialog.open)
+      this.saveComment();
     let bytes;
     try {
       bytes = await this.session.call('save');
@@ -569,7 +748,7 @@ export class DnFTEditor {
       this.message(this.strings.failed + e.message, true);
       return;
     }
-    const base = (this.fileName || this.song.info.title || 'untitled').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim() || 'untitled';
+    const base = this.fileBase();
     const name = `${base}.dnm`;
     const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
     const a = document.createElement('a');
@@ -583,6 +762,7 @@ export class DnFTEditor {
     this.dirty = false;
     this.renderToolbar();
     this.message(this.strings.saved + name);
+    this.recent.add(name, bytes);
     this.writeAutosave(bytes);
   }
 
@@ -640,9 +820,18 @@ export class DnFTEditor {
       this.session.ended = false;
       this.stopPlaying();
     }
+    this.displays.tick();
     if (samePlace(play, this.play))
       return;
+    const before = this.play;
     this.play = play;
+    // the queued frame is taken when the song jumps to it (or, if it is the one playing, when it starts over)
+    const queued = this.queueFrame;
+    if (queued >= 0 && play && play.frame === queued && (!before || before.frame !== play.frame || play.row < before.row))
+      this.queueFrame = -1;
+    if (!before || !play || before.frame !== play.frame || queued !== this.queueFrame)
+      this.frameEditor.renderPlayback();
+    this.trackerMenu.onPlayRow(play);
     if (play && this.playing && this.follow && !this.dragging) {
       const frameChanged = play.frame !== this.cursor.frame;
       this.cursor.frame = play.frame;
@@ -656,6 +845,22 @@ export class DnFTEditor {
 
   // ---- state shortcuts ------------------------------------------------------------------
 
+  // Row and frame numbers, in hexadecimal or decimal (Configuration > General)
+  rowLabel(row) {
+    return this.config.get('rowHex') ? hex2(row) : String(row).padStart(3, '0');
+  }
+
+  frameLabel(frame) {
+    return this.config.get('rowHex') ? hex2(frame) : String(frame).padStart(3, '0');
+  }
+
+  // After the Configuration dialog: what shows the settings draws again
+  applyConfig() {
+    this.renderFrames();
+    this.view.invalidate();
+    this.updateStatus();
+  }
+
   get tr() {
     return this.song.track(this.track);
   }
@@ -664,8 +869,9 @@ export class DnFTEditor {
     return this.song.channels.length;
   }
 
+  // How many columns a channel has to put the cursor on: the notes only, in the compact view
   columns(channel) {
-    return columnCount(this.tr.effColumns[channel]);
+    return this.compact ? 1 : columnCount(this.tr.effColumns[channel]);
   }
 
   patternOf(frame, channel) {
@@ -674,75 +880,133 @@ export class DnFTEditor {
 
   // ---- cursor and selection -----------------------------------------------------------
 
-  setCursor(place, { extend = false } = {}) {
-    const tr = this.tr;
+  // Moves the cursor, within the track. `extend` (Shift): the selection goes from where it
+  // was started, or from where the cursor was, to the cursor; `keep`: the selection stays
+  // as it is. Otherwise it goes, unless it was made with Alt+B / Alt+E.
+  setCursor(place, { extend = false, keep = false } = {}) {
     const before = this.cursor;
-    const cursor = {
-      frame: Math.max(0, Math.min(tr.frames - 1, place.frame)),
-      row: Math.max(0, Math.min(tr.rows - 1, place.row)),
-      channel: Math.max(0, Math.min(this.channelCount - 1, place.channel)),
-      column: 0,
-    };
-    cursor.column = Math.max(0, Math.min(this.columns(cursor.channel) - 1, place.column));
-    if (extend) {
-      this.anchor ??= { ...before };
-      if (cursor.frame !== this.anchor.frame) {
-        // selections stay in one frame
-        cursor.frame = this.anchor.frame;
-        cursor.row = place.frame < this.anchor.frame ? 0 : tr.rows - 1;
-      }
-      this.selection = this.makeSelection(this.anchor, cursor);
-    } else {
-      this.anchor = null;
-      this.selection = null;
-    }
-    const frameChanged = cursor.frame !== before.frame;
+    const cursor = this.clampPlace(place);
     this.cursor = cursor;
+    // off the frame list's row after the last frame
+    const leftEnd = this.frameEditor?.pastEnd;
+    if (leftEnd)
+      this.frameEditor.pastEnd = false;
+    if (extend)
+      this.select(this.selection ? this.selStart : before, cursor, this.block);
+    else if (!keep && !this.block)
+      this.deselect();
     this.view.reveal(cursor.channel);
     this.view.invalidate();
-    if (frameChanged || cursor.channel !== before.channel)
+    if (leftEnd || cursor.frame !== before.frame || cursor.channel !== before.channel)
       this.renderFrames();
     this.updateStatus();
   }
 
-  makeSelection(a, b) {
-    const first = a.channel < b.channel || (a.channel === b.channel && a.column <= b.column) ? a : b;
-    const last = first === a ? b : a;
+  clampPlace(place) {
+    const tr = this.tr;
+    const channel = Math.max(0, Math.min(this.channelCount - 1, place.channel));
     return {
-      frame: a.frame,
-      rowStart: Math.min(a.row, b.row),
-      rowEnd: Math.max(a.row, b.row),
-      channelStart: first.channel,
-      columnStart: first.column,
-      channelEnd: last.channel,
-      columnEnd: last.column,
+      frame: Math.max(0, Math.min(tr.frames - 1, place.frame)),
+      row: Math.max(0, Math.min(tr.rows - 1, place.row)),
+      channel,
+      column: Math.max(0, Math.min(this.columns(channel) - 1, place.column)),
     };
   }
 
+  // The selection from one place to another, which may be in other frames
+  select(start, end, block = false) {
+    this.selStart = this.clampPlace(start);
+    this.selEnd = this.clampPlace(end);
+    this.selection = normalizeSelection(this.selStart, this.selEnd);
+    this.block = block;
+    this.view.invalidate();
+  }
+
+  deselect() {
+    this.selection = this.selStart = this.selEnd = null;
+    this.block = false;
+    this.view?.invalidate();
+  }
+
+  // The cursor and the selection, as undo puts them back
+  editState() {
+    return { cursor: { ...this.cursor }, selStart: this.selStart, selEnd: this.selEnd, block: this.block };
+  }
+
+  restoreEditState(state) {
+    this.setCursor(state.cursor, { keep: true });
+    if (state.selStart)
+      this.select(state.selStart, state.selEnd, state.block);
+    else
+      this.deselect();
+  }
+
+  // Alt+B / Alt+E: the start or the end of the selection at the cursor
+  // (CPatternEditor::SetBlockStart(), SetBlockEnd()); the selection then stays as the cursor
+  // moves, until Escape or another selection
+  setBlock(start) {
+    if (!this.selection)
+      this.select(this.cursor, this.cursor, true);
+    else if (start)
+      this.select(this.cursor, this.selEnd, true);
+    else
+      this.select(this.selStart, this.cursor, true);
+  }
+
+  // Rows up or down, wrapping around the song; a selection stops at its ends
   moveRows(delta, extend = false) {
     const { rows, frames } = this.tr;
+    const total = rows * frames;
     let at = this.cursor.frame * rows + this.cursor.row + delta;
-    if (!extend)
-      at = ((at % (frames * rows)) + frames * rows) % (frames * rows);
-    this.setCursor({ ...this.cursor, frame: Math.floor(at / rows), row: ((at % rows) + rows) % rows }, { extend });
+    if (extend) {
+      at = Math.max(0, Math.min(total - 1, at));
+    } else if (this.config.get('wrapFrames')) {
+      at = ((at % total) + total) % total;
+    } else {
+      // within the frame: round it, or stopping at its ends (CPatternEditor::MoveToRow())
+      const row = this.cursor.row + delta;
+      at = this.cursor.frame * rows + (this.config.get('wrapCursor') ? ((row % rows) + rows) % rows : Math.max(0, Math.min(rows - 1, row)));
+    }
+    this.setCursor({ ...this.cursor, frame: Math.floor(at / rows), row: at % rows }, { extend });
+  }
+
+  // Up and Down go by the edit step, as the desktop's do unless its "No step moving" is on;
+  // Alt+Up and Alt+Down by one row
+  moveByStep(direction, extend = false) {
+    this.moveRows(direction * (this.config.get('noStepMove') ? 1 : Math.max(1, this.step)), extend);
   }
 
   moveColumn(delta, extend = false) {
     let { channel, column } = this.cursor;
     column += delta;
     if (column < 0) {
-      channel = (channel + this.channelCount - 1) % this.channelCount;
-      column = this.columns(channel) - 1;
+      channel = this.nextChannel(channel, -1);
+      column = channel === this.cursor.channel ? 0 : this.columns(channel) - 1;
     } else if (column >= this.columns(channel)) {
-      channel = (channel + 1) % this.channelCount;
-      column = 0;
+      channel = this.nextChannel(channel, 1);
+      column = channel === this.cursor.channel ? this.columns(channel) - 1 : 0;
     }
     this.setCursor({ ...this.cursor, channel, column }, { extend });
   }
 
+  // The channel next to one, round the ends or stopping there (Configuration > General)
+  nextChannel(channel, delta) {
+    if (this.config.get('wrapCursor'))
+      return (channel + delta + this.channelCount) % this.channelCount;
+    return Math.max(0, Math.min(this.channelCount - 1, channel + delta));
+  }
+
+  // Tab and Shift+Tab: the next or previous channel's note column, no selection
   moveChannel(delta) {
-    const channel = (this.cursor.channel + delta + this.channelCount) % this.channelCount;
+    const channel = this.nextChannel(this.cursor.channel, delta);
+    this.deselect();
     this.setCursor({ ...this.cursor, channel, column: 0 });
+  }
+
+  // Alt+Left and Alt+Right: the channel next to it, in the same column as far as it has one
+  moveChannelKeepingColumn(delta, extend = false) {
+    const channel = this.nextChannel(this.cursor.channel, delta);
+    this.setCursor({ ...this.cursor, channel, column: Math.min(this.cursor.column, this.columns(channel) - 1) }, { extend });
   }
 
   stepDown() {
@@ -752,20 +1016,42 @@ export class DnFTEditor {
 
   // ---- playback -------------------------------------------------------------------------
 
-  startPlaying(mode) {
+  // `place`: where PLAY.CURSOR starts from (the cursor, or the row marker)
+  startPlaying(mode, place = this.cursor) {
     this.session.resume();
     this.releaseHeldNotes();
-    this.session.play(this.track, mode, this.cursor.frame, this.cursor.row);
+    this.session.play(this.track, mode, place.frame, place.row);
     this.playing = true;
+    this.playingTrack = this.track;
+    this.queueFrame = -1;
     this.renderToolbar();
+    this.trackerMenu.startPolling();
   }
 
   stopPlaying() {
     if (this.playing)
       this.session?.stop();
     this.playing = false;
+    this.queueFrame = -1;
+    this.frameEditor.renderPlayback();
     this.renderToolbar();
     this.updateStatus();
+  }
+
+  // Ctrl+click on a frame while the song plays (CFrameEditor::OnLButtonUp()): the song goes
+  // to it when the frame it plays is done; the same frame again takes it back
+  toggleQueue(frame) {
+    if (!this.playing || this.track !== this.playingTrack)
+      return;
+    this.queueFrame = frame === this.queueFrame ? -1 : frame;
+    this.session.send('setQueueFrame', this.queueFrame);
+    this.frameEditor.renderPlayback();
+  }
+
+  // Whether the pattern numbers typed or stepped in the frame list go to every channel of
+  // the frame (the desktop's Change all checkbox, which a selection overrides)
+  get changeAll() {
+    return this.root.querySelector('[data-role="change-all"]').checked;
   }
 
   togglePlay() {
@@ -783,36 +1069,87 @@ export class DnFTEditor {
     return !(this.playing && this.editMode && !this.follow);
   }
 
-  noteOn(channel, note, octave) {
-    this.session.resume();
-    this.session.send('noteOn', channel, note, octave, this.instrument, MAX_VOLUME);
+  // Whether the split keyboard takes a note (octave * 12 + semitone) on a channel
+  // (CFamiTrackerView::IsSplitEnabled()): not on the noise channel
+  splitTakes(midi, channel) {
+    return this.split.note >= 0 && midi <= this.split.note && this.song.channels[channel]?.id !== CHANNEL_ID.NOISE;
   }
 
-  noteOff(channel) {
-    this.session.send('noteOff', channel, false);
+  // Plays a note by hand (CFamiTrackerView::PlayNote()). Outside the edit mode the split
+  // keyboard may send it to its channel; returns the voice that plays it ({channel, midi}), for
+  // noteOff(). The note also joins the ones the auto arpeggio goes through (TriggerMIDINote()).
+  noteOn(channel, note, octave, volume = MAX_VOLUME) {
+    let midi = midiNote(note, octave);
+    let instrument = this.instrument;
+    if (!this.editMode && this.split.channel >= 0 && this.split.note >= 0 && midi <= this.split.note) {
+      const index = this.song.channels.findIndex(c => c.id === this.split.channel);
+      if (index >= 0)
+        channel = index;
+    }
+    if (this.splitTakes(midi, channel)) {
+      midi = Math.max(0, Math.min(OCTAVES * 12 - 1, midi + this.split.transpose));
+      if (this.split.instrument !== NO_INSTRUMENT)
+        instrument = this.split.instrument;
+    }
+    this.session.resume();
+    this.session.send('noteOn', channel, midi % 12 + 1, Math.floor(midi / 12), instrument, volume);
+    this.session.send('arpNote', midi, true, channel);
+    this.handNotes.set(midi, (this.handNotes.get(midi) ?? 0) + 1);
+    this.lastHandNote.set(channel, midi);
+    this.showArpeggio();
+    return { channel, midi };
+  }
+
+  // A note played by hand let go. Only the note played last on its channel stops it: the others
+  // held go on, as the desktop's keys do (CFamiTrackerView::CutMIDINote()); `stop` false lets it
+  // ring (the IT edit style's keys)
+  noteOff(voice, { stop = true } = {}) {
+    if (!voice)
+      return;
+    this.session.send('arpNote', voice.midi, false, voice.channel);
+    const count = (this.handNotes.get(voice.midi) ?? 1) - 1;
+    if (count > 0)
+      this.handNotes.set(voice.midi, count);
+    else
+      this.handNotes.delete(voice.midi);
+    if (stop && this.lastHandNote.get(voice.channel) === voice.midi) {
+      this.lastHandNote.delete(voice.channel);
+      this.session.send('noteOff', voice.channel, false);
+    }
+    this.showArpeggio();
+  }
+
+  // With the auto arpeggio on, the status line has the notes held as steps up from the lowest
+  // (CFamiTrackerView::UpdateArpDisplay())
+  showArpeggio() {
+    if (!this.config.get('midiArpeggio') || !this.handNotes.size)
+      return;
+    const notes = [...this.handNotes.keys()].sort((a, b) => a - b);
+    this.message(this.strings.autoArpeggioNotes + notes.map(note => note - notes[0]).join(' '));
   }
 
   releaseHeldNotes() {
-    for (const channel of this.held.values())
-      this.noteOff(channel);
+    for (const voice of this.held.values())
+      this.noteOff(voice);
     this.held.clear();
   }
 
-  pianoNote(key, down) {
-    if (this.pianoHeld) {
-      this.noteOff(this.pianoHeld.channel);
-      this.pianoHeld.key.classList.remove('is-down');
-      this.pianoHeld = null;
+  // A finger (or the mouse) on a key of the piano, or off it (key null)
+  pianoNote(pointer, key) {
+    const held = this.pianoHeld.get(pointer);
+    if (held) {
+      this.pianoHeld.delete(pointer);
+      this.noteOff(held.voice);
+      if (![...this.pianoHeld.values()].some(other => other.key === held.key))
+        held.key.classList.remove('is-down');
     }
-    if (!down || !key)
+    if (!key)
       return;
     const semitone = Number(key.dataset.semitone);
     const octave = Math.min(OCTAVES - 1, this.octave + Number(key.dataset.octave));
-    const channel = this.cursor.channel;
     key.classList.add('is-down');
-    this.pianoHeld = { key, channel };
-    if (this.previews())
-      this.noteOn(channel, NOTE.C + semitone, octave);
+    const voice = this.previews() ? this.noteOn(this.cursor.channel, NOTE.C + semitone, octave) : null;
+    this.pianoHeld.set(pointer, { key, voice });
     if (this.editMode && this.cursor.column === 0)
       this.enterNote(NOTE.C + semitone, octave);
   }
@@ -846,21 +1183,68 @@ export class DnFTEditor {
     this.session.send('setCells', track, channel, pattern, row, cells);
   }
 
-  // Changes cells as one action: [{channel, pattern, row, cells}], in the current track
-  change(changes, cursorAfter = null) {
+  // Changes cells as one action: [{channel, pattern, row, cells}], in the current track.
+  // Undo puts the cells back with the cursor and selection there were, redo with those
+  // `after` (an editState()), or as they are once the cells are written. False when there
+  // is nothing to change.
+  change(changes, after = null) {
     if (!changes.length)
-      return;
+      return false;
     const track = this.track;
-    const before = { ...this.cursor };
+    const before = this.editState();
     const old = changes.map(c => this.song.readCells(track, c.channel, c.pattern, c.row, c.cells.length / CELL));
     const apply = values => changes.forEach((c, i) => this.writeCells(track, c.channel, c.pattern, c.row, values[i]));
     const fresh = changes.map(c => c.cells);
     apply(fresh);
-    const after = cursorAfter ?? { ...this.cursor };
+    const state = after ?? this.editState();
     this.record({
-      undo: () => { this.showTrack(track); apply(old); this.setCursor(before); },
-      redo: () => { this.showTrack(track); apply(fresh); this.setCursor(after); },
+      undo: () => { this.showTrack(track); apply(old); this.restoreEditState(before); },
+      redo: () => { this.showTrack(track); apply(fresh); this.restoreEditState(state); },
     });
+    return true;
+  }
+
+  // What an edit of dnft-pattern-edit.mjs writes ([{channel, pattern, row, cell}]), as one
+  // action; the rows next to each other go together
+  applyWrites(writes, after = null) {
+    const sorted = [...writes].sort((a, b) => a.channel - b.channel || a.pattern - b.pattern || a.row - b.row);
+    const runs = [];
+    for (const w of sorted) {
+      const run = runs.at(-1);
+      if (run && run.channel === w.channel && run.pattern === w.pattern && run.row + run.cells.length === w.row)
+        run.cells.push(w.cell);
+      else
+        runs.push({ channel: w.channel, pattern: w.pattern, row: w.row, cells: [w.cell] });
+    }
+    return this.change(runs.map(run => {
+      const cells = new Uint8Array(run.cells.length * CELL);
+      run.cells.forEach((cell, i) => cells.set(cell, i * CELL));
+      return { channel: run.channel, pattern: run.pattern, row: run.row, cells };
+    }), after);
+  }
+
+  // The current track as dnft-pattern-edit.mjs reads it
+  trackView() {
+    const { song, track } = this;
+    const tr = this.tr;
+    return {
+      rows: tr.rows, frames: tr.frames, channels: song.channels.length, effColumns: tr.effColumns,
+      ids: song.channels.map(c => c.id), chips: song.channels.map(c => c.chip),
+      cell: (frame, channel, row) => song.cell(track, frame, channel, row),
+      pattern: (frame, channel) => song.patternAt(track, frame, channel),
+    };
+  }
+
+  // The cursor somewhere and no selection, as an action leaves them
+  static stateAt(cursor) {
+    return { cursor: { ...cursor }, selStart: null, selEnd: null, block: false };
+  }
+
+  // Whether the edits are on (the desktop does nothing otherwise; this says so)
+  canEdit() {
+    if (!this.editMode)
+      this.message(this.strings.editModeOff);
+    return this.editMode;
   }
 
   cellHere() {
@@ -873,48 +1257,110 @@ export class DnFTEditor {
     this.change([{ channel, pattern: this.patternOf(frame, channel), row, cells: cell }]);
   }
 
-  enterNote(note, octave) {
-    const cell = this.cellHere();
+  // A note at the cursor (CFamiTrackerView::InsertNote()), with the instrument in use
+  // unless the instrument mask is on, and the last volume when the volume mask is off;
+  // the split keyboard moves the notes it takes, and may give them its instrument.
+  // `step`: a step down after it.
+  enterNote(note, octave, step = true, volume = null, channel = this.cursor.channel) {
+    const cell = Uint8Array.from(this.song.cell(this.track, this.cursor.frame, channel, this.cursor.row));
     cell[0] = note;
+    this.lastNote = { note, octave: note === NOTE.HALT || note === NOTE.RELEASE ? 0 : octave };
     if (note === NOTE.HALT || note === NOTE.RELEASE) {
       cell[1] = 0;
     } else {
       cell[1] = octave;
-      // the noise channel plays 16 periods (CFamiTrackerView::InsertNote())
-      if (this.song.channels[this.cursor.channel].id === CHANNEL_ID.NOISE) {
-        const midi = ((octave * 12 + note - 1) % 16) + 16;
+      if (!this.maskInstrument && cell[3] !== HOLD_INSTRUMENT)
+        cell[3] = this.instrument;
+      if (!this.maskVolume)
+        cell[2] = volume ?? this.lastVolume;
+      if (this.song.channels[channel].id === CHANNEL_ID.NOISE) {
+        // the noise channel plays 16 periods
+        const midi = (midiNote(note, octave) % 16) + 16;
         cell[1] = Math.floor(midi / 12);
         cell[0] = midi % 12 + 1;
+      } else if (this.splitTakes(midiNote(note, octave), channel)) {
+        const midi = Math.max(0, Math.min(OCTAVES * 12 - 1, midiNote(note, octave) + this.split.transpose));
+        cell[1] = Math.floor(midi / 12);
+        cell[0] = midi % 12 + 1;
+        if (this.split.instrument !== NO_INSTRUMENT)
+          cell[3] = this.split.instrument;
       }
-      if (cell[3] !== HOLD_INSTRUMENT)
-        cell[3] = this.instrument;
     }
-    this.changeHere(cell);
-    this.stepDown();
+    this.change([{ channel, pattern: this.patternOf(this.cursor.frame, channel), row: this.cursor.row, cells: cell }]);
+    if (step)
+      this.stepDown();
+  }
+
+  // The edit style (Configuration > General): FT2 sets a digit and goes a row down; ModPlug shifts
+  // the digits in and stays; IT sets the high digit, moves to the low one, and goes a row down
+  // after it (CFamiTrackerView::EditInstrumentColumn(), EditVolumeColumn(), EditEffParamColumn())
+  get editStyle() {
+    return this.config.get('editStyle');
+  }
+
+  // After an entry: the cursor moves as the style has it
+  afterEntry({ step = true, right = false, left = false } = {}) {
+    if (left)
+      this.moveColumn(-1, false);
+    if (right)
+      this.moveColumn(1, false);
+    if (step)
+      this.stepDown();
   }
 
   enterHex(value) {
     const { column } = this.cursor;
+    const style = this.editStyle;
     const cell = this.cellHere();
     const kind = columnKind(column);
+    const move = { step: style !== 'mpt', right: false, left: false };
     if (kind === 'instrument') {
       const base = cell[3] === NO_INSTRUMENT || cell[3] === HOLD_INSTRUMENT ? 0 : cell[3];
-      cell[3] = Math.min(MAX_INSTRUMENTS - 1, column === 1 ? (base & 0x0F) | value << 4 : (base & 0xF0) | value);
+      const high = column === 1;
+      let instrument = high ? (base & 0x0F) | value << 4 : (base & 0xF0) | value;
+      if (style === 'mpt') {
+        instrument = ((base & 0x0F) << 4) | (value & 0x0F);
+        if (instrument >= MAX_INSTRUMENTS)
+          instrument &= 0x0F;
+      } else if (style === 'it') {
+        Object.assign(move, high ? { step: false, right: true } : { left: true });
+      }
+      cell[3] = Math.min(MAX_INSTRUMENTS - 1, instrument);
       this.selectInstrument(cell[3], { quiet: true });
     } else if (kind === 'volume') {
-      cell[2] = value;
+      cell[2] = this.lastVolume = value;
     } else if (kind === 'param') {
       const effect = Math.floor((column - 4) / 3);
       if (!cell[4 + effect])
         return false;
       const high = (column - 4) % 3 === 1;
-      cell[8 + effect] = high ? (cell[8 + effect] & 0x0F) | value << 4 : (cell[8 + effect] & 0xF0) | value;
+      const param = cell[8 + effect];
+      cell[8 + effect] = style === 'mpt' ? ((param & 0x0F) << 4) | (value & 0x0F) : high ? (param & 0x0F) | value << 4 : (param & 0xF0) | value;
+      if (style === 'it')
+        Object.assign(move, high ? { step: false, right: true } : { left: true });
+      this.lastEffect = cell[4 + effect];
+      this.lastEffectParam = cell[8 + effect];
+      this.showEffectHint(cell, effect);
     } else {
       return false;
     }
     this.changeHere(cell);
-    this.stepDown();
+    this.afterEntry(move);
     return true;
+  }
+
+  // The status line says what the effect just entered is (CFamiTrackerView::GetEffectHint(),
+  // shown as an effect or its parameter is typed; not for no effect)
+  showEffectHint(cell, index) {
+    if (!cell[4 + index])
+      return;
+    const channel = this.cursor.channel;
+    const key = effectHintKey(cell[4 + index], cell[8 + index], {
+      chip: this.song.channels[channel].chip, channel, splitPoint: this.song.info.speedSplitPoint,
+    });
+    const text = this.strings.effectHints[key];
+    if (text)
+      this.message(text);
   }
 
   enterEffect(letter) {
@@ -929,8 +1375,16 @@ export class DnFTEditor {
     cell[4 + index] = effect;
     if (!previous || defaults[effect])
       cell[8 + index] = defaults[effect];
+    // ModPlug: the same effect again has the parameter it had
+    if (this.editStyle === 'mpt' && effect === this.lastEffect)
+      cell[8 + index] = this.lastEffectParam;
+    this.lastEffect = effect;
+    this.lastEffectParam = cell[8 + index];
+    this.showEffectHint(cell, index);
     this.changeHere(cell);
-    this.stepDown();
+    // ModPlug stays on the effect, to go on to its parameter
+    if (this.editStyle !== 'mpt')
+      this.stepDown();
     return true;
   }
 
@@ -938,13 +1392,91 @@ export class DnFTEditor {
     const cell = this.cellHere();
     cell[3] = HOLD_INSTRUMENT;
     this.changeHere(cell);
-    this.stepDown();
+    if (this.editStyle !== 'mpt')
+      this.stepDown();
   }
 
-  // Delete: the field at the cursor (CFamiTrackerDoc::ClearRowField()), or the selection
+  // The Repeat key: what was entered last goes in the field at the cursor (CheckRepeatKey())
+  repeatEntry() {
+    const { column } = this.cursor;
+    const cell = this.cellHere();
+    const kind = columnKind(column);
+    const index = Math.floor((column - 4) / 3);
+    switch (kind) {
+      case 'note':
+        cell[0] = this.lastNote?.note ?? NOTE.NONE;
+        cell[1] = this.lastNote?.octave ?? 0;
+        break;
+      case 'instrument':
+        cell[3] = this.lastInstrument;
+        if (cell[3] < MAX_INSTRUMENTS)
+          this.selectInstrument(cell[3], { quiet: true });
+        break;
+      case 'volume':
+        cell[2] = this.lastVolume;
+        break;
+      default:
+        cell[4 + index] = this.lastEffect;
+        cell[8 + index] = this.lastEffectParam;
+        this.showEffectHint(cell, index);
+    }
+    this.changeHere(cell);
+    if (this.editStyle !== 'mpt')
+      this.stepDown();
+  }
+
+  // The Echo buffer key: an echo note of the octave in use, up to the buffer's 3 (CheckEchoKey())
+  enterEcho() {
+    const cell = this.cellHere();
+    cell[0] = NOTE.ECHO;
+    cell[1] = Math.max(0, Math.min(3, this.octave));
+    if (!this.maskInstrument)
+      cell[3] = this.instrument;
+    this.lastNote = { note: NOTE.ECHO, octave: cell[1] };
+    this.changeHere(cell);
+    if (this.editStyle !== 'mpt')
+      this.stepDown();
+  }
+
+  // The role of a key that does more than type, by its place on the keyboard: 'cut', 'release',
+  // 'clear', 'repeat' or 'echo' (Configuration > General > Note keys), or null
+  keyRole(code) {
+    const keys = this.config.get('noteKeys');
+    return Object.keys(keys).find(role => keys[role].includes(code)) ?? null;
+  }
+
+  // The keys that are notes: the ModPlug style has its own
+  noteKeyTable() {
+    return this.editStyle === 'mpt' ? NOTE_KEYS_MPT : NOTE_KEYS;
+  }
+
+  // The desktop's "clear field" key (-): the field at the cursor and a step down; with
+  // Ctrl, the whole cell (CFamiTrackerView::HandleKeyboardInput())
+  clearKey(whole) {
+    const cell = this.cellHere();
+    const { column } = this.cursor;
+    const effect = Math.floor((column - 4) / 3);
+    if (whole) {
+      cell.set(EMPTY_CELL);
+    } else {
+      switch (columnKind(column)) {
+        case 'note': cell[0] = NOTE.NONE; cell[1] = 0; this.lastNote = null; break;
+        case 'instrument': cell[3] = NO_INSTRUMENT; break;
+        case 'volume': cell[2] = this.lastVolume = MAX_VOLUME; break;
+        case 'effect': cell[4 + effect] = 0; cell[8 + effect] = 0; break;
+        case 'param': cell[8 + effect] = 0; break;
+      }
+    }
+    this.changeHere(cell);
+    if (this.editStyle !== 'mpt')
+      this.stepDown();
+  }
+
+  // Delete: the selection's fields, or the field at the cursor and a step down; with Shift,
+  // the cursor's row goes and the rows below move up (CFamiTrackerView::OnKeyDelete())
   clear({ pullUp = false } = {}) {
     if (this.selection) {
-      this.clearSelection();
+      this.applyWrites(edit.clearCells(this.trackView(), this.selection));
       return;
     }
     const { frame, row, channel, column } = this.cursor;
@@ -961,7 +1493,7 @@ export class DnFTEditor {
     const cell = this.cellHere();
     clearField(cell, field);
     if (field === 0) {
-      // clearing a note clears its instrument and volume too
+      // clearing a note clears its instrument and volume too (CFamiTrackerDoc::ClearRowField())
       clearField(cell, 1);
       clearField(cell, 2);
     }
@@ -969,22 +1501,32 @@ export class DnFTEditor {
     this.stepDown();
   }
 
-  // Insert: an empty row at the cursor, the rows below move down
+  // Insert: an empty row at the cursor, the rows of its channel below move down; with a
+  // selection, at its top, in its columns, down to the end of its last frame
+  // (CPActionInsertRow, CPActionInsertAtSel)
   insertRow() {
-    const { frame, row } = this.cursor;
+    if (this.selection) {
+      this.applyWrites(edit.insertRows(this.trackView(), this.selection));
+      return;
+    }
+    const { frame, row, channel } = this.cursor;
     const rows = this.tr.rows;
-    const channels = this.selection ? range(this.selection.channelStart, this.selection.channelEnd) : [this.cursor.channel];
-    this.change(channels.map(channel => {
-      const pattern = this.patternOf(frame, channel);
-      const cells = this.song.readCells(this.track, channel, pattern, row, rows - row);
-      cells.copyWithin(CELL, 0, (rows - row - 1) * CELL);
-      cells.set(EMPTY_CELL, 0);
-      return { channel, pattern, row, cells };
-    }));
+    const pattern = this.patternOf(frame, channel);
+    const cells = this.song.readCells(this.track, channel, pattern, row, rows - row);
+    cells.copyWithin(CELL, 0, (rows - row - 1) * CELL);
+    cells.set(EMPTY_CELL, 0);
+    this.change([{ channel, pattern, row, cells }]);
   }
 
-  // Backspace: the row above the cursor goes, the rows below move up
+  // Backspace: the row above the cursor goes, the rows below move up; with a selection, its
+  // rows go (CPActionDeleteRow, CPActionDeleteAtSel)
   deleteRowAbove() {
+    if (this.selection) {
+      const after = DnFTEditor.stateAt(this.cursor);
+      if (this.applyWrites(edit.deleteRows(this.trackView(), this.selection), after))
+        this.restoreEditState(after);
+      return;
+    }
     const { frame, row, channel } = this.cursor;
     if (row === 0)
       return;
@@ -993,113 +1535,234 @@ export class DnFTEditor {
     const cells = this.song.readCells(this.track, channel, pattern, row - 1, rows - row + 1);
     cells.copyWithin(0, CELL);
     cells.set(EMPTY_CELL, (rows - row) * CELL);
-    this.change([{ channel, pattern, row: row - 1, cells }], { ...this.cursor, row: row - 1 });
+    this.change([{ channel, pattern, row: row - 1, cells }], DnFTEditor.stateAt({ ...this.cursor, row: row - 1 }));
     this.setCursor({ ...this.cursor, row: row - 1 });
   }
 
-  // What each channel of the selection covers: [{channel, first field, last field}]
-  selectionFields() {
-    const s = this.selection;
-    return range(s.channelStart, s.channelEnd).map(channel => ({
-      channel,
-      first: channel === s.channelStart ? fieldOfColumn(s.columnStart) : 0,
-      last: channel === s.channelEnd ? fieldOfColumn(s.columnEnd) : fieldOfColumn(this.columns(channel) - 1),
-    }));
-  }
+  // ---- the clipboard ----------------------------------------------------------------------
 
-  clearSelection() {
-    const s = this.selection;
-    const count = s.rowEnd - s.rowStart + 1;
-    this.change(this.selectionFields().map(({ channel, first, last }) => {
-      const pattern = this.patternOf(s.frame, channel);
-      const cells = this.song.readCells(this.track, channel, pattern, s.rowStart, count);
-      for (let r = 0; r < count; ++r)
-        for (let f = first; f <= last; ++f)
-          clearField(cells.subarray(r * CELL, r * CELL + CELL), f);
-      return { channel, pattern, row: s.rowStart, cells };
-    }));
-  }
-
+  // Edit > Copy: the selection, or the cell at the cursor
   copy() {
-    if (!this.selection)
-      return false;
-    const s = this.selection;
-    const count = s.rowEnd - s.rowStart + 1;
-    this.clipboard = {
-      rows: count,
-      channels: this.selectionFields().map(({ channel, first, last }) => ({
-        first, last,
-        cells: this.song.readCells(this.track, channel, this.patternOf(s.frame, channel), s.rowStart, count),
-      })),
-    };
-    return true;
+    this.clipboard = edit.copyCells(this.trackView(), this.selection, this.cursor);
+    this.patternMenu.refresh();
   }
 
+  // Edit > Cut: a copy, then what Delete clears (the field at the cursor, without a selection)
   cut() {
-    if (this.copy())
-      this.clearSelection();
-  }
-
-  paste() {
-    const clip = this.clipboard;
-    if (!clip)
+    if (!this.canEdit())
       return;
-    const { frame, row } = this.cursor;
-    const rows = Math.min(clip.rows, this.tr.rows - row);
-    const changes = [];
-    clip.channels.forEach((source, i) => {
-      const channel = this.cursor.channel + i;
-      if (channel >= this.channelCount)
-        return;
-      const pattern = this.patternOf(frame, channel);
-      const cells = this.song.readCells(this.track, channel, pattern, row, rows);
-      const lastField = fieldOfColumn(this.columns(channel) - 1);
-      for (let r = 0; r < rows; ++r)
-        for (let f = source.first; f <= Math.min(source.last, lastField); ++f)
-          copyField(source.cells.subarray(r * CELL, r * CELL + CELL), cells.subarray(r * CELL, r * CELL + CELL), f);
-      changes.push({ channel, pattern, row, cells });
-    });
-    this.change(changes);
+    this.copy();
+    this.applyWrites(edit.clearCells(this.trackView(), this.selection ?? edit.cursorSelection(this.cursor)));
   }
 
+  // Edit > Paste and Paste Special: `mode` is PASTE.*, and where it goes Paste Special's
+  // choice (at the cursor, at the selection, or filling the selection). What was pasted is
+  // selected after it.
+  paste(mode = PASTE.DEFAULT) {
+    if (!this.canEdit() || !this.clipboard)
+      return;
+    const { writes, target, repeated } = edit.paste(this.trackView(), this.clipboard, {
+      mode, at: this.pastePos, cursor: this.cursor, selection: this.selection, overflow: this.overflowPaste,
+    });
+    if (repeated && !confirm(this.strings.confirmPasteRepeated))
+      return;
+    const after = { cursor: { ...this.cursor }, selStart: target.start, selEnd: target.end, block: false };
+    if (this.applyWrites(writes, after))
+      this.restoreEditState(after);
+  }
+
+  // ---- selections ------------------------------------------------------------------------
+
+  // Ctrl+A: the cursor's channel in this frame, and when it is selected, every channel
+  // (CPatternEditor::SelectAll())
   selectAll() {
     const { frame, channel } = this.cursor;
-    const whole = this.selection && this.selection.rowStart === 0 && this.selection.rowEnd === this.tr.rows - 1 &&
-      this.selection.channelStart === channel && this.selection.channelEnd === channel;
-    const first = whole ? 0 : channel, last = whole ? this.channelCount - 1 : channel;
-    this.anchor = { frame, row: 0, channel: first, column: 0 };
-    this.selection = this.makeSelection(this.anchor, { frame, row: this.tr.rows - 1, channel: last, column: this.columns(last) - 1 });
-    this.view.invalidate();
+    const s = this.selection;
+    const whole = s && s.start.channel === channel && s.end.channel === channel && s.start.frame === frame &&
+      s.end.frame === frame && s.start.row === 0 && s.end.row === this.tr.rows - 1 && s.start.column === 0 &&
+      s.end.column === this.columns(channel) - 1;
+    this.selectScope('frame', whole ? 'all' : 'channel');
   }
 
-  // Ctrl+Up/Down: the notes at the cursor or in the selection, a semitone (or an octave)
+  // Edit > Select (CPatternEditor::SetSelection()): rows 'row' (the cursor's), 'frame' or
+  // 'track', across channels 'column' (the cursor's column), 'channel' or 'all'
+  selectScope(rows, channels) {
+    const tr = this.tr;
+    const start = { ...this.cursor }, end = { ...this.cursor };
+    if (rows === 'track') {
+      start.frame = 0;
+      end.frame = tr.frames - 1;
+    }
+    if (rows !== 'row') {
+      start.row = 0;
+      end.row = tr.rows - 1;
+    }
+    if (channels === 'all') {
+      start.channel = 0;
+      end.channel = this.channelCount - 1;
+    }
+    if (channels !== 'column') {
+      start.column = 0;
+      end.column = this.columns(end.channel) - 1;
+    }
+    this.select(start, end);
+  }
+
+  // ---- the Pattern menu -------------------------------------------------------------------
+
+  // The selection, for the edits that move rows around: refused without one, and where a
+  // channel plays a row twice (CPatternAction::ValidateSelection())
+  rowSelection() {
+    if (!this.selection)
+      this.message(this.strings.needSelection, true);
+    else if (edit.repeatsRows(this.trackView(), this.selection))
+      this.message(this.strings.repeatedRows, true);
+    else
+      return this.selection;
+    return null;
+  }
+
+  // Pattern > Transpose: the notes of the selection, or the one at the cursor
   transpose(semitones) {
-    const shift = cell => {
-      if (cell[0] < NOTE.C || cell[0] > NOTE.B)
-        return;
-      const midi = Math.max(0, Math.min(OCTAVES * 12 - 1, cell[1] * 12 + cell[0] - 1 + semitones));
-      cell[1] = Math.floor(midi / 12);
-      cell[0] = midi % 12 + 1;
-    };
+    if (this.canEdit())
+      this.applyWrites(edit.transpose(this.trackView(), this.selection, this.cursor, semitones));
+  }
+
+  // Shift+F1-F4: the values of the selection, or the field at the cursor, by `amount`
+  scrollValues(amount) {
+    if (this.canEdit())
+      this.applyWrites(edit.scrollValues(this.trackView(), this.selection, this.cursor, amount, this.config.get('wrapPatternValue')));
+  }
+
+  interpolate() {
+    const sel = this.canEdit() && this.rowSelection();
+    if (sel)
+      this.applyWrites(edit.interpolate(this.trackView(), sel));
+  }
+
+  reverse() {
+    const sel = this.canEdit() && this.rowSelection();
+    if (sel)
+      this.applyWrites(edit.reverse(this.trackView(), sel));
+  }
+
+  // Pattern > Expand ([1, 0]), Shrink ([2]) and Stretch
+  stretch(map) {
+    const sel = this.canEdit() && this.rowSelection();
+    if (sel)
+      this.applyWrites(edit.stretch(this.trackView(), sel, map));
+  }
+
+  // Pattern > Replace Instrument: the instrument in use, in the selection
+  replaceInstrument() {
+    if (!this.canEdit())
+      return;
     if (!this.selection) {
-      const cell = this.cellHere();
-      shift(cell);
-      this.changeHere(cell);
+      this.message(this.strings.needSelection, true);
       return;
     }
-    const changes = [];
-    const s = this.selection;
-    const count = s.rowEnd - s.rowStart + 1;
-    for (const { channel, first } of this.selectionFields()) {
-      if (first > 0)
-        continue;
-      const pattern = this.patternOf(s.frame, channel);
-      const data = this.song.readCells(this.track, channel, pattern, s.rowStart, count);
-      for (let r = 0; r < count; ++r)
-        shift(data.subarray(r * CELL, r * CELL + CELL));
-      changes.push({ channel, pattern, row: s.rowStart, cells: data });
+    this.applyWrites(edit.replaceInstrument(this.trackView(), this.selection, this.instrument));
+  }
+
+  // Pick Up Row (the pattern's right-click menu): the instrument at the cursor becomes the
+  // one in use, its volume the one notes get with the volume mask off
+  // (CFamiTrackerView::OnPickupRow())
+  pickUpRow() {
+    const cell = this.cellHere();
+    this.lastVolume = cell[2];
+    if (cell[3] < MAX_INSTRUMENTS)
+      this.selectInstrument(cell[3], { quiet: true });
+    // what the Repeat key enters is what the row has (CFamiTrackerView::OnPopupPickupRow())
+    this.lastInstrument = cell[3];
+    this.lastNote = cell[0] === NOTE.NONE ? null : { note: cell[0], octave: cell[0] === NOTE.HALT || cell[0] === NOTE.RELEASE ? 0 : cell[1] };
+    const { column } = this.cursor;
+    if (column >= 4) {
+      const index = Math.floor((column - 4) / 3);
+      this.lastEffect = cell[4 + index];
+      this.lastEffectParam = cell[8 + index];
     }
-    this.change(changes);
+    const t = this.strings;
+    this.message(t.pickedUp.replace('%1', cell[3] < MAX_INSTRUMENTS ? hex2(cell[3]) : '—')
+      .replace('%2', cell[2] < MAX_VOLUME ? cell[2].toString(16).toUpperCase() : '—'));
+  }
+
+  // Edit > Instrument Mask and Volume Mask (Alt+T, Alt+V)
+  setMask(which) {
+    const t = this.strings;
+    if (which === 'instrument')
+      this.maskInstrument = !this.maskInstrument;
+    else
+      this.maskVolume = !this.maskVolume;
+    const on = which === 'instrument' ? this.maskInstrument : this.maskVolume;
+    this.message((which === 'instrument' ? t.instrumentMask : t.volumeMask) + (on ? t.maskOn : t.maskOff));
+  }
+
+  // Ctrl+Up / Ctrl+Down: the instrument before or after the one in use, in the list
+  stepInstrument(delta) {
+    const list = this.song.instruments;
+    const at = list.findIndex(i => i.index === this.instrument);
+    const next = at >= 0 ? list[at + delta] :
+      delta > 0 ? list.find(i => i.index > this.instrument) : list.findLast(i => i.index < this.instrument);
+    if (next)
+      this.selectInstrument(next.index, { quiet: true });
+  }
+
+  // ---- bookmarks ----------------------------------------------------------------------------
+
+  // The track's bookmarks in place of those it has, as one action (the desktop cannot undo
+  // them)
+  setBookmarks(list) {
+    const track = this.track;
+    const old = this.tr.bookmarks;
+    const apply = value => {
+      this.showTrack(track);
+      this.song.track(track).bookmarks = value;
+      this.session.send('setBookmarks', track, value);
+      this.bookmarksChanged();
+    };
+    apply(list);
+    this.record({ undo: () => apply(old), redo: () => apply(list) });
+  }
+
+  bookmarksChanged() {
+    this.view.invalidate();
+    this.renderFrames();
+    this.patternMenu.refresh();
+  }
+
+  // Ctrl+K: a bookmark on the cursor's row, or none (CFamiTrackerView::OnBookmarksToggle())
+  toggleBookmark() {
+    if ((this.playing && this.follow) || !this.canEdit())
+      return;
+    const { frame, row } = this.cursor;
+    const list = this.tr.bookmarks;
+    if (edit.bookmarkAt(list, frame, row))
+      this.setBookmarks(list.filter(mark => mark.frame !== frame || mark.row !== row));
+    else
+      this.setBookmarks([...list, { frame, row, name: this.strings.bookmarkName.replace('%1', list.length + 1), highlight: [-1, -1], persist: false }]);
+  }
+
+  // Ctrl+PageDown / Ctrl+PageUp: the next or the previous bookmark, round the track
+  gotoBookmark(direction) {
+    if (this.playing && this.follow)
+      return;
+    const t = this.strings;
+    const { frame, row } = this.cursor;
+    const list = this.tr.bookmarks;
+    const mark = direction > 0 ? edit.nextBookmark(list, frame, row) : edit.previousBookmark(list, frame, row);
+    if (!mark) {
+      this.message(t.noBookmarks);
+      return;
+    }
+    this.setCursor({ ...this.cursor, frame: mark.frame, row: mark.row }, { keep: true });
+    const highlight = value => value === -1 ? t.bookmarkNone : value;
+    this.message(t.movedToBookmark.replace('%1', mark.name).replace('%2', highlight(mark.highlight[0])).replace('%3', highlight(mark.highlight[1])));
+  }
+
+  async restoreBookmarks(track, list) {
+    this.session.send('setBookmarks', track, list);
+    await this.reloadTrack(track);
+    this.bookmarksChanged();
   }
 
   // ---- frames -------------------------------------------------------------------------
@@ -1108,24 +1771,48 @@ export class DnFTEditor {
     this.song.setTrackData(track, await this.session.call('trackData', track));
   }
 
-  // The frame list as it is, to go back to
+  // The frame list as it is, and the bookmarks, which move with the frames, to go back to
   frameState() {
     const tr = this.tr;
-    return { frames: tr.frames, list: Uint8Array.from(tr.frameList.subarray(0, tr.frames * this.channelCount)) };
+    return { frames: tr.frames, list: Uint8Array.from(tr.frameList.subarray(0, tr.frames * this.channelCount)), bookmarks: tr.bookmarks };
   }
 
   async restoreFrames(track, state, clear = []) {
     this.session.send('setFrameList', track, state.frames, state.list);
+    this.session.send('setBookmarks', track, state.bookmarks);
     for (const { channel, pattern } of clear)
       this.session.send('setCells', track, channel, pattern, 0, new Uint8Array(this.song.track(track).rows * CELL).map((_, i) => EMPTY_CELL[i % CELL]));
     await this.reloadTrack(track);
   }
 
+  // A change of the frames that the engine makes: `run()` makes it, and again to redo
+  // (false: it could not); `after()` then puts the cursor and the frame selection where
+  // the change leaves them. Undo puts back the frame list and the bookmarks, empties the
+  // patterns the change filled, and puts the cursor and the selection back.
+  async changeFrames(run, after = null) {
+    const track = this.track;
+    const before = this.frameState();
+    const stateBefore = this.frameEditState();
+    const patternsBefore = new Set(this.tr.patterns.keys());
+    if (await run() === false)
+      return false;
+    await this.reloadTrack(track);
+    const created = [...this.tr.patterns.keys()].filter(key => !patternsBefore.has(key))
+      .map(key => ({ channel: Math.floor(key / MAX_PATTERNS), pattern: key % MAX_PATTERNS }));
+    after?.();
+    const stateAfter = this.frameEditState();
+    this.record({
+      undo: async () => { this.showTrack(track); await this.restoreFrames(track, before, created); this.restoreFrameEditState(stateBefore); },
+      redo: async () => { this.showTrack(track); await run(); await this.reloadTrack(track); this.restoreFrameEditState(stateAfter); },
+    });
+    this.afterFrames(this.cursor);
+    return true;
+  }
+
+  // Insert, Duplicate, Clone, Remove, Move Up and Move Down (the frame at the cursor)
   async frameOp(op) {
     const track = this.track;
     const frame = this.cursor.frame;
-    const before = this.frameState();
-    const patternsBefore = new Set(this.tr.patterns.keys());
     const call = {
       insert: ['insertFrame', track, frame + 1],
       duplicate: ['duplicateFrame', track, frame],
@@ -1134,20 +1821,10 @@ export class DnFTEditor {
       up: ['moveFrame', track, frame, true],
       down: ['moveFrame', track, frame, false],
     }[op];
-    if (!await this.session.call(...call))
-      return;
-    await this.reloadTrack(track);
-    const after = this.frameState();
-    const created = [...this.tr.patterns.keys()].filter(key => !patternsBefore.has(key))
-      .map(key => ({ channel: Math.floor(key / MAX_PATTERNS), pattern: key % MAX_PATTERNS }));
-    const target = { insert: frame + 1, duplicate: frame + 1, clone: frame + 1, remove: Math.min(frame, after.frames - 1), up: frame - 1, down: frame + 1 }[op];
-    const cursorBefore = { ...this.cursor };
-    const cursorAfter = { ...this.cursor, frame: target };
-    this.record({
-      undo: async () => { this.showTrack(track); await this.restoreFrames(track, before, created); this.afterFrames(cursorBefore); },
-      redo: async () => { this.showTrack(track); await this.session.call(...call); await this.reloadTrack(track); this.afterFrames(cursorAfter); },
+    await this.changeFrames(() => this.session.call(...call), () => {
+      const target = { insert: frame + 1, duplicate: frame + 1, clone: frame + 1, remove: Math.min(frame, this.tr.frames - 1), up: frame - 1, down: frame + 1 }[op];
+      this.setCursor({ ...this.cursor, frame: target });
     });
-    this.afterFrames(cursorAfter);
   }
 
   afterFrames(cursor) {
@@ -1155,6 +1832,17 @@ export class DnFTEditor {
     this.setCursor(cursor);
     this.renderFrames();
     this.view.invalidate();
+    this.patternMenu.refresh();
+  }
+
+  // The cursor and the frame selection, as undo of a change of the frames puts them back
+  frameEditState() {
+    return { cursor: { ...this.cursor }, frames: this.frameEditor.state() };
+  }
+
+  restoreFrameEditState(state) {
+    this.frameEditor.restore(state.frames);
+    this.afterFrames(state.cursor);
   }
 
   setFramePattern(frame, channel, pattern) {
@@ -1176,10 +1864,48 @@ export class DnFTEditor {
 
   // ---- song settings ------------------------------------------------------------------
 
+  // After a change of the module's properties: what the page shows of them
+  async reloadInfo() {
+    this.song.info = await this.session.call('info');
+    this.renderSongPanel();
+    this.edited();
+  }
+
   async setSongText(field, value) {
     const method = { title: 'setTitle', artist: 'setArtist', copyright: 'setCopyright' }[field];
     await this.session.call(method, value);
-    this.song.info = await this.session.call('info');
+    await this.reloadInfo();
+  }
+
+  async setTrackTitle(title) {
+    if (title === this.song.info.tracks[this.track])
+      return;
+    await this.session.call('setTrackTitle', this.track, title);
+    await this.reloadInfo();
+  }
+
+  // Module > Comments
+  openComment() {
+    const { els } = this;
+    this.commentSong = this.song;
+    els.commentText.value = this.song.info.comment;
+    els.showComment.checked = this.song.info.showComment;
+    if (!els.commentDialog.open)
+      els.commentDialog.showModal();
+    els.commentText.focus();
+  }
+
+  // What the comment box holds, to the module: as it is typed away from, and on closing
+  saveComment() {
+    const { els } = this;
+    if (this.commentSong !== this.song)
+      return;
+    const text = els.commentText.value, show = els.showComment.checked;
+    const info = this.song.info;
+    if (text === info.comment && show === info.showComment)
+      return;
+    this.song.info = { ...info, comment: text, showComment: show };
+    this.session.send('setComment', text, show);
     this.renderSongPanel();
     this.edited();
   }
@@ -1209,9 +1935,38 @@ export class DnFTEditor {
       this.renderFrames();
       this.view.invalidate();
     };
+    // fewer rows or frames take the bookmarks on them along; undo brings them back
+    const bookmarks = tr.bookmarks;
     await apply(value);
     const applied = { speed: this.tr.speed, tempo: this.tr.tempo, rows: this.tr.rows, frames: this.tr.frames, beat: this.tr.highlight[0], bar: this.tr.highlight[1] }[name];
-    this.record({ undo: () => apply(current[name]), redo: () => apply(applied) });
+    this.record({
+      undo: async () => {
+        await apply(current[name]);
+        if (name === 'rows' || name === 'frames')
+          await this.restoreBookmarks(track, bookmarks);
+      },
+      redo: () => apply(applied),
+    });
+  }
+
+  // The control panel's Speed / Groove button: the speed is then a groove's number. The
+  // speed goes into the range of the other kind; undoing brings it back.
+  async setGrooveMode(on) {
+    const track = this.track;
+    const before = { groove: this.tr.groove, speed: this.tr.speed };
+    if (before.groove === on)
+      return;
+    const apply = async ({ groove, speed }) => {
+      await this.session.call('setGrooveMode', track, groove);
+      if (speed !== undefined)
+        await this.session.call('setSpeed', track, speed);
+      await this.reloadTrack(track);
+      this.showTrack(track);
+      this.renderSongPanel();
+    };
+    await apply({ groove: on });
+    const after = { groove: on, speed: this.song.track(track).speed };
+    this.record({ undo: () => apply(before), redo: () => apply(after) });
   }
 
   async setEffColumns(channel, count) {
@@ -1253,9 +2008,99 @@ export class DnFTEditor {
   async setMachine(pal) {
     this.stopPlaying();
     await this.session.call('setMachine', pal);
-    this.song.info = await this.session.call('info');
-    this.renderSongPanel();
-    this.edited();
+    await this.reloadInfo();
+  }
+
+  // ---- commands of the keyboard that have no other place -------------------------------------
+
+  // F2 and F3 (CMainFrame::OnSelectPatternEditor(), OnSelectFrameEditor()); the frame list may
+  // be in the panel that is hidden
+  focusPatternEditor() {
+    this.activeEditor = 'pattern';
+    this.view.scroller.focus({ preventScroll: true });
+  }
+
+  focusFrameEditor() {
+    if (this.root.classList.contains('is-side-hidden') && !this.trackerMenu.options.framesTop)
+      this.trackerMenu.setOption('side', true);
+    this.activeEditor = 'frames';
+    this.els.frames.focus({ preventScroll: true });
+  }
+
+  // Ctrl+P: the module's properties are in the panel at the side
+  openModuleProperties() {
+    if (this.root.classList.contains('is-side-hidden'))
+      this.trackerMenu.setOption('side', true);
+    const panel = this.root.querySelectorAll('.dnft-side > details')[1];
+    if (!panel)
+      return;
+    panel.open = true;
+    panel.scrollIntoView({ block: 'nearest' });
+    panel.querySelector('input, select')?.focus({ preventScroll: true });
+  }
+
+  // Next and previous song (CMainFrame::OnNextSong(), OnPrevSong()): the tracks, without wrapping
+  stepTrack(delta) {
+    const track = this.track + delta;
+    if (track >= 0 && track < this.song.info.tracks.length)
+      return this.selectTrack(track);
+  }
+
+  // Ctrl+Shift+S (CMainFrame::OnToggleSpeed()): the value from which an F effect sets the tempo
+  // is 32, or 21 as old modules had it
+  async toggleSpeedSplit() {
+    const point = this.song.info.speedSplitPoint === 32 ? 21 : 32;
+    this.stopPlaying();
+    await this.session.call('setSpeedSplitPoint', point);
+    await this.reloadInfo();
+    this.message(this.strings.speedSplitSet.replace('{n}', point));
+  }
+
+  // Ctrl+Shift+M (CMainFrame::OnToggleMultiplexer()): the engine's, as the Configuration's
+  async toggleN163Multiplexing() {
+    this.stopPlaying();
+    const disabled = !(await this.session.call('soundSettings')).disableN163Multiplexing;
+    await this.config.setSound({ disableN163Multiplexing: disabled });
+    this.message(disabled ? this.strings.n163MultiplexingOff : this.strings.n163MultiplexingOn);
+  }
+
+  // Recall channel state (CFamiTrackerView::OnRecallChannelState()): what the cursor's channel
+  // plays (while the song plays) or has at the cursor's row, in the status line
+  async recallChannelState() {
+    const { frame, row, channel } = this.cursor;
+    const text = await this.session.call('recallChannelState', this.track, channel, frame, row);
+    this.message(text.trim() || this.strings.noChannelState);
+  }
+
+  // The properties below reset the sound generator (session_bindings.cpp), which stops
+  // what plays
+
+  // Engine ticks per second, 0 for the machine's (Module > Engine Speed)
+  async setEngineSpeed(hz) {
+    const speed = hz ? Math.max(ENGINE_RATE_MIN, Math.min(ENGINE_RATE_MAX, Math.round(hz))) : 0;
+    if (!Number.isFinite(speed) || speed === this.song.info.engineSpeed) {
+      this.renderSongPanel();
+      return;
+    }
+    this.stopPlaying();
+    await this.session.call('setEngineSpeed', speed);
+    await this.reloadInfo();
+  }
+
+  async setVibratoStyle(newStyle) {
+    if (newStyle === this.song.info.newVibrato)
+      return;
+    this.stopPlaying();
+    await this.session.call('setVibratoStyle', newStyle);
+    await this.reloadInfo();
+  }
+
+  async setLinearPitch(linear) {
+    if (linear === this.song.info.linearPitch)
+      return;
+    this.stopPlaying();
+    await this.session.call('setLinearPitch', linear);
+    await this.reloadInfo();
   }
 
   // After what changes the channels: everything again
@@ -1271,6 +2116,7 @@ export class DnFTEditor {
     this.muted = this.song.channels.map(() => false);
     this.session.send('setMutedChannels', 0);
     this.cursor = { ...cursor, channel: Math.min(cursor.channel, this.channelCount - 1) };
+    this.deselect();
     this.renderAll();
     this.setCursor(this.cursor);
   }
@@ -1282,6 +2128,7 @@ export class DnFTEditor {
     if (track === this.track)
       return;
     this.track = track;
+    this.deselect();
     this.renderAll();
   }
 
@@ -1291,7 +2138,7 @@ export class DnFTEditor {
       await this.reloadTrack(track);
     this.track = track;
     this.cursor = { frame: 0, row: 0, channel: this.cursor.channel, column: 0 };
-    this.selection = this.anchor = null;
+    this.deselect();
     this.renderAll();
   }
 
@@ -1315,24 +2162,86 @@ export class DnFTEditor {
     this.edited();
   }
 
+  // Module properties > Move up / Move down, with the track shown
+  async moveTrack(up) {
+    const track = this.track;
+    const other = up ? track - 1 : track + 1;
+    this.stopPlaying();
+    if (!await this.session.call('moveTrack', track, up))
+      return;
+    const tracks = this.song.tracks;
+    [tracks[track], tracks[other]] = [tracks[other], tracks[track]];
+    this.song.info = await this.session.call('info');
+    this.track = other;
+    // what can be undone knows the tracks by number
+    this.history.clear();
+    this.renderAll();
+    this.edited();
+  }
+
+  // After what changes tracks besides the one shown: the page reads its copies of them
+  // again (undo may show any of them)
+  async reloadTracks() {
+    this.song.info = await this.session.call('info');
+    const count = this.song.info.tracks.length;
+    const loaded = this.song.tracks.map((data, t) => data && t < count ? t : -1).filter(t => t >= 0);
+    this.song.tracks = [];
+    for (const t of new Set([this.track, ...loaded]))
+      await this.reloadTrack(t);
+    this.renderAll();
+    this.setCursor(this.cursor);
+  }
+
   // ---- channels ---------------------------------------------------------------------------
 
   toggleMute(channel, solo) {
     if (solo) {
       const alone = this.muted.every((m, i) => m === (i !== channel));
-      this.muted = this.muted.map((_, i) => alone ? false : i !== channel);
+      this.setMuted(this.muted.map((_, i) => alone ? false : i !== channel));
     } else {
-      this.muted[channel] = !this.muted[channel];
+      this.setMuted(this.muted.map((m, i) => i === channel ? !m : m));
     }
-    this.session.send('setMutedChannels', this.muted.reduce((mask, m, i) => m ? mask + 2 ** i : mask, 0));
+  }
+
+  // The channels that are muted, one flag for each
+  setMuted(muted) {
+    this.muted = muted;
+    this.session.send('setMutedChannels', muted.reduce((mask, m, i) => m ? mask + 2 ** i : mask, 0));
     this.view.buildHeader();
     this.view.invalidate();
+  }
+
+  // Pattern > Swap Channels: two channels give each other their patterns, the patterns
+  // their frames play and their effect columns, in the track or in every track. Undone by
+  // swapping them again (the desktop's cannot be undone).
+  async swapChannels(first, second, allTracks) {
+    const t = this.strings;
+    if (first === second)
+      return;
+    const track = this.track;
+    const tracks = allTracks ? this.song.info.tracks.map((_, i) => i) : [track];
+    const apply = async () => {
+      this.stopPlaying();
+      for (const i of tracks)
+        await this.session.call('swapChannels', i, first, second);
+      // the page's copies of the tracks, read again
+      for (const i of tracks)
+        if (this.song.track(i))
+          await this.reloadTrack(i);
+      this.track = track;
+      this.deselect();
+      this.renderAll();
+      this.setCursor(this.cursor);
+    };
+    await apply();
+    this.record({ undo: apply, redo: apply });
+    this.message(t.swapped.replace('%1', this.song.channels[first].name).replace('%2', this.song.channels[second].name));
   }
 
   // ---- instruments --------------------------------------------------------------------------
 
   selectInstrument(index, { quiet = false } = {}) {
-    this.instrument = index;
+    this.instrument = this.lastInstrument = index;
     this.renderInstruments();
     if (!quiet)
       this.view.scroller.focus({ preventScroll: true });
@@ -1355,8 +2264,16 @@ export class DnFTEditor {
     return chip === CHIP.MMC5 ? CHIP.NONE : chip;
   }
 
-  async addInstrument() {
-    const index = await this.session.call('addInstrument', this.chipOfCursor(), '');
+  // The menu of the Add button's arrow: an instrument of each chip, as the desktop's instrument
+  // toolbar has it (ID_INSTRUMENT_ADD_*); the MMC5 plays 2A03 instruments
+  openAddInstrumentMenu(button) {
+    const box = button.getBoundingClientRect();
+    this.files.contextMenu([['2A03', CHIP.NONE], ['VRC6', CHIP.VRC6], ['VRC7', CHIP.VRC7], ['FDS', CHIP.FDS], ['MMC5', CHIP.NONE], ['N163', CHIP.N163], ['5B', CHIP.S5B]]
+      .map(([label, chip]) => ({ label, run: () => this.addInstrument(chip) })), box.left, box.bottom);
+  }
+
+  async addInstrument(chip = this.chipOfCursor()) {
+    const index = await this.session.call('addInstrument', chip, '');
     if (index < 0)
       return;
     await this.refreshInstruments();
@@ -1365,8 +2282,9 @@ export class DnFTEditor {
     this.instrumentEditor.open(index);
   }
 
-  async cloneInstrument() {
-    const index = await this.session.call('cloneInstrument', this.instrument).catch(() => -1);
+  // deep: with copies of the sequences, not sharing them
+  async cloneInstrument({ deep = false } = {}) {
+    const index = await this.session.call(deep ? 'deepCloneInstrument' : 'cloneInstrument', this.instrument).catch(() => -1);
     if (index < 0)
       return;
     await this.refreshInstruments();
@@ -1383,6 +2301,57 @@ export class DnFTEditor {
     this.changedInstruments();
   }
 
+  // Instrument files (.fti) become instruments of the module, each in the next free number
+  // (with the DPCM samples they carry); the last one is the instrument in use
+  async loadInstruments(files) {
+    const t = this.strings;
+    const chips = this.song.info.chips;
+    let last = -1, count = 0, missingChip = null, failure = null;
+    for (const file of files) {
+      try {
+        const index = await this.session.call('loadInstrument', new Uint8Array(await file.arrayBuffer()));
+        last = index;
+        ++count;
+        const info = await this.session.call('instrument', index);
+        const chip = INSTRUMENT_CHIP[info.type];
+        if (chip && !(chips & chip))
+          missingChip = CHIPS.find(([, bit]) => bit === chip)?.[0] ?? null;
+      } catch (e) {
+        // the ones before it stay
+        failure = `${file.name}: ${e.message}`;
+        break;
+      }
+    }
+    let done = '';
+    if (last >= 0) {
+      await this.refreshInstruments();
+      this.selectInstrument(last, { quiet: true });
+      this.changedInstruments();
+      const named = count === 1 ? files[0].name : t.instrumentsLoaded.replace('%1', count);
+      done = t.instrumentLoaded + named + (missingChip ? t.instrumentChipMissing.replace('%1', missingChip) : '');
+    }
+    if (failure)
+      this.message(done ? `${done} — ${failure}` : failure, true);
+    else
+      this.message(done, !!missingChip);
+  }
+
+  // The instrument as an .fti file
+  async saveInstrumentFile(index = this.instrument) {
+    const t = this.strings;
+    const info = this.song.instrument(index);
+    if (!info)
+      return;
+    try {
+      const bytes = await this.session.call('saveInstrument', index);
+      const name = `${info.name.replace(/[\/:*?"<>|\u0000-\u001f]/g, ' ').trim() || t.instrumentFileName}.fti`;
+      this.files.download(name, new Blob([bytes], { type: 'application/octet-stream' }));
+      this.message(t.saved + name);
+    } catch (e) {
+      this.message(t.failed + e.message, true);
+    }
+  }
+
   // ---- actions and keys ---------------------------------------------------------------------
 
   action(name, event) {
@@ -1390,6 +2359,7 @@ export class DnFTEditor {
       case 'new': return this.newSong();
       case 'open': return this.els.file.click();
       case 'save': return this.saveFile();
+      case 'toggle-side': return this.trackerMenu.setOption('side', !this.trackerMenu.options.side);
       case 'play': return this.togglePlay();
       case 'play-song': return this.startPlaying(PLAY.SONG);
       case 'play-pattern': return this.startPlaying(PLAY.PATTERN);
@@ -1403,20 +2373,28 @@ export class DnFTEditor {
       case 'follow': this.follow = !this.follow; return this.renderToolbar();
       case 'undo': return this.undo();
       case 'redo': return this.redo();
+      case 'comment': return this.openComment();
       case 'add-track': return this.addTrack();
       case 'remove-track': return this.removeTrack();
+      case 'track-up': return this.moveTrack(true);
+      case 'track-down': return this.moveTrack(false);
       case 'insert-frame': return this.frameOp('insert');
       case 'duplicate-frame': return this.frameOp('duplicate');
       case 'clone-frame': return this.frameOp('clone');
       case 'remove-frame': return this.frameOp('remove');
       case 'frame-up': return this.frameOp('up');
       case 'frame-down': return this.frameOp('down');
-      case 'pattern-down': return this.setFramePattern(this.cursor.frame, this.cursor.channel, this.patternOf(this.cursor.frame, this.cursor.channel) - 1);
-      case 'pattern-up': return this.setFramePattern(this.cursor.frame, this.cursor.channel, this.patternOf(this.cursor.frame, this.cursor.channel) + 1);
+      // the frame selection's patterns, or the cursor's
+      case 'pattern-down': return this.frameEditor.stepPatterns(-1);
+      case 'pattern-up': return this.frameEditor.stepPatterns(1);
       case 'add-instrument': return this.addInstrument();
+      case 'add-instrument-of': return this.openAddInstrumentMenu(this.root.querySelector('[data-action="add-instrument-of"]'));
       case 'clone-instrument': return this.cloneInstrument();
+      case 'deep-clone-instrument': return this.cloneInstrument({ deep: true });
       case 'remove-instrument': return this.removeInstrument();
       case 'edit-instrument': return this.song.instrument(this.instrument) && this.instrumentEditor.open(this.instrument);
+      case 'load-instrument': return this.els.instrumentFile.click();
+      case 'save-instrument': return this.saveInstrumentFile();
       case 'note-cut': return this.editMode && this.enterNote(NOTE.HALT, 0);
       case 'note-release': return this.editMode && this.enterNote(NOTE.RELEASE, 0);
       case 'clear': return this.editMode && this.clear();
@@ -1448,16 +2426,11 @@ export class DnFTEditor {
       return;
     const typing = e.target.matches('input, select, textarea') || e.target.closest('dialog');
     const ctrl = e.ctrlKey || e.metaKey;
-    // what works anywhere in the editor
-    const global = {
-      F5: () => this.startPlaying(PLAY.SONG),
-      F6: () => this.startPlaying(PLAY.PATTERN),
-      F7: () => this.startPlaying(PLAY.CURSOR),
-      F8: () => this.stopPlaying(),
-    }[e.code];
-    if (global && !e.altKey) {
+    // what works anywhere in the editor: playing, killing the sound, the help
+    const global = this.keymap.lookup(e);
+    if (global?.global && !e.repeat && !e.target.closest('dialog')) {
       e.preventDefault();
-      global();
+      global.run(this);
       return;
     }
     if (ctrl && e.code === 'KeyS') {
@@ -1467,16 +2440,49 @@ export class DnFTEditor {
     }
     if (typing)
       return;
-    if (e.target === this.view.scroller || e.target === this.root)
+    if (e.target === this.view.scroller || e.target === this.root) {
+      this.activeEditor = 'pattern';
       this.onPatternKey(e);
+    } else if (e.target === this.els.frames)
+      this.shortcut(e);
   }
 
-  onKeyUp(e) {
-    const channel = this.held.get(e.code);
-    if (channel !== undefined) {
-      this.held.delete(e.code);
-      this.noteOff(channel);
+  // The shortcuts of the keymap, from where the keys are not the pattern's
+  shortcut(e) {
+    const command = this.keymap.lookup(e);
+    if (command) {
+      e.preventDefault();
+      command.run(this);
     }
+  }
+
+  // After a command of a menu: the keyboard back to the editor in use, unless the command
+  // opened a window of its own
+  focusEditor() {
+    const active = document.activeElement;
+    if (active && active !== document.body && active.isConnected && !active.closest('.dnft-menu'))
+      return;
+    (this.activeEditor === 'frames' ? this.els.frames : this.view.scroller).focus({ preventScroll: true });
+  }
+
+  // A note key let go: its note stops, but with the IT edit style it rings on
+  // (CFamiTrackerView::HandleKeyboardNote())
+  onKeyUp(e) {
+    const voice = this.held.get(e.code);
+    if (voice !== undefined) {
+      this.held.delete(e.code);
+      this.noteOff(voice, { stop: this.editStyle !== 'it' });
+    }
+  }
+
+  // Whether the key enters something at the cursor (a note, a digit, a letter) rather than moves
+  entersWithKey(e, column) {
+    const kind = columnKind(column);
+    if (kind === 'note')
+      return !!this.noteKeyTable()[e.code] || ['cut', 'release', 'echo'].includes(this.keyRole(e.code));
+    if (kind === 'effect')
+      return /^(Key[A-Z]|Digit\d|Numpad\d)$/.test(e.code) || e.key?.length === 1;
+    return hexOfKey(e) >= 0;
   }
 
   onPatternKey(e) {
@@ -1485,72 +2491,110 @@ export class DnFTEditor {
     const done = () => { e.preventDefault(); e.stopPropagation(); };
     const { column } = this.cursor;
 
-    if (ctrl) {
-      const command = {
-        KeyZ: () => shift ? this.redo() : this.undo(),
-        KeyY: () => this.redo(),
-        KeyC: () => this.copy(),
-        KeyX: () => this.editMode && this.cut(),
-        KeyV: () => this.editMode && this.paste(),
-        KeyA: () => this.selectAll(),
-        ArrowLeft: () => this.setCursor({ ...this.cursor, frame: this.cursor.frame - 1 }),
-        ArrowRight: () => this.setCursor({ ...this.cursor, frame: this.cursor.frame + 1 }),
-        ArrowUp: () => this.editMode && this.transpose(shift ? 12 : 1),
-        ArrowDown: () => this.editMode && this.transpose(shift ? -12 : -1),
-      }[e.code];
-      if (command) {
+    const command = this.keymap.lookup(e);
+    if (command) {
+      done();
+      command.run(this);
+      return;
+    }
+    if (ctrl || e.altKey) {
+      // Ctrl and the clear field key: the whole cell
+      if (ctrl && !e.altKey && this.keyRole(e.code) === 'clear' && this.editMode) {
         done();
-        command();
+        this.clearKey(true);
       }
       return;
     }
 
     switch (e.code) {
-      case 'ArrowUp': done(); return this.moveRows(-1, shift);
-      case 'ArrowDown': done(); return this.moveRows(1, shift);
+      case 'ArrowUp': done(); return this.moveByStep(-1, shift);
+      case 'ArrowDown': done(); return this.moveByStep(1, shift);
       case 'ArrowLeft': done(); return this.moveColumn(-1, shift);
       case 'ArrowRight': done(); return this.moveColumn(1, shift);
-      case 'PageUp': done(); return this.moveRows(-PAGE_ROWS, shift);
-      case 'PageDown': done(); return this.moveRows(PAGE_ROWS, shift);
+      case 'PageUp': done(); return this.moveRows(-this.config.get('pageStep'), shift);
+      case 'PageDown': done(); return this.moveRows(this.config.get('pageStep'), shift);
       case 'Home': done(); return this.setCursor({ ...this.cursor, row: 0 }, { extend: shift });
       case 'End': done(); return this.setCursor({ ...this.cursor, row: this.tr.rows - 1 }, { extend: shift });
       case 'Tab': done(); return this.moveChannel(shift ? -1 : 1);
       case 'Space': done(); return this.setEditMode(!this.editMode);
       case 'Enter': case 'NumpadEnter': done(); return this.togglePlay();
-      case 'Escape': done(); this.selection = this.anchor = null; return this.view.invalidate();
+      case 'Escape':
+        done();
+        // while a selection is being dragged, the drag is called off, and the selection with it
+        this.endDrag();
+        return this.deselect();
       case 'NumpadDivide': done(); return this.setOctave(this.octave - 1);
       case 'NumpadMultiply': done(); return this.setOctave(this.octave + 1);
+      // the desktop's Increase pattern / Decrease pattern
+      case 'NumpadAdd': done(); return this.action('pattern-up');
+      case 'NumpadSubtract': done(); return this.action('pattern-down');
     }
-    if (!this.editMode && !(column === 0 && NOTE_KEYS[e.code]))
+    // the numeric keypad in the note column picks an instrument (CFamiTrackerView::OnKeyDown())
+    if (column === 0 && /^Numpad[0-9]$/.test(e.code)) {
+      done();
+      return this.selectInstrument(Number(e.code.at(-1)), { quiet: true });
+    }
+    const notes = this.noteKeyTable();
+    if (!this.editMode && !(column === 0 && notes[e.code]))
       return;
     switch (e.code) {
       case 'Delete': done(); return this.clear({ pullUp: shift });
       case 'Insert': done(); return this.insertRow();
       case 'Backspace': done(); return this.deleteRowAbove();
     }
+    const role = this.keyRole(e.code);
+    // the ModPlug style: the digits above the letters set the octave of the note at the cursor
+    // (CFamiTrackerView::TranslateKeyModplug())
+    const octaveKey = this.editStyle === 'mpt' && column === 0 && this.editMode && /^Digit[0-9]$/.test(e.code) && !role;
 
+    // Key repeat off (CFamiTrackerView::OnChar(), PreventRepeat()): what a held key enters, it enters once
+    if (e.repeat && !this.config.get('keyRepeat') && this.entersWithKey(e, column)) {
+      done();
+      return;
+    }
+
+    // what the keys that do more than type enter, in the field at the cursor
+    if (this.editMode && role === 'clear') {
+      done();
+      return this.clearKey(false);
+    }
+    if (this.editMode && role === 'repeat') {
+      done();
+      return this.repeatEntry();
+    }
     if (column === 0) {
-      if (e.code === 'Digit1') {
+      if (role === 'echo') {
+        done();
+        if (this.editMode) this.enterEcho();
+        return;
+      }
+      if (role === 'cut') {
         done();
         if (this.editMode) this.enterNote(NOTE.HALT, 0);
         return;
       }
-      if (e.code === 'Backslash' || e.code === 'IntlYen' || e.code === 'IntlRo') {
+      if (role === 'release') {
         done();
         if (this.editMode) this.enterNote(NOTE.RELEASE, 0);
         return;
       }
-      const key = NOTE_KEYS[e.code];
-      if (!key || e.altKey)
+      if (octaveKey) {
+        const cell = this.cellHere();
+        if (cell[0] >= NOTE.C && cell[0] <= NOTE.B) {
+          done();
+          const digit = Number(e.code.at(-1));
+          this.enterNote(cell[0], Math.min(OCTAVES - 1, digit === 0 ? 9 : digit - 1));
+        }
+        return;
+      }
+      const key = notes[e.code];
+      if (!key)
         return;
       done();
       const note = NOTE.C + key[0];
       const octave = Math.min(OCTAVES - 1, this.octave + key[1]);
-      if (!e.repeat && this.previews()) {
-        const channel = this.cursor.channel;
-        this.noteOn(channel, note, octave);
-        this.held.set(e.code, channel);
-      }
+      if (!e.repeat && this.previews())
+        this.held.set(e.code, this.noteOn(this.cursor.channel, note, octave));
       if (this.editMode)
         this.enterNote(note, octave);
       return;
@@ -1572,75 +2616,387 @@ export class DnFTEditor {
       done();
   }
 
-  onFrameKey(e) {
-    const { frame, channel } = this.cursor;
-    const done = () => { e.preventDefault(); e.stopPropagation(); };
-    const move = (df, dc) => {
-      this.frameDigits = '';
-      this.setCursor({ ...this.cursor, frame: frame + df, channel: Math.max(0, Math.min(this.channelCount - 1, channel + dc)), column: 0 });
-    };
-    switch (e.code) {
-      case 'ArrowUp': done(); return move(-1, 0);
-      case 'ArrowDown': done(); return move(1, 0);
-      case 'ArrowLeft': done(); return move(0, -1);
-      case 'ArrowRight': done(); return move(0, 1);
-      case 'Insert': done(); return this.frameOp('insert');
-      case 'Delete': done(); return this.frameOp('remove');
-      case 'NumpadAdd': done(); return this.setFramePattern(frame, channel, this.patternOf(frame, channel) + 1);
-      case 'NumpadSubtract': case 'Minus': done(); return this.setFramePattern(frame, channel, this.patternOf(frame, channel) - 1);
-      case 'Equal': if (e.shiftKey) { done(); return this.setFramePattern(frame, channel, this.patternOf(frame, channel) + 1); } break;
-      case 'Enter': done(); return this.view.scroller.focus();
-    }
-    const value = hexOfKey(e);
-    if (value >= 0 && !e.ctrlKey && !e.metaKey) {
-      done();
-      this.frameDigits = (this.frameDigits + value.toString(16)).slice(-2);
-      this.setFramePattern(frame, channel, parseInt(this.frameDigits, 16));
-      if (this.frameDigits.length === 2)
-        this.frameDigits = '';
-    }
-  }
-
   // ---- the pattern with the mouse ------------------------------------------------------------
 
+  // As the desktop's: a click puts the cursor on the cell (once the button is let go), a
+  // drag from it selects and leaves the cursor where it was; near the top or bottom the
+  // rows scroll (CPatternEditor::AutoScroll()). On the row numbers, a click goes to the row
+  // and a drag selects whole rows. Shift extends the selection to the cell.
   onGridPointerDown(e) {
     if (e.target !== this.view.canvas || e.button !== 0)
       return;
     const place = this.view.hit(e.clientX, e.clientY);
     this.view.scroller.focus({ preventScroll: true });
+    this.activeEditor = 'pattern';
     if (!place)
       return;
-    const target = {
-      frame: place.frame, row: place.row,
-      channel: place.channel ?? this.cursor.channel,
-      column: place.column ?? this.cursor.column,
-    };
-    this.setCursor(target, { extend: e.shiftKey });
+    if (place.channel === null) {
+      this.deselect();
+      this.drag = { rows: true, start: { frame: place.frame, row: place.row, channel: 0, column: 0 }, click: { ...this.cursor, frame: place.frame, row: place.row } };
+    } else if (e.shiftKey) {
+      this.select(this.selection ? this.selStart : this.cursor, place, this.block);
+      this.drag = { start: this.selStart, moved: true };
+    } else if (this.editMode && this.inSelection(place)) {
+      // in the selection: a click puts the cursor there and drops it, a drag moves what it
+      // holds (Ctrl copies, Shift copies on top)
+      this.drag = { dropping: true, grab: place, click: place, origin: { x: e.clientX, y: e.clientY } };
+    } else {
+      this.deselect();
+      this.drag = { start: place, click: place };
+    }
+    this.drag.pointer = { x: e.clientX, y: e.clientY };
     this.dragging = true;
     this.view.scroller.setPointerCapture(e.pointerId);
   }
 
-  onGridPointerMove(e) {
-    if (!this.dragging)
-      return;
-    const place = this.view.hit(e.clientX, e.clientY);
-    if (!place || place.channel === null)
-      return;
-    if (place.frame === this.cursor.frame && place.row === this.cursor.row && place.channel === this.cursor.channel && place.column === this.cursor.column)
-      return;
-    this.anchor ??= { ...this.cursor };
-    this.setCursor({ frame: this.anchor.frame, row: place.frame === this.anchor.frame ? place.row : this.cursor.row, channel: place.channel, column: place.column }, { extend: true });
+  // Whether a cell of the pattern (a place with a channel) is in the selection's fields
+  inSelection(place) {
+    const sel = this.selection;
+    return !!sel && place.channel !== null && edit.inRows(sel, place.frame, place.row) &&
+      edit.fieldSelected(sel, place.channel, fieldOfColumn(place.column));
   }
 
+  onGridPointerMove(e) {
+    if (!this.drag)
+      return;
+    this.drag.pointer = { x: e.clientX, y: e.clientY };
+    if (this.drag.dropping) {
+      this.drag.copy = e.ctrlKey || e.metaKey;
+      this.drag.mix = e.shiftKey;
+    }
+    this.dragTo();
+    if (!this.drag)
+      return;
+    if (this.drag.dropping)
+      this.view.canvas.style.cursor = this.drag.moved ? (this.drag.copy ? 'copy' : 'move') : '';
+    this.autoScroll();
+  }
+
+  // Where the selection would land, with the cell under the pointer where the one it was
+  // taken by is: the same number of rows and channels from it, kept inside the track
+  // (CPatternEditor::UpdateDrag())
+  dropPlace() {
+    const { drag } = this;
+    const place = this.view.hit(drag.pointer.x, drag.pointer.y, { clamp: true });
+    if (!place)
+      return null;
+    const sel = this.selection;
+    const { rows, frames } = this.tr;
+    const width = sel.end.channel - sel.start.channel + 1;
+    const grabbed = (drag.grab.frame - sel.start.frame) * rows + drag.grab.row - sel.start.row;
+    const at = Math.max(0, Math.min(rows * frames - 1, place.frame * rows + place.row - grabbed));
+    return {
+      frame: Math.floor(at / rows), row: at % rows, column: place.column,
+      channel: Math.max(0, Math.min(this.channelCount - width, place.channel - (drag.grab.channel - sel.start.channel))),
+    };
+  }
+
+  // The drag of the selection: its target shows once the pointer has gone a few pixels
+  // (the system's drag distance), and goes if the drop would change nothing
+  dragSelection() {
+    const { drag } = this;
+    if (!drag.moved) {
+      if (Math.hypot(drag.pointer.x - drag.origin.x, drag.pointer.y - drag.origin.y) < DRAG_DISTANCE)
+        return;
+      if (edit.repeatsRows(this.trackView(), this.selection)) {
+        this.message(this.strings.repeatedRows, true);
+        this.endDrag();
+        return;
+      }
+      drag.moved = true;
+    }
+    const to = this.dropPlace();
+    const key = to && `${to.frame}:${to.row}:${to.channel}:${to.column}:${drag.copy}:${drag.mix}`;
+    if (key === drag.key)
+      return;
+    drag.key = key;
+    const drop = to && edit.moveCells(this.trackView(), this.selection, to, { copy: drag.copy, mix: drag.mix, overflow: this.overflowPaste });
+    drag.drop = drop;
+    this.dragTarget = drop?.target ?? null;
+    this.view.invalidate();
+  }
+
+  // The selection from where the drag started to the cell under the pointer
+  dragTo() {
+    const { drag } = this;
+    if (drag.dropping) {
+      this.dragSelection();
+      return;
+    }
+    const place = this.view.hit(drag.pointer.x, drag.pointer.y, { clamp: true });
+    if (!place)
+      return;
+    if (drag.rows) {
+      const last = this.channelCount - 1;
+      if (drag.moved || place.frame !== drag.start.frame || place.row !== drag.start.row) {
+        drag.moved = true;
+        this.select(drag.start, { frame: place.frame, row: place.row, channel: last, column: this.columns(last) - 1 });
+      }
+      return;
+    }
+    const start = drag.start;
+    if (!drag.moved && place.frame === start.frame && place.row === start.row && place.channel === start.channel && place.column === start.column)
+      return;
+    drag.moved = true;
+    this.select(start, place);
+  }
+
+  // While the pointer is at the top or bottom line, or past them, the rows scroll by
+  autoScroll() {
+    const { drag } = this;
+    const rect = this.view.canvas.getBoundingClientRect();
+    const line = this.view.rowHeight;
+    drag.direction = drag.pointer.y < rect.top + line ? -1 : drag.pointer.y > rect.bottom - line ? 1 : 0;
+    if (!drag.direction || drag.timer)
+      return;
+    drag.timer = setInterval(() => {
+      if (this.drag !== drag || !drag.direction) {
+        clearInterval(drag.timer);
+        drag.timer = null;
+        return;
+      }
+      const { rows, frames } = this.tr;
+      const at = this.cursor.frame * rows + this.cursor.row + drag.direction;
+      if (at < 0 || at >= rows * frames)
+        return;
+      this.setCursor({ ...this.cursor, frame: Math.floor(at / rows), row: at % rows }, { keep: true });
+      this.dragTo();
+    }, 40);
+  }
+
+  // The button let go (`click`: a click without a drag moves the cursor), or the drag
+  // called off
+  endDrag(click = false) {
+    const drag = this.drag;
+    if (drag?.timer)
+      clearInterval(drag.timer);
+    this.drag = null;
+    this.dragging = false;
+    if (drag?.dropping) {
+      this.view.canvas.style.cursor = '';
+      this.dragTarget = null;
+      this.view.invalidate();
+      if (!click)
+        return;
+      if (!drag.moved) {
+        // a click in the selection: it goes, and the cursor is where it was
+        this.deselect();
+        this.setCursor(drag.click);
+      } else if (drag.drop) {
+        this.drop(drag.drop);
+      }
+      return;
+    }
+    if (click && drag?.click && !drag.moved)
+      this.setCursor(drag.click);
+  }
+
+  // The selection dropped (CPActionDragAndDrop): one action, which puts the cursor at the
+  // top of what was dropped and selects it
+  drop({ writes, target }) {
+    const { frame, row, channel, column } = target.start;
+    const after = { cursor: { frame, row, channel, column }, selStart: target.start, selEnd: target.end, block: false };
+    if (this.applyWrites(writes, after))
+      this.restoreEditState(after);
+  }
+
+  // A double click selects the channel in the frame; on the row numbers, the frame
+  // (CPatternEditor::OnMouseDblClk())
+  onGridDoubleClick(e) {
+    if (e.target !== this.view.canvas || e.shiftKey || this.touch.fromTouch())
+      return;
+    const place = this.view.hit(e.clientX, e.clientY);
+    if (place)
+      this.selectScope('frame', place.channel === null ? 'all' : 'channel');
+  }
+
+  // The right button: the cursor goes to the cell, the selection stays, and the desktop's
+  // menu opens (IDR_PATTERN_POPUP)
+  onGridContextMenu(e) {
+    if (e.target !== this.view.canvas)
+      return;
+    e.preventDefault();
+    // a finger's long press opens it when the finger lifts (touchMenu())
+    if (this.touch.fromTouch())
+      return;
+    this.endDrag();
+    // its commands are the pattern's
+    this.view.scroller.focus({ preventScroll: true });
+    this.activeEditor = 'pattern';
+    const place = this.view.hit(e.clientX, e.clientY);
+    if (place && place.channel !== null)
+      this.setCursor(place, { keep: true });
+    this.patternMenu.openContextMenu(e.clientX, e.clientY);
+  }
+
+  // ---- the pattern with a finger (dnft-touch.mjs) ------------------------------------------------
+
+  // A tap: the cursor to the cell (on the row numbers, to the row), and no selection
+  touchTap(x, y) {
+    if (!this.song)
+      return;
+    const place = this.view.hit(x, y);
+    this.view.scroller.focus({ preventScroll: true });
+    this.activeEditor = 'pattern';
+    this.touchPlace = place;
+    if (!place)
+      return;
+    this.deselect();
+    this.setCursor(place.channel === null ? { ...this.cursor, frame: place.frame, row: place.row } : place);
+  }
+
+  // Two taps: as a double click, the channel in the frame (on the row numbers, the frame)
+  touchDoubleTap() {
+    if (this.song && this.touchPlace)
+      this.selectScope('frame', this.touchPlace.channel === null ? 'all' : 'channel');
+  }
+
+  // A drag: sideways the channels, up and down the rows, as the wheel moves them (the cursor
+  // stays in the middle line), but not round the ends of the track. False at an end, which
+  // stops a fling.
+  touchScroll(dx, dy) {
+    if (!this.song)
+      return false;
+    let moved = false;
+    if (dx) {
+      const scroller = this.view.scroller;
+      const before = scroller.scrollLeft;
+      scroller.scrollLeft = Math.max(0, Math.min(scroller.scrollWidth - scroller.clientWidth, before - dx));
+      moved = scroller.scrollLeft !== before || Math.abs(dx) < 1;
+    }
+    if (dy) {
+      this.touchRows = (this.touchRows ?? 0) - dy / this.view.rowHeight;
+      const rows = Math.trunc(this.touchRows);
+      moved = true;
+      if (rows) {
+        this.touchRows -= rows;
+        const { rows: length, frames } = this.tr;
+        const at = this.cursor.frame * length + this.cursor.row + rows;
+        const to = Math.max(0, Math.min(length * frames - 1, at));
+        this.setCursor({ ...this.cursor, frame: Math.floor(to / length), row: to % length }, { keep: true });
+        moved = to === at;
+      }
+    }
+    return moved;
+  }
+
+  // A long press: in the selection (editing on), it is picked up and shows where it would go;
+  // elsewhere a selection starts there (whole rows on the row numbers). What it was comes back if
+  // the finger lifts without moving (touchMenu()).
+  touchHeld(x, y) {
+    if (!this.song)
+      return;
+    const place = this.view.hit(x, y);
+    this.touchHold = { place, before: this.editState() };
+    if (!place)
+      return;
+    if (this.editMode && place.channel !== null && this.inSelection(place)) {
+      this.touchHold.move = true;
+      this.dragTarget = this.selection;
+      this.view.invalidate();
+    } else if (place.channel === null) {
+      const last = this.channelCount - 1;
+      this.select({ frame: place.frame, row: place.row, channel: 0, column: 0 },
+        { frame: place.frame, row: place.row, channel: last, column: this.columns(last) - 1 });
+    } else {
+      this.select(place, place);
+    }
+  }
+
+  // ...then a drag: it selects as the mouse does, or moves the selection picked up (no copy: a
+  // finger has no Ctrl)
+  touchDragStart(x0, y0, x, y) {
+    const place = this.touchHold?.place;
+    if (!place)
+      return;
+    if (this.touchHold.move)
+      this.drag = { dropping: true, grab: place, origin: { x: x0, y: y0 }, copy: false, mix: false };
+    else if (place.channel === null)
+      this.drag = { rows: true, start: { frame: place.frame, row: place.row, channel: 0, column: 0 }, moved: true };
+    else
+      this.drag = { start: place, moved: true };
+    this.dragging = true;
+    this.touchDragMove(x, y);
+  }
+
+  touchDragMove(x, y) {
+    if (!this.drag)
+      return;
+    this.drag.pointer = { x, y };
+    this.dragTo();
+    if (this.drag)
+      this.autoScroll();
+  }
+
+  touchDragEnd(x, y) {
+    this.touchHold = null;
+    if (!this.drag)
+      return;
+    this.drag.pointer = { x, y };
+    if (this.drag.dropping)
+      this.dragSelection();
+    this.endDrag(true);
+  }
+
+  // ...or let go where it was: the right button's menu, for the cell (the cursor goes there, the
+  // selection is the one there was)
+  touchMenu(x, y) {
+    const hold = this.touchHold;
+    this.touchHold = null;
+    if (!hold)
+      return;
+    this.dragTarget = null;
+    this.restoreEditState(hold.before);
+    this.view.scroller.focus({ preventScroll: true });
+    this.activeEditor = 'pattern';
+    if (hold.place && hold.place.channel !== null)
+      this.setCursor(hold.place, { keep: true });
+    this.patternMenu.openContextMenu(x, y);
+  }
+
+  touchCancel() {
+    const hold = this.touchHold;
+    this.touchHold = null;
+    const dragged = !!this.drag;
+    this.endDrag();
+    if (hold && !dragged) {
+      this.dragTarget = null;
+      this.restoreEditState(hold.before);
+    }
+  }
+
+  // The wheel moves the rows; with Ctrl it transposes, with Shift (editing) it changes the
+  // values, with both it goes from frame to frame (CFamiTrackerView::OnMouseWheel())
   onGridWheel(e) {
-    if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY))
+    const ctrl = e.ctrlKey || e.metaKey;
+    const vertical = Math.abs(e.deltaY) >= Math.abs(e.deltaX);
+    const delta = vertical ? e.deltaY : e.deltaX;
+    if (ctrl || (e.shiftKey && this.editMode)) {
+      // a notch at a time: the small steps of a touchpad (and its pinch) are left alone
+      if (e.deltaMode === 0 && Math.abs(delta) < 50)
+        return;
+      e.preventDefault();
+      const direction = delta < 0 ? 1 : -1;
+      if (ctrl && e.shiftKey)
+        this.setCursor({ ...this.cursor, frame: this.cursor.frame - direction });
+      else if (ctrl)
+        this.editMode && this.transpose(direction);
+      else
+        this.scrollValues(direction);
+      return;
+    }
+    if (e.shiftKey || !vertical)
       return;
     e.preventDefault();
     this.wheel = (this.wheel ?? 0) + (e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY);
     const rows = Math.trunc(this.wheel / 32);
     if (rows) {
       this.wheel -= rows * 32;
-      this.moveRows(rows);
+      // as the desktop's, the wheel keeps the selection
+      const { rows: length, frames } = this.tr;
+      const total = length * frames;
+      const at = (((this.cursor.frame * length + this.cursor.row + rows) % total) + total) % total;
+      this.setCursor({ ...this.cursor, frame: Math.floor(at / length), row: at % length }, { keep: true });
     }
   }
 
@@ -1658,6 +3014,7 @@ export class DnFTEditor {
     };
     pressed('edit', this.editMode);
     pressed('follow', this.follow);
+    pressed('toggle-side', this.trackerMenu?.options.side ?? true);
     pressed('play', this.playing);
     root.classList.toggle('is-editing', this.editMode);
     root.classList.toggle('is-playing', this.playing);
@@ -1675,56 +3032,45 @@ export class DnFTEditor {
     const values = { speed: tr.speed, tempo: tr.tempo, rows: tr.rows, frames: tr.frames, beat: tr.highlight[0], bar: tr.highlight[1] };
     for (const input of root.querySelectorAll('[data-setting]'))
       input.value = values[input.dataset.setting];
-    root.querySelector('[data-setting="speed"]').max = tr.groove ? 31 : tr.tempo ? info.speedSplitPoint - 1 : 255;
+    const speed = root.querySelector('[data-setting="speed"]');
+    speed.min = tr.groove ? 0 : 1;
+    speed.max = tr.groove ? 31 : tr.tempo ? info.speedSplitPoint - 1 : 255;
+    speed.title = tr.groove ? this.strings.grooveModeHint : this.strings.speedHint;
+    els.grooveMode.checked = tr.groove;
+    // a fixed tempo is the frame rate's, 2.5 beats to a tick (CMainFrame::OnUpdateToggleFixTempo())
+    els.tempoFixed.checked = tr.tempo === 0;
+    const tempo = root.querySelector('[data-setting="tempo"]');
+    tempo.disabled = tr.tempo === 0;
+    if (tr.tempo === 0)
+      tempo.value = (info.frameRate * 2.5).toFixed(2);
     root.querySelector('[data-setting="tempo"]').min = info.speedSplitPoint;
+    const commentLine = info.comment.split('\n').find(line => line.trim()) ?? '';
+    els.comment.textContent = commentLine || this.strings.noComment;
+    els.comment.classList.toggle('is-empty', !commentLine);
     els.track.replaceChildren(...info.tracks.map((title, i) => new Option(`${hex2(i + 1)} ${title}`, i)));
     els.track.value = this.track;
+    if (document.activeElement !== els.trackTitle)
+      els.trackTitle.value = info.tracks[this.track] ?? '';
     root.querySelector('[data-action="remove-track"]').disabled = info.tracks.length < 2;
+    root.querySelector('[data-action="track-up"]').disabled = this.track === 0;
+    root.querySelector('[data-action="track-down"]').disabled = this.track >= info.tracks.length - 1;
     for (const box of els.chips.querySelectorAll('input'))
       box.checked = (info.chips & Number(box.value)) !== 0;
     els.n163.value = info.namcoChannels || 1;
     els.n163.disabled = !(info.chips & CHIP.N163);
     els.machine.value = info.pal ? '1' : '0';
     els.machine.disabled = info.chips !== 0;
+    els.engineMode.value = info.engineSpeed ? '1' : '0';
+    els.engineRate.value = info.frameRate;
+    els.engineRate.disabled = !info.engineSpeed;
+    els.vibrato.value = info.newVibrato ? '1' : '0';
+    els.linearPitch.value = info.linearPitch ? '1' : '0';
   }
 
   renderFrames() {
-    const { els } = this;
     const tr = this.tr;
-    const channels = this.channelCount;
-    const { frame: current, channel: currentChannel } = this.cursor;
-    const rows = [];
-    for (let f = 0; f < tr.frames; ++f) {
-      const row = document.createElement('div');
-      row.className = 'dnft-frame-row';
-      row.classList.toggle('is-current', f === current);
-      row.classList.toggle('is-playing', !!this.play && this.play.frame === f);
-      const number = document.createElement('span');
-      number.className = 'dnft-frame-number';
-      number.dataset.frame = f;
-      number.textContent = hex2(f);
-      row.append(number);
-      for (let c = 0; c < channels; ++c) {
-        const cell = document.createElement('span');
-        cell.className = 'dnft-frame-pattern';
-        cell.classList.toggle('is-channel', f === current && c === currentChannel);
-        cell.dataset.frame = f;
-        cell.dataset.channel = c;
-        cell.textContent = hex2(tr.frameList[f * channels + c]);
-        row.append(cell);
-      }
-      rows.push(row);
-    }
-    els.frames.replaceChildren(...rows);
-    // keep the current frame in view, without scrolling the page
-    const row = rows[current];
-    if (row) {
-      const top = row.offsetTop - els.frames.offsetTop, bottom = top + row.offsetHeight;
-      if (top < els.frames.scrollTop)
-        els.frames.scrollTop = top;
-      else if (bottom > els.frames.scrollTop + els.frames.clientHeight)
-        els.frames.scrollTop = bottom - els.frames.clientHeight;
-    }
+    const current = this.cursor.frame;
+    this.frameEditor.render();
     const tools = this.root.querySelector('.dnft-frames-panel');
     tools.querySelector('[data-action="remove-frame"]').disabled = tr.frames < 2;
     tools.querySelector('[data-action="frame-up"]').disabled = current === 0;
@@ -1755,9 +3101,13 @@ export class DnFTEditor {
     const panel = this.root.querySelector('.dnft-instruments-panel');
     const exists = !!song.instrument(this.instrument);
     panel.querySelector('[data-action="remove-instrument"]').disabled = !exists;
-    panel.querySelector('[data-action="clone-instrument"]').disabled = !exists || song.instruments.length >= MAX_INSTRUMENTS;
+    for (const action of ['clone-instrument', 'deep-clone-instrument'])
+      panel.querySelector(`[data-action="${action}"]`).disabled = !exists || song.instruments.length >= MAX_INSTRUMENTS;
     panel.querySelector('[data-action="edit-instrument"]').disabled = !exists;
+    panel.querySelector('[data-action="save-instrument"]').disabled = !exists;
+    panel.querySelector('[data-action="load-instrument"]').disabled = song.instruments.length >= MAX_INSTRUMENTS;
     panel.querySelector('[data-action="add-instrument"]').disabled = song.instruments.length >= MAX_INSTRUMENTS;
+    panel.querySelector('[data-action="add-instrument-of"]').disabled = song.instruments.length >= MAX_INSTRUMENTS;
   }
 
   updateStatus() {
@@ -1767,14 +3117,17 @@ export class DnFTEditor {
     const tr = this.tr;
     const { frame, row, channel } = this.cursor;
     const parts = [
-      `${t.statusFrame} ${hex2(frame)}/${hex2(tr.frames - 1)}`,
-      `${t.statusRow} ${hex2(row)}`,
+      `${t.statusFrame} ${this.frameLabel(frame)}/${this.frameLabel(tr.frames - 1)}`,
+      `${t.statusRow} ${this.rowLabel(row)}`,
       this.song.channels[channel].name,
     ];
-    if (this.playing && this.play)
+    if (this.playing && this.play) {
       parts.push(`${t.playing} ${hex2(this.play.frame)}:${hex2(this.play.row)}`);
-    else if (this.editMode)
+      if (this.trackerMenu.bpm)
+        parts.push(`${this.trackerMenu.options.averageBpm ? t.averageBpmShort : 'BPM'} ${this.trackerMenu.bpm.toFixed(1)}`);
+    } else if (this.editMode) {
       parts.push(t.editing);
+    }
     this.els.position.textContent = parts.join('  ·  ');
   }
 
@@ -1785,8 +3138,4 @@ export class DnFTEditor {
     clearTimeout(this.messageTimer);
     this.messageTimer = setTimeout(() => { el.textContent = ''; }, error ? 10000 : 5000);
   }
-}
-
-function range(first, last) {
-  return Array.from({ length: last - first + 1 }, (_, i) => first + i);
 }

@@ -14,6 +14,7 @@
 
 #include "portable/SoundGenUI.h"
 #include "soundgen_host.h"
+#include "dnft_compat.h"
 
 #include <cstdint>
 #include <memory>
@@ -35,19 +36,23 @@ struct Engine {
 
 Engine &GetEngine();
 
-// Collects what the core would show in message boxes while it is alive.
+// Collects what the core would show in message boxes while it is alive. Collectors
+// nest: the innermost one alive gets the messages.
 class MessageCollector {
 public:
 	MessageCollector();
 	~MessageCollector();
+	MessageCollector(const MessageCollector &) = delete;
+	MessageCollector &operator=(const MessageCollector &) = delete;
 	const std::string &GetText() const { return m_sText; }
 
 private:
 	std::string m_sText;
+	dnft_compat::MessageHandler m_Previous;
 };
 
-// Module texts are in whatever code page the author's Windows used. Valid UTF-8 is
-// kept; anything else is read as Windows-1252, the most common case.
+// A module's text, at most maxLength bytes up to its NUL, as UTF-8 (text::ToUtf8(): the
+// code page of the author's Windows, or UTF-8)
 std::string ToUtf8(const char *text, size_t maxLength);
 
 // A module file parsed by the tracker's loader, with what the file tells about the
@@ -58,5 +63,13 @@ struct LoadedDocument {
 	std::string program;	// "Dn-FamiTracker", "0CC-FamiTracker" or "FamiTracker"
 };
 LoadedDocument LoadDocument(const uint8_t *data, size_t size);
+
+// The desktop tracker's new module: 2A03 only, one instrument, one frame of 64 rows.
+// Not attached to the sound generator.
+std::unique_ptr<CFamiTrackerDoc> NewDocument();
+
+// A path for a file in memory (see dnft_compat.h) that no other file has, ending in
+// `name`
+std::string NewPath(const std::string &name);
 
 } // namespace dnft::detail

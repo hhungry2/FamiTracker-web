@@ -217,21 +217,23 @@ public:
 	void Preallocate(int length) { m_str.reserve(static_cast<size_t>(std::max(0, length))); }
 	void Truncate(int length) { if (length >= 0 && static_cast<size_t>(length) < m_str.size()) m_str.resize(static_cast<size_t>(length)); }
 
-	void Format(const char *fmt, ...) {
-		va_list args;
-		va_start(args, fmt);
-		FormatV(fmt, args);
-		va_end(args);
+	// MSVC passes a CString through "..." as the pointer to its characters, and the core
+	// hands CStrings to %s that way. Only trivial types may go through "..." elsewhere,
+	// so these take their arguments as a pack and pass CStrings on as pointers.
+	template <typename... T>
+	void Format(const char *fmt, const T &... args) {
+		m_str.clear();
+		AppendFormat(fmt, args...);
 	}
 	void FormatV(const char *fmt, va_list args) {
 		m_str.clear();
 		AppendFormatV(fmt, args);
 	}
-	void AppendFormat(const char *fmt, ...) {
-		va_list args;
-		va_start(args, fmt);
-		AppendFormatV(fmt, args);
-		va_end(args);
+	template <typename... T>
+	void AppendFormat(const char *fmt, const T &... args) {
+		// A format that asks for more arguments than it gets reads what follows them
+		// (the text export's header has one %i too many): zeros here, not garbage.
+		AppendFormatVarargs(fmt, VarArg(args)..., 0, 0, 0, 0);
 	}
 	void AppendFormatV(const char *fmt, va_list args) {
 		va_list copy;
@@ -246,7 +248,11 @@ public:
 		m_str.resize(at + static_cast<size_t>(n));
 	}
 	// Format(UINT nFormatID, ...) takes the format from the string table
-	void Format(UINT nFormatID, ...);
+	template <typename... T>
+	void Format(UINT nFormatID, const T &... args) {
+		const CString format = LoadFormat(nFormatID);
+		Format(format.GetString(), args...);
+	}
 	BOOL LoadString(UINT nID);
 	BOOL LoadString(HINSTANCE, UINT nID) { return LoadString(nID); }
 
@@ -374,6 +380,18 @@ private:
 		return n <= 0 ? 0 : std::min(static_cast<size_t>(n), m_str.size());
 	}
 	static int Pos(size_t at) { return at == std::string::npos ? -1 : static_cast<int>(at); }
+
+	template <typename T>
+	static const T &VarArg(const T &value) { return value; }
+	static const char *VarArg(const CString &s) { return s.GetString(); }
+	void AppendFormatVarargs(const char *fmt, ...) {
+		va_list args;
+		va_start(args, fmt);
+		AppendFormatV(fmt, args);
+		va_end(args);
+	}
+	// the string table entry, or a placeholder naming the id
+	static CString LoadFormat(UINT nID);
 
 	std::string m_str;
 };
@@ -578,12 +596,21 @@ private:
 	bool m_bWrite = false;
 };
 
+// Text mode, the default, writes line breaks as Windows' C runtime does (CR LF) and
+// reads them back as LF.
 class CStdioFile : public CFile {
 public:
 	CStdioFile() = default;
-	CStdioFile(LPCTSTR lpszFileName, UINT nOpenFlags) : CFile(lpszFileName, nOpenFlags) {}
+	CStdioFile(LPCTSTR lpszFileName, UINT nOpenFlags) : CFile(lpszFileName, nOpenFlags), m_bText(!(nOpenFlags & typeBinary)) {}
+	BOOL Open(LPCTSTR lpszFileName, UINT nOpenFlags, CFileException *pError = nullptr) override {
+		m_bText = !(nOpenFlags & typeBinary);
+		return CFile::Open(lpszFileName, nOpenFlags, pError);
+	}
 	virtual BOOL ReadString(CString &rString);
 	virtual void WriteString(LPCTSTR lpsz);
+
+private:
+	bool m_bText = true;
 };
 
 // ---- application framework shells ---------------------------------------------------------

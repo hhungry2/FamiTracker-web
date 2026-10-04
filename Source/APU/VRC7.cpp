@@ -135,6 +135,17 @@ void CVRC7::EndFrame(Blip_Buffer& Output, gsl::span<int16_t> TempBuffer)
 
 	static int32_t LastSample = 0;
 
+	if (m_bSkipping) {
+		// Nothing is heard: the chip goes on, and its samples are not made
+		while (m_iBufferPtr < WantSamples) {
+			OPLL_calcSkip(m_pOPLLInt);
+			m_pBuffer[m_iBufferPtr++] = 0;
+		}
+		m_iBufferPtr -= WantSamples;
+		m_iTime = 0;
+		return;
+	}
+
 	// Generate VRC7 samples
 	while (m_iBufferPtr < WantSamples) {
 		int32_t RawSample = OPLL_calc(m_pOPLLInt);

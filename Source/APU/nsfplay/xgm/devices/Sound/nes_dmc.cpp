@@ -395,7 +395,7 @@ namespace xgm
     out[2] = calc_dmc(clocks);
   }
 
-  UINT32 NES_DMC::ClocksUntilLevelChange()
+  UINT32 NES_DMC::ClocksUntilFrameSequence() const
   {
       // See TickFrameSequence().
       // nsfplay is written strangely.
@@ -403,8 +403,12 @@ namespace xgm
       // on the next nonzero call to TickFrameSequence() or Tick().
       // See https://docs.google.com/document/d/1BnXwR3Avol7S5YNa3d4duGdbI6GNMwuYWLHuYiMZh5Y/edit#heading=h.lnh9d8j1x3uc
       // for discussion on how to handle 0.
-      UINT32 out =
-          (UINT32)value_or(frame_sequence_length - frame_sequence_count, frame_sequence_length);
+      return (UINT32)value_or(frame_sequence_length - frame_sequence_count, frame_sequence_length);
+  }
+
+  UINT32 NES_DMC::ClocksUntilLevelChange()
+  {
+      UINT32 out = ClocksUntilFrameSequence();
 
       // See calc_tri().
       if (linear_counter > 0 && length_counter[0] > 0

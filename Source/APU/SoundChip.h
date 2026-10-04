@@ -53,6 +53,14 @@ public:
 	/// - Output is where audio will be written to.
 	virtual void	Process(uint32_t Time, Blip_Buffer& Output) = 0;
 
+	/// Tell the chip that its audio is not going to be heard, as when playback runs up to
+	/// a position. While skipping, Process() may take larger steps and leave out what
+	/// only the sound needs, such as the exact time of each level change. The chip is in
+	/// the state an exact run would have left it in; what it sounds like from then on is
+	/// the same, once the filters and the Blip_Buffer's integrator have settled.
+	/// Chips that do not implement it stay exact.
+	void SetSkipping(bool Skip) { m_bSkipping = Skip; }
+
 	/// End an audio frame/tick.
 	/// Each subclass of CSoundChip can choose to write audio to Output
 	/// on every call to Process(), or on the final call to EndFrame().
@@ -100,4 +108,5 @@ public:
 
 protected:
 	std::unique_ptr<CRegisterLogger> m_pRegisterLogger;		// // //
+	bool m_bSkipping = false;
 };

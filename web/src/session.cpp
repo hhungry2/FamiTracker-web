@@ -12,7 +12,11 @@
 #include "FamiTrackerDoc.h"
 #include "Settings.h"
 #include "SoundGen.h"
+#include "DSample.h"
 #include "TrackerChannel.h"
+#include "TextExporter.h"
+#include "Instrument.h"
+#include "InstrumentRecorder.h"
 #include "portable/SoundGenUI.h"
 #include "dnft_compat.h"
 #include "soundgen_host.h"
@@ -32,20 +36,7 @@ const int MAX_SILENT_TICKS = 64;
 }
 
 std::shared_ptr<Session> Session::Create(uint32_t sampleRate) {
-	detail::Engine &engine = GetEngine();
-	CSoundGen &soundGen = *theApp.GetSoundGenerator();
-
-	// As in LoadDocument(): a new document offers itself to the sound generator when
-	// nothing is assigned, and needs one assigned while it sets itself up.
-	detail::MessageCollector messages;
-	const bool hadDocument = soundGen.GetDocument() != nullptr;
-	std::unique_ptr<CFamiTrackerDoc> pDoc(static_cast<CFamiTrackerDoc *>(CFamiTrackerDoc::CreateObject()));
-	const bool created = pDoc->OnNewDocument() != FALSE;
-	if (!hadDocument && soundGen.GetDocument())
-		engine.host->Detach();
-	if (!created)
-		throw std::runtime_error(messages.GetText().empty() ? "could not create a module" : messages.GetText());
-	return std::shared_ptr<Session>(new Session(std::move(pDoc), sampleRate));
+	return std::shared_ptr<Session>(new Session(detail::NewDocument(), sampleRate));
 }
 
 std::shared_ptr<Session> Session::Open(const uint8_t *data, size_t size, uint32_t sampleRate) {
@@ -54,6 +45,34 @@ std::shared_ptr<Session> Session::Open(const uint8_t *data, size_t size, uint32_
 	session->m_sType = std::move(loaded.type);
 	session->m_sProgram = std::move(loaded.program);
 	return session;
+}
+
+std::shared_ptr<Session> Session::ImportText(const uint8_t *data, size_t size, uint32_t sampleRate, std::string &warning) {
+	// CMainFrame::OnFileImportText(): the importer starts a new document and reads the
+	// file into it
+	std::unique_ptr<CFamiTrackerDoc> pDoc = detail::NewDocument();
+	const std::string path = detail::NewPath("import.txt");
+	dnft_compat::PutFile(path, std::vector<uint8_t>(data, data + size));
+	std::string result;
+	{
+		detail::MessageCollector messages;
+		CTextExport importer;
+		result = importer.ImportFile(path.c_str(), pDoc.get()).GetString();
+		if (result.empty())
+			result = messages.GetText();
+	}
+	dnft_compat::TakeFile(path);
+	// The importer stops at the first error and says where. Only a JSON block it could
+	// not parse is reported after the rest was read, and then left out.
+	warning.clear();
+	if (!result.empty()) {
+		if (result.rfind("JSON parsing error", 0) != 0)
+			throw LoadError(result);
+		warning = result;
+	}
+	pDoc->SetModifiedFlag(TRUE);
+	pDoc->SetExceededFlag(false);
+	return std::shared_ptr<Session>(new Session(std::move(pDoc), sampleRate));
 }
 
 Session::Session(std::unique_ptr<CFamiTrackerDoc> document, uint32_t sampleRate) :
@@ -70,6 +89,7 @@ Session::Session(std::unique_ptr<CFamiTrackerDoc> document, uint32_t sampleRate)
 	engine.view.SetMutedChannels(0);
 	engine.host->Attach(*m_pDocument, engine.view);
 	engine.host->BeginStream();
+	theApp.GetSoundGenerator()->SetMeterDecayRate(m_iDecayRate);
 }
 
 Session::~Session() {
@@ -117,13 +137,47 @@ void Session::Pump() {
 			m_RowEvents.push_back({at, -1, -1});
 		else if (playing && host.RowWasRead())
 			m_RowEvents.push_back({at, frame, row});
+		CollectLevels(at);
+		// the instrument recorder has one ready (the desktop's view takes it into the
+		// document when the message arrives)
+		while (engine.view.TakePendingDump())
+			DumpRecordedInstrument();
 	}
 	engine.target = nullptr;
 }
 
+void Session::CollectLevels(uint64_t at) {
+	const int channels = m_pDocument->GetChannelCount();
+	std::vector<uint8_t> levels(channels);
+	for (int i = 0; i < channels; ++i)
+		levels[i] = static_cast<uint8_t>(std::clamp(m_pDocument->GetChannel(i)->GetVolumeMeter(), 0, 255));
+	if (levels == m_LastLevels)
+		return;
+	m_LastLevels = levels;
+	m_LevelEvents.push_back({at, std::move(levels)});
+}
+
+// CFamiTrackerView::OnUserDumpInst()
+void Session::DumpRecordedInstrument() {
+	CSoundGen &sg = *theApp.GetSoundGenerator();
+	if (CInstrument *instrument = sg.GetRecordInstrument()) {
+		const int slot = m_pDocument->AddInstrument(instrument);
+		if (slot != INVALID_INSTRUMENT)
+			m_Recorded.push_back(slot);
+	}
+	sg.ResetDumpInstrument();
+}
+
+std::vector<int> Session::TakeRecordedInstruments() {
+	std::vector<int> slots;
+	slots.swap(m_Recorded);
+	return slots;
+}
+
 void Session::Render(int16_t *out, uint32_t frames) {
 	uint32_t done = 0;
-	if (IsCurrent()) {
+	// a wave export has the sound generator meanwhile
+	if (IsCurrent() && !m_bWave) {
 		while (done < frames) {
 			if (m_iPendingPos == m_Pending.size()) {
 				m_Pending.clear();
@@ -152,8 +206,14 @@ std::vector<RowEvent> Session::TakeRowEvents() {
 	return events;
 }
 
+std::vector<LevelEvent> Session::TakeLevelEvents() {
+	std::vector<LevelEvent> events;
+	events.swap(m_LevelEvents);
+	return events;
+}
+
 void Session::Play(int track, PlayMode mode, int frame, int row) {
-	if (!IsCurrent())
+	if (!IsCurrent() || m_bWave)
 		return;
 	const CFamiTrackerDoc &doc = *m_pDocument;
 	track = std::clamp(track, 0, static_cast<int>(doc.GetTrackCount()) - 1);
@@ -164,19 +224,33 @@ void Session::Play(int track, PlayMode mode, int frame, int row) {
 	detail::Engine &engine = GetEngine();
 	m_iTrack = track;
 	engine.view.SetSelection(frame, row);
+	theApp.GetSoundGenerator()->SetQueueFrame(-1);
 	engine.host->StartPlayer(MODES[std::clamp(static_cast<int>(mode), 0, 3)], track);
 }
 
+void Session::SetQueueFrame(int frame) {
+	if (!IsPlaying())
+		return;
+	// a frame the track does not have is no frame to go to
+	const int frames = static_cast<int>(m_pDocument->GetFrameCount(m_iTrack));
+	theApp.GetSoundGenerator()->SetQueueFrame(frame >= 0 && frame < frames ? frame : -1);
+}
+
+int Session::GetQueueFrame() const {
+	return IsPlaying() ? theApp.GetSoundGenerator()->GetQueueFrame() : -1;
+}
+
 void Session::Stop() {
-	if (!IsCurrent() || !IsPlaying())
+	if (!IsCurrent() || m_bWave || !IsPlaying())
 		return;
 	GetEngine().host->HaltPlayer();
+	theApp.GetSoundGenerator()->SetQueueFrame(-1);
 	// where the audio rendered from now on begins
 	m_RowEvents.push_back({m_iRendered + (m_Pending.size() - m_iPendingPos), -1, -1});
 }
 
 bool Session::IsPlaying() const {
-	return IsCurrent() && GetEngine().host->IsPlayerRunning();
+	return IsCurrent() && !m_bWave && GetEngine().host->IsPlayerRunning();
 }
 
 PlayerState Session::GetState() const {
@@ -185,11 +259,12 @@ PlayerState Session::GetState() const {
 	state.track = m_iTrack;
 	state.timeMs = static_cast<uint32_t>(m_iRendered * 1000 / m_iSampleRate);
 	state.channels = m_pDocument->GetChannelCount();
-	if (IsCurrent()) {
+	if (IsCurrent() && !m_bWave) {
 		state.frame = host.GetFrame();
 		state.row = host.GetRow();
 		state.speed = host.GetSpeed();
 		state.tempo = host.GetTempo();
+		state.bpm = theApp.GetSoundGenerator()->GetCurrentBPM();
 		if (state.frame < static_cast<int>(m_pDocument->GetFrameCount(m_iTrack)))
 			state.pattern = static_cast<int>(m_pDocument->GetPatternAtFrame(m_iTrack, state.frame, 0));
 	}
@@ -197,7 +272,7 @@ PlayerState Session::GetState() const {
 }
 
 void Session::NoteOn(int channel, int note, int octave, int instrument, int volume) {
-	if (!IsCurrent() || channel < 0 || channel >= m_pDocument->GetChannelCount())
+	if (!IsCurrent() || m_bWave || channel < 0 || channel >= m_pDocument->GetChannelCount())
 		return;
 	// CFamiTrackerView::PlayNote()
 	stChanNote NoteData {};
@@ -210,7 +285,7 @@ void Session::NoteOn(int channel, int note, int octave, int instrument, int volu
 }
 
 void Session::NoteOff(int channel, bool release) {
-	if (!IsCurrent() || channel < 0 || channel >= m_pDocument->GetChannelCount())
+	if (!IsCurrent() || m_bWave || channel < 0 || channel >= m_pDocument->GetChannelCount())
 		return;
 	// CFamiTrackerView::ReleaseNote() and HaltNote()
 	stChanNote NoteData {};
@@ -218,10 +293,80 @@ void Session::NoteOff(int channel, bool release) {
 	theApp.GetSoundGenerator()->QueueNote(channel, NoteData, NOTE_PRIO_2);
 }
 
+void Session::PlayRow(int track, int frame, int row) {
+	if (!IsCurrent() || m_bWave)
+		return;
+	const int channels = m_pDocument->GetChannelCount();
+	if (track < 0 || track >= static_cast<int>(m_pDocument->GetTrackCount()) ||
+		frame < 0 || frame >= static_cast<int>(m_pDocument->GetFrameCount(track)) ||
+		row < 0 || row >= static_cast<int>(m_pDocument->GetPatternLength(track)))
+		return;
+	for (int i = 0; i < channels; ++i) {
+		if (i < 64 && (m_iMutedChannels >> i & 1))
+			continue;
+		stChanNote note;
+		m_pDocument->GetNoteData(track, frame, i, row, &note);
+		theApp.GetSoundGenerator()->QueueNote(i, note, NOTE_PRIO_1);
+	}
+}
+
+std::string Session::RecallChannelState(int track, int channel, int frame, int row) {
+	if (!IsCurrent() || m_bWave)
+		return "";
+	const CFamiTrackerDoc &doc = *m_pDocument;
+	if (track < 0 || track >= static_cast<int>(doc.GetTrackCount()) || channel < 0 || channel >= static_cast<int>(doc.GetChannelCount()))
+		return "";
+	frame = std::clamp(frame, 0, static_cast<int>(doc.GetFrameCount(track)) - 1);
+	row = std::clamp(row, 0, static_cast<int>(doc.GetPatternLength(track)) - 1);
+	detail::Engine &engine = GetEngine();
+	engine.view.SetSelection(frame, row);
+	return engine.host->RecallChannelState(track, doc.GetChannelType(channel));
+}
+
+void Session::ArpNote(int note, bool held, int channel) {
+	if (!IsCurrent() || m_bWave)
+		return;
+	GetEngine().view.AutoArpNote(note, held, channel);
+}
+
+void Session::KillSound() {
+	if (!IsCurrent() || m_bWave)
+		return;
+	Stop();
+	GetEngine().host->SilentAll();
+}
+
+void Session::SetMeterDecayRate(int rate) {
+	m_iDecayRate = rate != 0 ? 1 : 0;
+	if (IsCurrent())
+		theApp.GetSoundGenerator()->SetMeterDecayRate(m_iDecayRate);
+}
+
+void Session::PreviewSample(const std::vector<uint8_t> &data, int offset, int pitch, bool deltaStart) {
+	if (!IsCurrent() || m_bWave || data.empty())
+		return;
+	CSoundGenHost &host = *GetEngine().host;
+	// The sample has no name: the sound generator deletes it when it has played.
+	CDSample *sample = new CDSample(static_cast<unsigned>(std::min<size_t>(data.size(), CDSample::MAX_SIZE)));
+	std::copy_n(data.begin(), sample->GetSize(), reinterpret_cast<uint8_t *>(sample->GetData()));
+	// the start has to leave something to play (CSoundGen::PlaySample())
+	offset = std::clamp(offset, 0, static_cast<int>(((sample->GetSize() - 1) >> 4) >> 2));
+	// CSampleEditorDlg::OnBnClickedPlay()
+	host.WriteAPU(0x4011, deltaStart ? 64 : 0);
+	if (!host.PreviewSample(sample, offset, std::clamp(pitch, 0, 15)))
+		delete sample;
+}
+
+void Session::ReleaseSamples() {
+	if (IsCurrent())
+		GetEngine().host->CancelPreview();
+}
+
 void Session::SetMutedChannels(uint64_t mask) {
 	const uint64_t silenced = mask & ~m_iMutedChannels;
 	m_iMutedChannels = mask;
-	if (!IsCurrent())
+	// a wave export mutes channels of its own; EndWave() puts these back
+	if (!IsCurrent() || m_bWave)
 		return;
 	GetEngine().view.SetMutedChannels(mask);
 	// The player passes nothing to muted channels, which would leave their last note on:
@@ -234,10 +379,134 @@ void Session::SetMutedChannels(uint64_t mask) {
 void Session::ApplyDocumentProperties() {
 	if (!IsCurrent())
 		return;
+	// the export would go on with what it set up before
+	EndWave();
 	detail::Engine &engine = GetEngine();
 	engine.host->Attach(*m_pDocument, engine.view);
 	engine.host->BeginStream();
 	engine.view.SetMutedChannels(m_iMutedChannels);
+	theApp.GetSoundGenerator()->SetMeterDecayRate(m_iDecayRate);
+}
+
+// ---- wave export -----------------------------------------------------------------------
+
+void Session::BeginWave(int track, int passes, int seconds, uint64_t muted, uint32_t sampleRate) {
+	if (!IsCurrent())
+		throw std::runtime_error("another player or session has the sound generator");
+	EndWave();
+	Stop();
+	detail::Engine &engine = GetEngine();
+	track = std::clamp(track, 0, static_cast<int>(m_pDocument->GetTrackCount()) - 1);
+	// CCreateWaveDlg: 1 to 99 passes, or 1 second to 99 minutes
+	const bool byTime = passes <= 0;
+	const int length = byTime ? std::clamp(seconds, 1, 99 * 60) : std::clamp(passes, 1, 99);
+
+	// What was rendered for the session's own output is not heard any more.
+	m_Pending.clear();
+	m_iPendingPos = 0;
+	m_bWave = true;
+	// The wave export renders at the rate of the sound settings; the channels not
+	// ticked in the dialog are muted in the view.
+	theApp.GetSettings()->Sound.iSampleRate = static_cast<int>(sampleRate);
+	engine.view.SetMutedChannels(muted);
+	if (!engine.host->BeginExport(track, byTime, length)) {
+		EndWave();
+		throw std::runtime_error("could not start the export");
+	}
+}
+
+bool Session::RenderWave(std::vector<int16_t> &out, size_t samples) {
+	if (!m_bWave || !IsCurrent())
+		throw std::runtime_error("the export was interrupted");
+	detail::Engine &engine = GetEngine();
+	CSoundGenHost &host = *engine.host;
+	engine.target = &out;
+	while (out.size() < samples && host.IsRendering()) {
+		host.EndExportIfHalted();
+		host.Tick();
+	}
+	engine.target = nullptr;
+	return host.IsRendering();
+}
+
+double Session::GetWaveProgress() const {
+	return m_bWave && IsCurrent() ? GetEngine().host->GetRenderProgress() : 1.0;
+}
+
+void Session::EndWave() {
+	if (!m_bWave)
+		return;
+	m_bWave = false;
+	if (!IsCurrent())
+		return;
+	detail::Engine &engine = GetEngine();
+	theApp.GetSettings()->Sound.iSampleRate = static_cast<int>(m_iSampleRate);
+	engine.view.SetMutedChannels(m_iMutedChannels);
+	// stops what is left of the export
+	engine.host->BeginStream();
+}
+
+// ---- module import -----------------------------------------------------------------------
+
+const CFamiTrackerDoc &Session::BeginImport(const uint8_t *data, size_t size) {
+	m_pImport.reset();
+	m_pImport = detail::LoadDocument(data, size).document;
+	return *m_pImport;
+}
+
+bool Session::FinishImport(const std::vector<bool> &tracks, bool instruments, bool grooves, bool detune, std::string &messages) {
+	if (!m_pImport)
+		throw std::runtime_error("no module to import from");
+	std::unique_ptr<CFamiTrackerDoc> pImported = std::move(m_pImport);
+	CFamiTrackerDoc &doc = *m_pDocument;
+	Stop();
+	EndWave();
+
+	detail::MessageCollector collector;
+	bool imported = true;
+	{
+		// CModuleImportDlg::LoadFile(): both modules get the expansion chips of either
+		if (pImported->GetNamcoChannels() != doc.GetNamcoChannels()) {
+			const int channels = std::max(pImported->GetNamcoChannels(), doc.GetNamcoChannels());
+			pImported->SetNamcoChannels(channels, true);
+			doc.SetNamcoChannels(channels, true);
+			const unsigned char chips = pImported->GetExpansionChip() | doc.GetExpansionChip();
+			pImported->SelectExpansionChip(chips, true);
+			doc.SelectExpansionChip(chips, true);
+		}
+		if (pImported->GetExpansionChip() != doc.GetExpansionChip()) {
+			const unsigned char chips = pImported->GetExpansionChip() | doc.GetExpansionChip();
+			pImported->SelectExpansionChip(chips, true);
+			doc.SelectExpansionChip(chips, true);
+		}
+
+		// CModuleImportDlg::OnBnClickedOk(): each step translates the numbers of what it
+		// brings in for the tracks, or keeps them when it is not asked for
+		int instrumentTable[MAX_INSTRUMENTS];
+		int grooveMap[MAX_GROOVE];
+		for (int i = 0; i < MAX_INSTRUMENTS; ++i)
+			instrumentTable[i] = instruments ? 0 : i;
+		for (int i = 0; i < MAX_GROOVE; ++i)
+			grooveMap[i] = grooves ? 0 : i;
+		imported = (!instruments || doc.ImportInstruments(pImported.get(), instrumentTable))
+			&& (!grooves || doc.ImportGrooves(pImported.get(), grooveMap))
+			&& (!detune || doc.ImportDetune(pImported.get()));
+		for (unsigned int i = 0; imported && i < pImported->GetTrackCount(); ++i)
+			if (i < tracks.size() && tracks[i])
+				imported = doc.ImportTrack(static_cast<int>(i), pImported.get(), instrumentTable, grooveMap);
+		if (!imported)
+			AfxMessageBox(IDS_IMPORT_FAILED, MB_ICONERROR);
+		doc.SetModifiedFlag();
+		doc.SetExceededFlag();
+	}
+	messages = collector.GetText();
+	// the channels, the detune tables
+	ApplyDocumentProperties();
+	return imported;
+}
+
+void Session::CancelImport() {
+	m_pImport.reset();
 }
 
 } // namespace dnft

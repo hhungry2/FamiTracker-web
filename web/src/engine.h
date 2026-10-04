@@ -86,6 +86,7 @@ struct PlayerState {
 	int tempo;
 	int channels;
 	uint32_t timeMs;
+	float bpm;		// of the editing session: as the control panel shows it (CSoundGen::GetCurrentBPM())
 };
 
 class Player {
@@ -99,7 +100,10 @@ public:
 	// Fills frames * 2 samples. Returns false once the track is over; the rest of the
 	// buffer is silence then.
 	bool Render(int16_t *out, uint32_t frames);
-	// Restarts and plays silently up to the position.
+	// Plays silently up to the position: from where the player is when that is before it,
+	// from the start otherwise. Most of the way the chips do not follow every change of
+	// level, which is several times faster than playing; the audio from the position on
+	// is the same, sample for sample but for the last bit with the N163.
 	void Seek(uint32_t ms);
 	uint32_t GetPositionMs() const;
 	PlayerState GetState() const;
@@ -112,6 +116,7 @@ public:
 private:
 	bool IsCurrent() const;
 	void Restart();
+	void SeekTo(uint64_t frame, bool restart);
 	bool Pump();
 
 	std::shared_ptr<Module> m_pModule;

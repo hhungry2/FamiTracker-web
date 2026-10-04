@@ -110,10 +110,16 @@ void C2A03::Process(uint32_t Time, Blip_Buffer& Output)
 		// the result of `Tick(clocks); Render()` should be sent to Blip_Synth
 		// at the instant in time *before* Tick() is called.
 		// See https://docs.google.com/document/d/1BnXwR3Avol7S5YNa3d4duGdbI6GNMwuYWLHuYiMZh5Y/edit#heading=h.lnh9d8j1x3uc
-		auto dclocks = vmin(
-			m_Apu1.ClocksUntilLevelChange(),
-			m_Apu2.ClocksUntilLevelChange(),
-			Time - now);
+		//
+		// While skipping, nothing needs the level changes: the channels count clocks
+		// alike in long steps and in short ones, and only the frame sequencer changes
+		// them from outside.
+		auto dclocks = m_bSkipping ?
+			std::min<uint32_t>(m_Apu2.ClocksUntilFrameSequence(), Time - now) :
+			vmin(
+				m_Apu1.ClocksUntilLevelChange(),
+				m_Apu2.ClocksUntilLevelChange(),
+				Time - now);
 		get_output(dclocks, now, Output);
 		now += dclocks;
 	}

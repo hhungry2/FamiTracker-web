@@ -19,9 +19,15 @@
 */
 
 #include "stdafx.h"
+#include "Instrument.h"		// before InstrumentManager.h, which refers to its enum
 #include "InstrumentManager.h"
 #include "FamiTrackerDoc.h"
+#ifdef DNFT_PORTABLE
+// Builds without the desktop interface (web/) provide a stand-in for the view
+#include "portable/SoundGenUI.h"
+#else
 #include "FamiTrackerView.h"
+#endif
 #include "TrackerChannel.h"
 #include "FamiTrackerViewMessage.h"
 #include "SoundGen.h"

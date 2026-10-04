@@ -149,7 +149,17 @@ void CInstrument2A03::SaveFile(CInstrumentFile *pFile)
 		return;
 	}
 
-	unsigned int Count = GetSampleCount();		// // // 050B
+	// A key can point at a sample the module does not have; the file leaves such keys out, as
+	// the samples it lists have to be the ones its keys use
+	const auto HasSample = [&] (int i, int j) {
+		return GetSampleIndex(i, j) > 0 && m_pInstManager->GetDSample(GetSampleIndex(i, j) - 1) != nullptr;
+	};
+
+	unsigned int Count = 0;		// // // 050B
+	for (int i = 0; i < OCTAVE_RANGE; ++i)
+		for (int j = 0; j < NOTE_RANGE; ++j)
+			if (HasSample(i, j))
+				++Count;
 	pFile->WriteInt(Count);
 
 	bool UsedSamples[MAX_DSAMPLES];
@@ -158,7 +168,7 @@ void CInstrument2A03::SaveFile(CInstrumentFile *pFile)
 	int UsedCount = 0;
 	for (int i = 0; i < OCTAVE_RANGE; ++i) {
 		for (int j = 0; j < NOTE_RANGE; ++j) {
-			if (unsigned char Sample = GetSampleIndex(i, j)) {
+			if (unsigned char Sample = HasSample(i, j) ? GetSampleIndex(i, j) : 0) {
 				unsigned char Index = MIDI_NOTE(i, j) + 1;
 				pFile->WriteChar(Index);
 				pFile->WriteChar(Sample);
@@ -186,6 +196,14 @@ void CInstrument2A03::SaveFile(CInstrumentFile *pFile)
 			pFile->Write(pSample->GetData(), pSample->GetSize());
 		}
 	}
+}
+
+// The file ended inside a sample
+[[noreturn]] static void RaiseEndOfFile()
+{
+	CModuleException *e = new CModuleException();
+	e->AppendError("Unexpected end of instrument file");
+	e->Raise();
 }
 
 bool CInstrument2A03::LoadFile(CInstrumentFile *pFile, int iVersion)
@@ -230,6 +248,10 @@ bool CInstrument2A03::LoadFile(CInstrumentFile *pFile, int iVersion)
 
 	unsigned int SampleCount = pFile->ReadInt();
 	for (unsigned int i = 0; i < SampleCount; ++i) {
+		// Files that count more samples than they list exist (see SaveFile()): the keys of
+		// the ones that are missing get no sample below
+		if (pFile->GetPosition() >= pFile->GetLength())
+			break;
 
 		int Index = CModuleException::AssertRangeFmt(
 			pFile->ReadInt(), 0U, static_cast<unsigned>(MAX_DSAMPLES - 1), "DPCM sample index", "%u");
@@ -238,11 +260,15 @@ bool CInstrument2A03::LoadFile(CInstrumentFile *pFile, int iVersion)
 			pFile->ReadInt(), 0U, static_cast<unsigned>(CDSample::MAX_NAME_SIZE - 1), "DPCM sample name length", "%u");
 
 		char SampleName[256]{};
-		pFile->Read(SampleName, Len);
+		if (pFile->Read(SampleName, Len) != static_cast<UINT>(Len))
+			RaiseEndOfFile();
 
-		int Size = pFile->ReadInt();
+		int Size = CModuleException::AssertRangeFmt(static_cast<int>(pFile->ReadInt()), 0, MAX_SAMPLE_SPACE, "DPCM sample size", "%i");
 		char *SampleData = new char[Size];
-		pFile->Read(SampleData, Size);
+		if (pFile->Read(SampleData, Size) != static_cast<UINT>(Size)) {
+			SAFE_RELEASE_ARRAY(SampleData);
+			RaiseEndOfFile();
+		}
 		bool Found = false;
 		for (int j = 0; j < MAX_DSAMPLES; ++j) if (const CDSample *pSample = m_pInstManager->GetDSample(j)) {		// // //
 			// Compare size and name to see if identical sample exists
@@ -295,6 +321,12 @@ bool CInstrument2A03::LoadFile(CInstrumentFile *pFile, int iVersion)
 			}
 		}
 	}
+
+	// A key whose sample the file does not carry would play whichever sample has its number
+	for (int o = 0; o < OCTAVE_RANGE; ++o)
+		for (int n = 0; n < NOTE_RANGE; ++n)
+			if (GetSampleIndex(o, n) != 0 && !bAssigned[o][n])
+				SetSampleIndex(o, n, 0);
 
 	return true;
 }
