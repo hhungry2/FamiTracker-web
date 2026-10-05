@@ -38,6 +38,9 @@ sources from `../desktop/Source/` and resource strings from
 Building
 --------
 
+The site build uses Node.js to generate the NSF driver profiles. `NODE=/path/to/node`
+selects its executable when the Emscripten environment changes the command search path.
+
 Needs [emsdk](https://emscripten.org/docs/getting_started/downloads.html) (tested with
 6.0.9), GNU make, python3, and `ca65` and `ld65` from [cc65](https://cc65.github.io) for
 the NSF drivers the NSF export puts around the music. The build assembles them from
