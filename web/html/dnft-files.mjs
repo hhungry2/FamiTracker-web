@@ -690,14 +690,16 @@ export class FileMenu {
 
   // ---- NSF import ----------------------------------------------------------------------
   //
-  // The NSF is played with NSFPlay in the editor's worker and becomes a new module, a row for
-  // each frame (src/nsf_import.h); the song is chosen here, and how long it is played.
+  // Choose playback analysis (one row per tick) or direct driver decoding
+  // (exported tracker rows). Both create a new editable module in the worker.
 
   buildNsfImportDialog() {
     const t = this.strings;
     const group = `dnft-nsf-region-${++dialogs}`;
     const d = this.nsfImportDialog = this.dialog('dnft-nsf-import-dialog', `
       <div class="dnft-nsf-about" data-role="about"></div>
+      <label class="dnft-field"><span data-t="nsfImportMethod"></span><select data-role="method"></select></label>
+      <p class="dnft-hint" data-role="method-hint"></p>
       <label class="dnft-field"><span data-t="nsfImportSong"></span><select data-role="song"></select></label>
       <fieldset class="dnft-fieldset" data-role="regions">
         <legend data-t="nsfImportRegion"></legend>
@@ -706,16 +708,20 @@ export class FileMenu {
           <label class="dnft-check"><input type="radio" name="${group}" value="1"> PAL</label>
         </div>
       </fieldset>
+      <div data-role="analysis-options">
       <label class="dnft-field dnft-field--inline"><span data-t="nsfImportLength"></span><input type="text" data-role="time" inputmode="numeric" spellcheck="false"><span data-t="nsfImportLengthAfter"></span></label>
       <label class="dnft-field dnft-field--inline"><span data-t="nsfImportRows"></span><select data-role="rows"></select></label>
       <label class="dnft-check"><input type="checkbox" data-role="loop" checked> <span data-t="nsfImportLoop"></span></label>
       <label class="dnft-check"><input type="checkbox" data-role="trim" checked> <span data-t="nsfImportTrim"></span></label>
+      </div>
       <p class="dnft-hint" data-t="nsfImportAbout"></p>
       <p class="dnft-hint" data-t="nsfImportAllHint"></p>
       <div class="dnft-progress" data-role="progress" hidden><progress max="1" value="0"></progress><span></span></div>`, `
       <button type="button" class="dnft-button dnft-button--primary" data-role="start" data-t="nsfImportStart"></button>
       <button type="button" class="dnft-button" data-role="close"></button>`);
     const $ = role => d.querySelector(`[data-role="${role}"]`);
+    $('method').append(new Option(t.nsfImportPlayback, 'playback'), new Option(t.nsfImportDriver, 'driver'));
+    $('method').addEventListener('change', () => this.setNsfMethod());
     $('rows').append(...NSF_PATTERN_ROWS.map(rows => new Option(rows, rows)));
     $('rows').value = DEFAULT_NSF_ROWS;
     $('loop').closest('label').title = t.nsfImportLoopHint;
@@ -741,7 +747,18 @@ export class FileMenu {
     d.addEventListener('close', () => { this.nsfFile = null; });
   }
 
-  // The length typed, within what a module holds
+  // Direct decoding uses exported rows; analysis settings still apply on fallback.
+  setNsfMethod() {
+    const d = this.nsfImportDialog;
+    const direct = d.querySelector('[data-role="method"]').value === 'driver';
+    const supported = this.nsfFile?.info.driver?.supported;
+    d.querySelector('[data-role="method-hint"]').textContent = !direct ? this.strings.nsfImportPlaybackHint :
+      supported ? this.strings.nsfImportDriverHint : this.strings.nsfImportDriverUnsupported;
+    d.querySelector('[data-role="analysis-options"]').hidden = direct && supported;
+    d.querySelector('[data-t="nsfImportAbout"]').hidden = direct;
+  }
+
+  // The length typed, within what a module holds.
   nsfSeconds() {
     const seconds = parseTime(this.nsfImportDialog.querySelector('[data-role="time"]').value);
     return seconds === null ? null : Math.min(NSF_MAX_SECONDS, seconds);
@@ -803,6 +820,8 @@ export class FileMenu {
     $('regions').hidden = !both;
     d.querySelector(`input[type="radio"][value="${info.preferred === 1 ? 1 : 0}"]`).checked = true;
     this.setNsfLength();
+    $('method').value = 'playback';
+    this.setNsfMethod();
     this.showNsfImportProgress(null);
     d.showModal();
   }
@@ -833,6 +852,7 @@ export class FileMenu {
     const allSongs = $('song').value === 'all';
     const song = allSongs ? 0 : Number($('song').value);
     const options = {
+      method: $('method').value,
       song,
       allSongs,
       region: $('regions').hidden ? -1 : Number(d.querySelector('input[type="radio"]:checked')?.value ?? -1),
@@ -865,18 +885,26 @@ export class FileMenu {
     // not saved as a module yet
     editor.dirty = true;
     editor.renderToolbar();
+    const direct = snapshot.nsfReader?.method === 'driver';
+    const fallback = snapshot.nsfReader?.fallback ? [t.nsfImportDriverFallback] : [];
     if (snapshot.batch) {
       const { songs, totalSongs, limit } = snapshot.batch;
-      const warnings = songs.flatMap(({ song, report }) =>
-        report.warnings.map(code => `#${pad2(song + 1)}: ${t.nsfImportWarnings[code] ?? code}`));
+      const warnings = [...fallback, ...songs.flatMap(({ song, report }) =>
+        report.warnings.map(code => `#${pad2(song + 1)}: ${t.nsfImportWarnings[code] ?? code}`))];
       if (limit)
         warnings.unshift(t.nsfImportWarnings[limit] ?? limit);
-      const message = t.nsfImportedAll.replace('{n}', songs.length).replace('{total}', totalSongs);
+      const message = (direct ? t.nsfDecodedAll : t.nsfImportedAll).replace('{n}', songs.length).replace('{total}', totalSongs);
       editor.message(`${message} — ${[name, ...warnings].join(' · ')}`, warnings.length > 0);
       editor.saveToBrowser();
       return;
     }
     const report = snapshot.report;
+    if (direct) {
+      const track = snapshot.tracks[0].track;
+      editor.message(t.nsfDecoded.replace('{name}', name).replace('{rows}', track.rows).replace('{frames}', track.frames));
+      editor.saveToBrowser();
+      return;
+    }
     // m:ss, or the frames when it is shorter than a second
     const time = rows => {
       const rate = report.rate || 60;
@@ -888,7 +916,7 @@ export class FileMenu {
     const how = report.loopRow >= 0
       ? t.nsfImportLooped.replace('{intro}', time(report.loopRow)).replace('{loop}', time(report.rows - report.loopRow))
       : t.nsfImportStops.replace('{length}', time(report.rows));
-    const warnings = report.warnings.map(code => t.nsfImportWarnings[code] ?? code);
+    const warnings = [...fallback, ...report.warnings.map(code => t.nsfImportWarnings[code] ?? code)];
     editor.message(`${t.nsfImported}${name} — ${[how, ...warnings].join(' · ')}`, warnings.length > 0);
     editor.saveToBrowser();
   }

@@ -6,9 +6,9 @@
 [![WebAssembly](https://img.shields.io/badge/WebAssembly-WASM-purple.svg)](https://webassembly.org/)
 [![Platform: Browser](https://img.shields.io/badge/Platform-Web%20%2F%20Browser-orange.svg)](web/)
 
-**NSF読み込みは、このWeb版で独自に追加した機能です。** NSF／NSFeの演奏結果を編集可能なトラッカーデータへ変換し、ブラウザで編集・再構築して `.dnm` として保存できます。
+**NSF読み込みは、このWeb版で独自に追加した機能です。** 演奏解析と対応ドライバの直接解読を選択し、NSF／NSFeを編集可能なトラッカーデータへ変換して `.dnm` として保存できます。
 
-**NSF import is an extension added by FamiTracker-web.** Convert NSF/NSFe playback into editable tracker data, edit or reconstruct it in the browser, and save it as a `.dnm` module.
+**NSF import is an extension added by FamiTracker-web.** Choose playback analysis or supported-driver decoding to convert NSF/NSFe files into editable tracker data and save a `.dnm` module.
 
 [English](#english) | [日本語 (Japanese)](#日本語-japanese)
 
@@ -100,7 +100,7 @@ The audio engine follows the same interface conventions as [ZXTune Web](https://
 - **Import All Songs**: “All songs” is selected by default and creates up to 64 tracks from the first songs in order, retaining NSFe names and each song's loop. Identical instruments and samples are shared. Import stops before a song that exceeds instrument/sample capacity or needs different playback settings, and reports how many songs were imported. The analysis time applies to each song; silent songs remain as tracks with a warning. Save the result as one `.dnm` module.
 - **Reconstruct the Import**: Song > Reconstruct NSF import combines unchanged intervals in a separate track while retaining event timing and the original track. This is also an extension added by this web project.
 
-The data is inferred from playback. Driver-specific decoding of the original music structure is a future project in [issue #14](https://github.com/hhungry2/FamiTracker-web/issues/14). See the [import-method comparison and reconstruction results](docs/NSF_import_method_comparison.md) for the current scope.
+**A separate Driver decoding mode is available for the Dn-FT 2.16 driver built by this repository.** It restores exported rows, orders, notes, effects, macros, waveforms and DPCM assignments, with up to 64 tracks in one module. Unrecognized drivers and unsupported streams fall back to playback analysis. Some compressed patterns remain unsupported; instrument/sample names, unused data and original pattern numbering cannot be recovered. See the [supported scope and verification](docs/NSF_driver_decoding.md), [method comparison](docs/NSF_import_method_comparison.md) and remaining work in [issue #14](https://github.com/hhungry2/FamiTracker-web/issues/14).
 
 ---
 
@@ -302,7 +302,7 @@ JavaScript API やメッセージ構成は [ZXTune Web](https://github.com/hhung
 - **全曲をトラックに読み込み**: 初期選択は「全曲」で、先頭から最大 64 曲を別トラックに読み込み、NSFe の曲名と各曲のループを保持します。同じ音色・サンプルは共有します。音色・サンプル容量の上限や再生設定の違いで入らない場合は、その曲の前で止めて取り込めた曲数を表示します。「調べる長さ」は各曲に適用され、無音の曲も警告付きでトラックとして残します。結果は1つの `.dnm` として保存できます。
 - **読み込み後の再構築**: 「曲 → NSF 読み込みを再構築」で、変化のない区間をまとめた別トラックを追加します。元のトラックと各イベントの時刻を保持します。この再構築も、本Webプロジェクトで追加した機能です。
 
-演奏結果から推定したデータを作る方式です。元の楽曲データの構造を直接読み取るドライバ別解読は、次期プロジェクトの [Issue #14](https://github.com/hhungry2/FamiTracker-web/issues/14) に登録しています。現在の対応範囲は、[読み込み方式の比較と再構築の検証結果](docs/NSF_import_method_comparison.md)を参照してください。
+読み込み画面で「演奏解析」と「ドライバ別解読」を選べます。ドライバ別解読は対応する **Dn-FT 2.16** の楽曲データから元の行数・演奏順・ノート・音色のシーケンスを復元します。全曲が初期選択で、上限は先頭64トラックです。直接解読できない形式は演奏解析へ切り替えます。音色名や未使用データなど、NSFに残らない情報は戻せません。[対応範囲と制限](docs/NSF_driver_decoding.md)、[読み込み方式の比較と再構築の検証結果](docs/NSF_import_method_comparison.md)を参照してください。
 
 ---
 
