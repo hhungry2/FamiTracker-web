@@ -4,7 +4,7 @@ import { strict as assert } from 'node:assert';
 import { writeFileSync } from 'node:fs';
 import createDnFT from '../dist/dnft.mjs';
 import createNsf from '../dist/dnft-nsf.mjs';
-import { importAllNsfSongs, NsfModuleBatch, inImportHeap } from '../html/dnft-nsf-import.mjs';
+import { importAllNsfSongs, NsfModuleImport, inImportHeap } from '../html/dnft-nsf-import.mjs';
 import { emptyPattern } from '../html/dnft-song.mjs';
 import { planNsfReconstruction, applyNsfReconstruction } from '../html/dnft-nsf-reconstruct.mjs';
 
@@ -135,13 +135,14 @@ for (const chip of [0, 1, 2, 4, 8, 16, 32]) {
       } finally { single.delete(); }
     }
     const progress = [];
-    const parts = await importAllNsfSongs(staging, nsf, bytes, options, RATE, { onProgress: v => progress.push(v), yieldControl: noWait });
-    assert.equal(parts.length, 1);
-    assert.deepEqual(parts[0].songs.map(s => s.song), [0, 1, 2]);
-    assert.deepEqual(parts[0].songs.map(s => s.report), before.map(s => s.report));
+    const result = await importAllNsfSongs(staging, nsf, bytes, options, RATE, { onProgress: v => progress.push(v), yieldControl: noWait });
+    assert.equal(result.limit, null);
+    assert.equal(result.totalSongs, 3);
+    assert.deepEqual(result.songs.map(s => s.song), [0, 1, 2]);
+    assert.deepEqual(result.songs.map(s => s.report), before.map(s => s.report));
     assert.equal(progress.at(-1), 1);
     assert.ok(progress.every((p, i) => p >= 0 && p <= 1 && (!i || p >= progress[i - 1])));
-    const merged = open(parts[0].data);
+    const merged = open(result.data);
     try {
       assert.deepEqual(merged.info().tracks, ['Intro', 'Rhythm', 'Return']);
       assert.ok(merged.instruments().length < singleInstrumentCount, 'identical instruments are shared');
@@ -162,23 +163,36 @@ for (const chip of [0, 1, 2, 4, 8, 16, 32]) {
   });
 }
 
-await check('65 NSF songs are partitioned into 64 + 1 tracks in original order', async () => {
-  const parts = await importAllNsfSongs(staging, nsf, manySongs(65), { ...options, seconds: 0.2 }, RATE, { yieldControl: noWait });
-  assert.deepEqual(parts.map(p => p.songs.length), [64, 1]);
-  assert.deepEqual(parts.flatMap(p => p.songs.map(s => s.song)), Array.from({ length: 65 }, (_, i) => i));
-  for (const part of parts) {
-    const session = open(part.data);
-    assert.equal(session.info().tracks.length, part.songs.length);
-    assert.equal(session.instruments().length, 1);
-    session.delete();
-  }
+await check('65 NSF songs import only the first 64, without analyzing song 65 or creating another module', async () => {
+  const started = [];
+  const countedNsf = new Proxy(nsf, { get(target, key) {
+    if (key === 'NsfAnalysis') return function () {
+      const analysis = new nsf.NsfAnalysis();
+      const start = analysis.start.bind(analysis);
+      analysis.start = (...args) => { started.push(args[0]); return start(...args); };
+      return analysis;
+    };
+    return target[key];
+  } });
+  const result = await importAllNsfSongs(staging, countedNsf, manySongs(65), { ...options, seconds: 0.2 }, RATE, { yieldControl: noWait });
+  const expected = Array.from({ length: 64 }, (_, i) => i);
+  assert.equal(result.totalSongs, 65);
+  assert.equal(result.limit, 'trackLimit');
+  assert.deepEqual(started, expected);
+  assert.deepEqual(result.songs.map(s => s.song), expected);
+  const session = open(result.data);
+  assert.equal(session.info().tracks.length, 64);
+  assert.equal(session.info().tracks.at(-1), 'Song 64');
+  assert.equal(session.instruments().length, 1);
+  assert.match(session.info().comment, /Imported 64 of 65 songs; trackLimit/);
+  session.delete();
 });
 
 await check('silent songs keep their place and a warning instead of disappearing', async () => {
-  const parts = await importAllNsfSongs(staging, nsf, manySongs(3, true), { ...options, seconds: 0.2 }, RATE, { yieldControl: noWait });
-  assert.equal(parts[0].songs.length, 3);
-  assert.deepEqual(parts[0].songs[1].report.warnings, ['silentSong']);
-  const session = open(parts[0].data);
+  const result = await importAllNsfSongs(staging, nsf, manySongs(3, true), { ...options, seconds: 0.2 }, RATE, { yieldControl: noWait });
+  assert.equal(result.songs.length, 3);
+  assert.deepEqual(result.songs[1].report.warnings, ['silentSong']);
+  const session = open(result.data);
   assert.ok(wave(session, 1, 1).every(value => value === 0));
   assert.ok(wave(session, 2, 1).some(value => value !== 0));
   session.delete();
@@ -211,8 +225,8 @@ await check('cancellation after a converted song and invalid input leave the act
 });
 
 for (const limit of ['instruments', 'sampleSlots', 'sampleSpace', 'configuration']) {
-  await check(`${limit}: split before exceeding module capacity or changing pitch settings`, () => {
-    const batch = new NsfModuleBatch(staging, RATE, { title: 'Limits', artist: '', songs: 2 });
+  await check(`${limit}: stop before copying the incompatible song, keeping one valid module`, () => {
+    const module = new NsfModuleImport(staging, RATE, { title: 'Limits', artist: '', songs: 2 });
     try {
       for (let song = 0; song < 2; ++song) {
         const source = staging.createSession(RATE);
@@ -239,21 +253,21 @@ for (const limit of ['instruments', 'sampleSlots', 'sampleSpace', 'configuration
           const cells = emptyPattern(16);
           cells.set([1, 4, 12, 0]);
           source.setCells(0, limit === 'instruments' ? 5 : 0, 0, 0, cells);
-          batch.append(source, song, report);
+          const before = module.session?.save();
+          assert.equal(module.append(source, song, report), song === 0);
+          if (before) assert.deepEqual(module.session.save(), before, 'rejected song does not alter any track or resource');
         } finally { source.delete(); }
       }
-      batch.finishPart();
-      assert.equal(batch.parts.length, 2);
-      assert.deepEqual(batch.parts.map(p => p.songs[0].song), [0, 1]);
-      for (const part of batch.parts) {
-        const session = open(part.data);
-        assert.equal(session.info().tracks.length, 1);
-        assert.ok(session.instruments().length <= 64);
-        assert.ok(session.samples().samples.length <= 64);
-        assert.ok(session.samples().used <= session.samples().capacity);
-        session.delete();
-      }
-    } finally { batch.delete(); }
+      const result = module.finish();
+      assert.equal(result.limit, { instruments: 'instrumentLimit', sampleSlots: 'sampleLimit', sampleSpace: 'sampleSpaceLimit', configuration: 'configurationLimit' }[limit]);
+      assert.deepEqual(result.songs.map(s => s.song), [0]);
+      const session = open(result.data);
+      assert.equal(session.info().tracks.length, 1);
+      assert.ok(session.instruments().length <= 64);
+      assert.ok(session.samples().samples.length <= 64);
+      assert.ok(session.samples().used <= session.samples().capacity);
+      session.delete();
+    } finally { module.delete(); }
   });
 }
 

@@ -218,7 +218,7 @@ const NSF_RUN_FRAMES = 60;   // frames played between looks at the clock
 // importNsf()). options: {song (from 0), region (-1 the file's, 0 NTSC, 1 PAL), seconds,
 // patternLength, loop, trimSilence, allSongs}. Returns snapshot() with report (the session's
 // nsfReport()); sends {type: 'progress', id, value} while the song plays.
-// allSongs returns batch: [{data, songs: [{song, track, title, report}]}] instead.
+// allSongs returns batch: {songs: [{song, track, title, report}], totalSongs, limit} instead.
 async function importNsf(id, bytes, options, sampleRate) {
   const nsf = await nsfAnalyzer();
   if (options.allSongs) {
@@ -226,12 +226,12 @@ async function importNsf(id, bytes, options, sampleRate) {
       // A separate engine keeps the current editing session playable on failure
       // or cancellation, even after several songs have already been converted.
       const core = await (nsfBatchReady ??= createDnFT());
-      const parts = await importAllNsfSongs(core, nsf, bytes, options, sampleRate, {
+      const result = await importAllNsfSongs(core, nsf, bytes, options, sampleRate, {
         onProgress: value => self.postMessage({ type: 'progress', id, value }),
         isCancelled: () => cancelled.has(id),
       });
-      const snapshot = inHeap(parts[0].data, (at, size) => begin(dnft.openSession(at, size, sampleRate)));
-      return { ...snapshot, batch: parts };
+      const snapshot = inHeap(result.data, (at, size) => begin(dnft.openSession(at, size, sampleRate)));
+      return { ...snapshot, batch: { songs: result.songs, totalSongs: result.totalSongs, limit: result.limit } };
     } finally {
       cancelled.delete(id);
     }
@@ -324,7 +324,7 @@ const HANDLE_METHODS = new Set(['delete', 'clone', 'deleteLater', 'isDeleted', '
 function transferables(value) {
   if (value instanceof Uint8Array)
     return [value.buffer];
-  const files = Array.isArray(value) ? value : value?.files ?? value?.batch;
+  const files = Array.isArray(value) ? value : value?.files;
   return Array.isArray(files) ? files.filter(f => f?.data instanceof Uint8Array).map(f => f.data.buffer) : [];
 }
 

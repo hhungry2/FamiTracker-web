@@ -2,7 +2,7 @@
 // merging and saving never replace the module the user is editing until complete.
 import { CELL, MAX_INSTRUMENTS, INSTRUMENT_CHIP, emptyPattern } from './dnft-song.mjs';
 
-const MAX_TRACKS = 64;
+export const MAX_NSF_TRACKS = 64;
 const json = value => JSON.stringify(value, (_, v) => ArrayBuffer.isView(v) ? [...v] : v);
 const bytesKey = bytes => String.fromCharCode(...bytes);
 const pause = () => new Promise(resolve => setTimeout(resolve));
@@ -46,7 +46,7 @@ function resources(session) {
 }
 
 // Channel count (especially N163), region and tick rate affect the sound of every
-// track in a module. Different configurations must live in separate modules.
+// track in a module. Stop before merging a different configuration.
 function configuration(session) {
   const info = session.info();
   return json([info.chips, info.namcoChannels, info.pal, info.engineSpeed,
@@ -108,30 +108,40 @@ function copyTrack(target, source, instruments) {
   return track;
 }
 
-// Each part is serialized before starting the next, so only the current part and
-// one source song occupy editor memory. Capacity is checked before copying.
-export class NsfModuleBatch {
+// Make one module, checking capacity before copying each song.
+export class NsfModuleImport {
   constructor(core, sampleRate, info) {
     this.core = core;
     this.sampleRate = sampleRate;
     this.info = info;
     this.session = null;
-    this.parts = [];
     this.songs = [];
+    this.limit = null;
   }
 
   append(source, song, report) {
+    if (this.limit)
+      return false;
+    if (this.songs.length >= MAX_NSF_TRACKS) {
+      this.limit = 'trackLimit';
+      return false;
+    }
     const resource = resources(source);
     const config = configuration(source);
     const extraSamples = new Map([...resource.samples.values()]
       .filter(s => !this.samples?.has(s.key)).map(s => [s.key, s]));
     const extraInstruments = new Set(resource.instruments.filter(i => !this.instruments?.has(i.key)).map(i => i.key));
     const sampleInfo = this.session?.samples();
-    if (this.session && (config !== this.config || this.songs.length >= MAX_TRACKS ||
-      this.session.instruments().length + extraInstruments.size > MAX_INSTRUMENTS ||
-      sampleInfo.samples.length + extraSamples.size > sampleInfo.slots ||
-      sampleInfo.used + [...extraSamples.values()].reduce((sum, s) => sum + s.data.length, 0) > sampleInfo.capacity))
-      this.finishPart();
+    if (this.session) {
+      this.limit = [
+        [config !== this.config, 'configurationLimit'],
+        [this.session.instruments().length + extraInstruments.size > MAX_INSTRUMENTS, 'instrumentLimit'],
+        [sampleInfo.used + [...extraSamples.values()].reduce((sum, s) => sum + s.data.length, 0) > sampleInfo.capacity, 'sampleSpaceLimit'],
+        [sampleInfo.samples.length + extraSamples.size > sampleInfo.slots, 'sampleLimit'],
+      ].find(([reached]) => reached)?.[1] ?? null;
+      if (this.limit)
+        return false;
+    }
     let track = 0;
     if (!this.session) {
       this.session = inImportHeap(this.core, source.save(), (at, size) => this.core.openSession(at, size, this.sampleRate));
@@ -154,20 +164,20 @@ export class NsfModuleBatch {
       track = copyTrack(this.session, source, instrumentMap);
     }
     this.songs.push({ song, track, title: source.track(0).title, report });
+    return true;
   }
 
-  finishPart() {
+  finish() {
     if (!this.session)
       return;
     const origin = `Imported from an NSF: ${this.info.title}${this.info.artist ? ' by ' + this.info.artist : ''}`;
     const songs = this.songs.map(s => `Track ${s.track + 1}: Song ${s.song + 1} of ${this.info.songs}` +
       ` (${s.title}), ${s.report.rows} rows at ${s.report.rate.toFixed(2)} Hz, loop row ${s.report.loopRow}` +
       (s.report.warnings.length ? `; ${s.report.warnings.join(', ')}` : ''));
-    this.session.setComment([origin, 'All-songs import. A row is a frame.', ...songs].join('\r\n'), false);
-    this.parts.push({ data: this.session.save(), songs: this.songs });
-    this.session.delete();
-    this.session = null;
-    this.songs = [];
+    const limit = this.limit ?? (this.info.songs > MAX_NSF_TRACKS ? 'trackLimit' : null);
+    const count = `Imported ${this.songs.length} of ${this.info.songs} songs${limit ? `; ${limit}` : ''}.`;
+    this.session.setComment([origin, 'All-songs import. A row is a frame.', count, ...songs].join('\r\n'), false);
+    return { data: this.session.save(), songs: this.songs, totalSongs: this.info.songs, limit };
   }
 
   delete() {
@@ -214,7 +224,8 @@ export async function importAllNsfSongs(core, nsf, bytes, options, sampleRate, {
   const info = inImportHeap(nsf, bytes, (at, size) => nsf.nsfInfo(at, size));
   if (info.error)
     throw new Error(info.error);
-  const batch = new NsfModuleBatch(core, sampleRate, info);
+  const module = new NsfModuleImport(core, sampleRate, info);
+  const count = Math.min(info.songs, MAX_NSF_TRACKS);
   let analysis = null;
   let song = 0;
   try {
@@ -223,7 +234,7 @@ export async function importAllNsfSongs(core, nsf, bytes, options, sampleRate, {
     const pal = region === 1 || (region < 0 && info.preferred !== 0);
     const frames = Math.max(1, Math.round((options.seconds ?? 300) * 1e6 /
       ((pal ? info.periodPal : info.periodNtsc) || 16639)));
-    for (; song < info.songs; ++song) {
+    for (; song < count; ++song) {
       checkCancelled();
       // An analyzer can start only once. Give each subsong a fresh CPU/chip state.
       analysis = new nsf.NsfAnalysis();
@@ -235,7 +246,7 @@ export async function importAllNsfSongs(core, nsf, bytes, options, sampleRate, {
       while (!analysis.done()) {
         const started = performance.now();
         do { analysis.run(60); } while (!analysis.done() && performance.now() - started < 50);
-        onProgress((song + Math.min(1, analysis.frames() / frames)) / info.songs);
+        onProgress((song + Math.min(1, analysis.frames() / frames)) / count);
         await yieldControl();
         checkCancelled();
       }
@@ -253,21 +264,25 @@ export async function importAllNsfSongs(core, nsf, bytes, options, sampleRate, {
             throw error;
           ({ session: source, report } = silentSong(core, log, info, song, sampleRate, options));
         }
-        batch.append(source, song, report);
+        if (!module.append(source, song, report))
+          break;
       } finally {
         source?.delete();
       }
-      onProgress((song + 1) / info.songs);
+      onProgress((song + 1) / count);
       await yieldControl();
       checkCancelled();
     }
-    batch.finishPart();
-    return batch.parts;
+    const result = module.finish();
+    onProgress(1);
+    await yieldControl();
+    checkCancelled();
+    return result;
   } catch (error) {
     const message = errorMessage(core, error);
     throw new Error(message === 'cancelled' ? message : `Song ${Math.min(song + 1, info.songs)}: ${message}`);
   } finally {
     analysis?.delete();
-    batch.delete();
+    module.delete();
   }
 }

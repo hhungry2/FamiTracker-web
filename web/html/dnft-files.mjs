@@ -9,6 +9,7 @@
 //   const files = new FileMenu(editor);   // adds its menus to the editor's toolbar
 
 import { zip } from './dnft-zip.mjs';
+import { MAX_NSF_TRACKS } from './dnft-nsf-import.mjs';
 
 // the desktop's sound settings offer these; 44100 is its default
 const WAVE_RATES = [11025, 22050, 44100, 48000, 96000];
@@ -752,7 +753,7 @@ export class FileMenu {
     const d = this.nsfImportDialog;
     const song = d.querySelector('[data-role="song"]').value;
     const tracks = this.nsfFile?.info.tracks ?? [];
-    const known = song === 'all' ? Math.max(-1, ...tracks.map(t => t.time ?? -1)) : tracks[Number(song)]?.time ?? -1;
+    const known = song === 'all' ? Math.max(-1, ...tracks.slice(0, MAX_NSF_TRACKS).map(t => t.time ?? -1)) : tracks[Number(song)]?.time ?? -1;
     const seconds = known > 0 ? Math.max(DEFAULT_NSF_SECONDS, Math.ceil(known * 2 / 1000) + 10) : DEFAULT_NSF_SECONDS;
     d.querySelector('[data-role="time"]').value = formatTime(Math.min(NSF_MAX_SECONDS, seconds));
   }
@@ -796,7 +797,7 @@ export class FileMenu {
       return new Option(`#${pad2(i + 1)} ${track.title || ''}${time}`.trim(), i);
     }));
     $('song').prepend(new Option(t.nsfImportAllSongs, 'all'));
-    $('song').value = info.start;
+    $('song').value = 'all';
     // the region is a choice when the file plays on both
     const both = (info.regions & 3) === 3;
     $('regions').hidden = !both;
@@ -811,7 +812,7 @@ export class FileMenu {
     const box = d.querySelector('[data-role="progress"]');
     box.hidden = value === null;
     box.querySelector('progress').value = value ?? 0;
-    const total = this.nsfFile?.info.songs ?? 1;
+    const total = Math.min(this.nsfFile?.info.songs ?? 1, MAX_NSF_TRACKS);
     const all = d.querySelector('[data-role="song"]').value === 'all';
     box.querySelector('span').textContent = value === null ? '' :
       (all ? `${Math.min(total, Math.floor(value * total) + 1)} / ${total} · ` : '') + `${Math.floor(value * 100)}%`;
@@ -865,16 +866,12 @@ export class FileMenu {
     editor.dirty = true;
     editor.renderToolbar();
     if (snapshot.batch) {
-      const warnings = snapshot.batch.flatMap(part => part.songs.flatMap(({ song, report }) =>
-        report.warnings.map(code => `#${pad2(song + 1)}: ${t.nsfImportWarnings[code] ?? code}`)));
-      let message = t.nsfImportedAll.replace('{n}', info.songs);
-      if (snapshot.batch.length > 1) {
-        const files = snapshot.batch.map((part, i) => ({ name: `${baseName} - ${pad2(i + 1)}.dnm`, data: part.data }));
-        this.downloadFiles(files, `${baseName}.dnm`, `${baseName} - all.zip`);
-        editor.fileName = `${baseName} - 01`;
-        editor.renderToolbar();
-        message += ' · ' + t.nsfImportSplit.replace('{n}', files.length);
-      }
+      const { songs, totalSongs, limit } = snapshot.batch;
+      const warnings = songs.flatMap(({ song, report }) =>
+        report.warnings.map(code => `#${pad2(song + 1)}: ${t.nsfImportWarnings[code] ?? code}`));
+      if (limit)
+        warnings.unshift(t.nsfImportWarnings[limit] ?? limit);
+      const message = t.nsfImportedAll.replace('{n}', songs.length).replace('{total}', totalSongs);
       editor.message(`${message} — ${[name, ...warnings].join(' · ')}`, warnings.length > 0);
       editor.saveToBrowser();
       return;
