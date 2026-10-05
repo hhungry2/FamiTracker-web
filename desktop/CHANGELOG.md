@@ -6,11 +6,11 @@ Written by D.P.C.M.
 
 Version 0.5.3.9
 
-Last updated: 2026-10-05
+Last updated: 2026-10-06
 
 ---
 
-## Unreleased - 2026-10-05
+## Unreleased - 2026-10-06
 
 ### Breaking changes
 
@@ -22,6 +22,7 @@ Last updated: 2026-10-05
 
 ### Improvements
 
+- Web: Import all NSF/NSFe songs as separate tracks, sharing identical instruments and samples and splitting modules at capacity or playback configuration limits.
 - Web: Reconstruct speed 1 NSF imports into a separate track with fewer rows, retaining event timing and the original track.
 - Allow copying entire channel row at cursor with no selection (@henrikvilhelmberglund #385)
 - Add color and font appearance setting for channel header (@Nemo55aa #413 #409)

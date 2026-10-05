@@ -710,6 +710,7 @@ export class FileMenu {
       <label class="dnft-check"><input type="checkbox" data-role="loop" checked> <span data-t="nsfImportLoop"></span></label>
       <label class="dnft-check"><input type="checkbox" data-role="trim" checked> <span data-t="nsfImportTrim"></span></label>
       <p class="dnft-hint" data-t="nsfImportAbout"></p>
+      <p class="dnft-hint" data-t="nsfImportAllHint"></p>
       <div class="dnft-progress" data-role="progress" hidden><progress max="1" value="0"></progress><span></span></div>`, `
       <button type="button" class="dnft-button dnft-button--primary" data-role="start" data-t="nsfImportStart"></button>
       <button type="button" class="dnft-button" data-role="close"></button>`);
@@ -749,8 +750,9 @@ export class FileMenu {
   // length (NSFe), else five minutes
   setNsfLength() {
     const d = this.nsfImportDialog;
-    const song = Number(d.querySelector('[data-role="song"]').value);
-    const known = this.nsfFile?.info.tracks[song]?.time ?? -1;
+    const song = d.querySelector('[data-role="song"]').value;
+    const tracks = this.nsfFile?.info.tracks ?? [];
+    const known = song === 'all' ? Math.max(-1, ...tracks.map(t => t.time ?? -1)) : tracks[Number(song)]?.time ?? -1;
     const seconds = known > 0 ? Math.max(DEFAULT_NSF_SECONDS, Math.ceil(known * 2 / 1000) + 10) : DEFAULT_NSF_SECONDS;
     d.querySelector('[data-role="time"]').value = formatTime(Math.min(NSF_MAX_SECONDS, seconds));
   }
@@ -793,6 +795,7 @@ export class FileMenu {
       const time = track.time > 0 ? ` (${formatTime(Math.round(track.time / 1000))})` : '';
       return new Option(`#${pad2(i + 1)} ${track.title || ''}${time}`.trim(), i);
     }));
+    $('song').prepend(new Option(t.nsfImportAllSongs, 'all'));
     $('song').value = info.start;
     // the region is a choice when the file plays on both
     const both = (info.regions & 3) === 3;
@@ -808,7 +811,10 @@ export class FileMenu {
     const box = d.querySelector('[data-role="progress"]');
     box.hidden = value === null;
     box.querySelector('progress').value = value ?? 0;
-    box.querySelector('span').textContent = value === null ? '' : `${Math.floor(value * 100)}%`;
+    const total = this.nsfFile?.info.songs ?? 1;
+    const all = d.querySelector('[data-role="song"]').value === 'all';
+    box.querySelector('span').textContent = value === null ? '' :
+      (all ? `${Math.min(total, Math.floor(value * total) + 1)} / ${total} · ` : '') + `${Math.floor(value * 100)}%`;
     const running = value !== null;
     d.querySelectorAll('.dnft-dialog-body input, .dnft-dialog-body select').forEach(el => { el.disabled = running; });
     d.querySelector('[data-role="start"]').disabled = running;
@@ -823,9 +829,11 @@ export class FileMenu {
     if (!this.nsfFile || (editor.dirty && !confirm(t.confirmOpen)))
       return;
     const { name, bytes, info } = this.nsfFile;
-    const song = Number($('song').value);
+    const allSongs = $('song').value === 'all';
+    const song = allSongs ? 0 : Number($('song').value);
     const options = {
       song,
+      allSongs,
       region: $('regions').hidden ? -1 : Number(d.querySelector('input[type="radio"]:checked')?.value ?? -1),
       seconds: this.nsfSeconds() ?? DEFAULT_NSF_SECONDS,
       patternLength: Number($('rows').value),
@@ -851,10 +859,26 @@ export class FileMenu {
     }
     d.close();
     editor.setSong(snapshot);
-    editor.fileName = name.replace(/\.nsfe?$/i, '') + (info.songs > 1 ? ` - ${pad2(song + 1)}` : '');
+    const baseName = name.replace(/\.nsfe?$/i, '');
+    editor.fileName = baseName + (allSongs ? ' - all' : info.songs > 1 ? ` - ${pad2(song + 1)}` : '');
     // not saved as a module yet
     editor.dirty = true;
     editor.renderToolbar();
+    if (snapshot.batch) {
+      const warnings = snapshot.batch.flatMap(part => part.songs.flatMap(({ song, report }) =>
+        report.warnings.map(code => `#${pad2(song + 1)}: ${t.nsfImportWarnings[code] ?? code}`)));
+      let message = t.nsfImportedAll.replace('{n}', info.songs);
+      if (snapshot.batch.length > 1) {
+        const files = snapshot.batch.map((part, i) => ({ name: `${baseName} - ${pad2(i + 1)}.dnm`, data: part.data }));
+        this.downloadFiles(files, `${baseName}.dnm`, `${baseName} - all.zip`);
+        editor.fileName = `${baseName} - 01`;
+        editor.renderToolbar();
+        message += ' · ' + t.nsfImportSplit.replace('{n}', files.length);
+      }
+      editor.message(`${message} — ${[name, ...warnings].join(' · ')}`, warnings.length > 0);
+      editor.saveToBrowser();
+      return;
+    }
     const report = snapshot.report;
     // m:ss, or the frames when it is shorter than a second
     const time = rows => {
