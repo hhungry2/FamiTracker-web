@@ -38,6 +38,7 @@ Last updated: 2026-10-05
 
 ### Internal
 
+- Document NSF/NSFe import and reconstruction as extensions added by FamiTracker-web.
 - Miscellaneous code documentation and minor cleanup (@eulyderg #417)
 - CSoundChip now reports the channel count and initial channel of the chip (@eulyderg #417)
 
