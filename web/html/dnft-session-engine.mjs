@@ -31,6 +31,7 @@
 
 import createDnFT from './dnft.mjs';
 import { planNsfReconstruction, applyNsfReconstruction } from './dnft-nsf-reconstruct.mjs';
+import { importAllNsfSongs } from './dnft-nsf-import.mjs';
 
 const CHUNK = 1024;   // frames per render; the page tells the worklet the same
 
@@ -192,6 +193,7 @@ async function exportWave(id, { track, passes, seconds, rate, muted = 0, separat
 // time an NSF is looked at
 let nsfReady = null;
 const nsfAnalyzer = () => nsfReady ??= import('./dnft-nsf.mjs').then(module => module.default());
+let nsfBatchReady = null;
 
 function inNsfHeap(nsf, bytes, fn) {
   const at = nsf._malloc(bytes.length);
@@ -214,10 +216,26 @@ const NSF_RUN_FRAMES = 60;   // frames played between looks at the clock
 
 // Import NSF: plays the song for at most `seconds` and makes a module of it (the session's
 // importNsf()). options: {song (from 0), region (-1 the file's, 0 NTSC, 1 PAL), seconds,
-// patternLength, loop, trimSilence}. Returns snapshot() with report (the session's
+// patternLength, loop, trimSilence, allSongs}. Returns snapshot() with report (the session's
 // nsfReport()); sends {type: 'progress', id, value} while the song plays.
+// allSongs returns batch: [{data, songs: [{song, track, title, report}]}] instead.
 async function importNsf(id, bytes, options, sampleRate) {
   const nsf = await nsfAnalyzer();
+  if (options.allSongs) {
+    try {
+      // A separate engine keeps the current editing session playable on failure
+      // or cancellation, even after several songs have already been converted.
+      const core = await (nsfBatchReady ??= createDnFT());
+      const parts = await importAllNsfSongs(core, nsf, bytes, options, sampleRate, {
+        onProgress: value => self.postMessage({ type: 'progress', id, value }),
+        isCancelled: () => cancelled.has(id),
+      });
+      const snapshot = inHeap(parts[0].data, (at, size) => begin(dnft.openSession(at, size, sampleRate)));
+      return { ...snapshot, batch: parts };
+    } finally {
+      cancelled.delete(id);
+    }
+  }
   const analysis = new nsf.NsfAnalysis();
   let log;
   try {
@@ -306,7 +324,7 @@ const HANDLE_METHODS = new Set(['delete', 'clone', 'deleteLater', 'isDeleted', '
 function transferables(value) {
   if (value instanceof Uint8Array)
     return [value.buffer];
-  const files = Array.isArray(value) ? value : value?.files;
+  const files = Array.isArray(value) ? value : value?.files ?? value?.batch;
   return Array.isArray(files) ? files.filter(f => f?.data instanceof Uint8Array).map(f => f.data.buffer) : [];
 }
 
