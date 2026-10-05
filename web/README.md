@@ -670,6 +670,30 @@ session.nsfReport();                                // {rows, loopRow, stops, tr
 nsf.nsfRender(at, size, song, seconds, 44100, 0);   // Int16Array: NSFPlay playing it (mask: channels muted)
 ```
 
+### Reconstructing an NSF import
+
+Song > Reconstruct NSF import adds a separate track that combines the empty time
+between changes. Each retained row has the same notes, volume and effects as before;
+Fxx sets how many original ticks the row lasts. The original track, instruments and
+samples remain in the module, and both tracks can be saved as a `.dnm` file. This also
+works after reopening an unedited NSF import saved as `.dnm`.
+
+This first pass combines empty rows; it does not infer volume or pitch sequences or
+decode the NSF's driver. It accepts the original speed 1 import, with its fixed tick
+rate and linear order ending in C00 or a loop back with Bxx (and an optional D00 before
+the loop). Edited speeds, grooves, other effects or branches are rejected before
+changing the source. Row highlights are disabled on the added track because its rows
+have varying durations; Fxx shows those durations. If there is no interval to combine,
+no track is added.
+
+`html/dnft-nsf-reconstruct.mjs` plans the reconstruction without changing the session,
+then creates the added track. `test/nsf-reconstruct.mjs` checks event times, packed
+intro/loop boundaries, the speed/tempo split, full effect columns, saving/reopening,
+and PCM equality against the retained original track: the demo imports over 20 seconds,
+each demo channel over five seconds, and repeated loops for each chip, PAL and a custom
+play rate. Driver-specific decoding is tracked separately in
+[issue #14](https://github.com/hhungry2/FamiTracker-web/issues/14).
+
 ### Changes to desktop/Source/
 
 Small and meant to be harmless for the desktop build:
@@ -720,6 +744,7 @@ node web/test/pattern.mjs                        # the pattern editor's commands
 node web/test/frames.mjs                         # the frame editor's selections and clipboard
 node web/test/ui.mjs                             # the key table, the register view's texts, the effect table
 node web/test/nsf.mjs                            # the NSF import: the demo modules and every chip through NSFs, an NSF of its own against NSFPlay
+node web/test/nsf-reconstruct.mjs                # reconstruct imported tracks: event timing, original data and PCM retained
 node web/test/render.mjs <module> [out.wav]      # render and report
 node web/test/compare.mjs <module> <export.wav>  # against the desktop WAV export
 ```

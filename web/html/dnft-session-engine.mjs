@@ -14,7 +14,9 @@
 // importer's `warning`; 'importNsf' (bytes, options, sampleRate) too, for an NSF, which it
 // plays with the NSF analyzer (dnft-nsf.mjs) first, sending {type: 'progress', id, value}
 // on the way, with the import's `report` (see importNsf()); 'nsfInfo' (bytes) reads an
-// NSF's header; 'snapshot', 'trackData' (track); 'play' takes a number for the
+// NSF's header; 'reconstructNsf' (track, title) adds a track with unchanged intervals
+// combined, returning {info, track, reconstruction}; 'snapshot', 'trackData' (track);
+// 'play' takes a number for the
 // playback besides the session's arguments; 'beginImport' (bytes) reads a module to
 // import from; 'exportWave' (options, see exportWave()) renders wave files, sending
 // {type: 'progress', id, value} on the way; 'registerView' (requests) reads the registers
@@ -28,6 +30,7 @@
 // in the same frames, after every tick that changed one.
 
 import createDnFT from './dnft.mjs';
+import { planNsfReconstruction, applyNsfReconstruction } from './dnft-nsf-reconstruct.mjs';
 
 const CHUNK = 1024;   // frames per render; the page tells the worklet the same
 
@@ -265,6 +268,14 @@ function call(method, args, id) {
   if (!session)
     throw new Error('no module is open');
   switch (method) {
+    case 'reconstructNsf': {
+      const plan = planNsfReconstruction(session, args[0]);
+      const reconstruction = applyNsfReconstruction(session, plan, args[1]);
+      return {
+        info: session.info(), reconstruction,
+        track: reconstruction.track === null ? null : trackData(reconstruction.track),
+      };
+    }
     case 'snapshot':
       return snapshot();
     case 'trackData':
