@@ -653,16 +653,19 @@ the tracker's own modules are (the two emulations differ a little anyway: about 
 In the editor, Import > Open an NSF (and Open, and a drop, of `.nsf` and `.nsfe` files)
 reads the file's header (`nsfInfo`), then plays the song chosen for the time chosen in
 the editor's worker (`importNsf`, with its progress and a cancel) and opens the module
-made. “All songs” imports every subsong in order as a separate track, retaining NSFe
-titles and each song's loop. The chosen time limit applies to each song. Silent songs
+made. “All songs” is selected by default and imports the first 64 subsongs at most,
+in order as separate tracks, retaining NSFe titles and each song's loop. The chosen
+time limit applies to each song. Silent songs
 remain as stopped, empty tracks with a warning. `html/dnft-nsf-import.mjs` stages this
 batch in a separate editor engine, leaving the open session usable on cancellation
 or failure. It deduplicates instruments by sound data and DPCM samples by bytes,
 remaps instrument/sample references, and copies only populated patterns. Before a
-module would exceed 64 tracks, 64 instruments, 64 samples or 256 KB of sample data,
-it starts another part. Different global playback settings (including N163 channel
-count) also start a new part to preserve pitch. Multiple parts are downloaded as a
-ZIP of `.dnm` files and the first is opened. Individual-song import remains available.
+module would exceed 64 instruments, 64 samples or 256 KB of sample data, it stops
+before that song and reports the count imported and the capacity limit. Different
+global playback settings (including N163 channel count) also stop the import to
+preserve pitch. The result opens as one module, saved through the usual Save action;
+there is no automatic download. Individual-song import remains available, including
+song 65 onward in files with more than 64 songs.
 
 The javascript side:
 
@@ -756,7 +759,7 @@ node web/test/frames.mjs                         # the frame editor's selections
 node web/test/ui.mjs                             # the key table, the register view's texts, the effect table
 node web/test/nsf.mjs                            # the NSF import: the demo modules and every chip through NSFs, an NSF of its own against NSFPlay
 node web/test/nsf-reconstruct.mjs                # reconstruct imported tracks: event timing, original data and PCM retained
-node web/test/nsf-all.mjs                        # all songs: per-channel PCM, resource sharing, partitioning, silence and cancellation
+node web/test/nsf-all.mjs                        # all songs: per-channel PCM, resource sharing, 64-track/capacity limits, silence and cancellation
 node web/test/render.mjs <module> [out.wav]      # render and report
 node web/test/compare.mjs <module> <export.wav>  # against the desktop WAV export
 ```

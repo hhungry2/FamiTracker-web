@@ -22,7 +22,7 @@ Last updated: 2026-10-06
 
 ### Improvements
 
-- Web: Import all NSF/NSFe songs as separate tracks, sharing identical instruments and samples and splitting modules at capacity or playback configuration limits.
+- Web: Default NSF/NSFe import to all songs in one module, up to the first 64 tracks, sharing identical instruments and samples and stopping at capacity or playback configuration limits.
 - Web: Reconstruct speed 1 NSF imports into a separate track with fewer rows, retaining event timing and the original track.
 - Allow copying entire channel row at cursor with no selection (@henrikvilhelmberglund #385)
 - Add color and font appearance setting for channel header (@Nemo55aa #413 #409)

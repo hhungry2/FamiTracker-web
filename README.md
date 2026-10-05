@@ -97,7 +97,7 @@ The audio engine follows the same interface conventions as [ZXTune Web](https://
 **This project adds NSF import to the Dn-FamiTracker-based browser editor.** Using [NSFPlay](https://github.com/bbbradsmith/nsfplay) for playback, FamiTracker-web analyzes the chip states and converts the results into editable tracker modules.
 
 - **Import, Edit and Save**: Open an `.nsf` or `.nsfe` file, select a subsong, and convert its notes, volume, effects, waves, patches and DPCM samples into module data. The initial import uses one row per playback frame (speed 1) and can be edited and saved as `.dnm`.
-- **Import All Songs**: Select “All songs” to create a track for each song in order, retaining NSFe names and each song's loop. Identical instruments and samples are shared. If 64 tracks, instrument/sample capacity, or different playback settings require multiple modules, all parts are downloaded in a ZIP and the first part is opened. The analysis time applies to each song; silent songs remain as tracks with a warning.
+- **Import All Songs**: “All songs” is selected by default and creates up to 64 tracks from the first songs in order, retaining NSFe names and each song's loop. Identical instruments and samples are shared. Import stops before a song that exceeds instrument/sample capacity or needs different playback settings, and reports how many songs were imported. The analysis time applies to each song; silent songs remain as tracks with a warning. Save the result as one `.dnm` module.
 - **Reconstruct the Import**: Song > Reconstruct NSF import combines unchanged intervals in a separate track while retaining event timing and the original track. This is also an extension added by this web project.
 
 The data is inferred from playback. Driver-specific decoding of the original music structure is a future project in [issue #14](https://github.com/hhungry2/FamiTracker-web/issues/14). See the [import-method comparison and reconstruction results](docs/NSF_import_method_comparison.md) for the current scope.
@@ -299,7 +299,7 @@ JavaScript API やメッセージ構成は [ZXTune Web](https://github.com/hhung
 **元のDn-FamiTrackerをベースに、このWeb版で独自に追加した機能です。** [NSFPlay](https://github.com/bbbradsmith/nsfplay) で演奏し、FamiTracker-webが音源チップの状態を解析して、編集可能なトラッカーデータへ変換します。
 
 - **読み込み・編集・保存**: `.nsf`／`.nsfe` ファイルを開いて曲を選ぶと、音符・音量・エフェクト・波形・パッチ・DPCM サンプルをモジュールのデータに変換します。読み込み直後は1フレームを1行（speed 1）にして記録し、編集した曲を `.dnm` として保存できます。
-- **全曲をトラックに読み込み**: 曲の選択で「全曲」を選ぶと、曲順に別トラックを作り、NSFe の曲名と各曲のループを保持します。同じ音色・サンプルは共有します。64 トラックや音色・サンプル容量の上限、再生設定の違いで分割が必要な場合は、全モジュールを ZIP で保存して最初のモジュールを開きます。「調べる長さ」は各曲に適用され、無音の曲も警告付きでトラックとして残します。
+- **全曲をトラックに読み込み**: 初期選択は「全曲」で、先頭から最大 64 曲を別トラックに読み込み、NSFe の曲名と各曲のループを保持します。同じ音色・サンプルは共有します。音色・サンプル容量の上限や再生設定の違いで入らない場合は、その曲の前で止めて取り込めた曲数を表示します。「調べる長さ」は各曲に適用され、無音の曲も警告付きでトラックとして残します。結果は1つの `.dnm` として保存できます。
 - **読み込み後の再構築**: 「曲 → NSF 読み込みを再構築」で、変化のない区間をまとめた別トラックを追加します。元のトラックと各イベントの時刻を保持します。この再構築も、本Webプロジェクトで追加した機能です。
 
 演奏結果から推定したデータを作る方式です。元の楽曲データの構造を直接読み取るドライバ別解読は、次期プロジェクトの [Issue #14](https://github.com/hhungry2/FamiTracker-web/issues/14) に登録しています。現在の対応範囲は、[読み込み方式の比較と再構築の検証結果](docs/NSF_import_method_comparison.md)を参照してください。
