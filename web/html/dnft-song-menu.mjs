@@ -75,6 +75,12 @@ export class SongMenu {
       { label: t.transposeSong, hint: t.transposeSongHint, run: () => this.openTranspose() },
       null,
       { label: t.songLength, hint: t.songLengthHint, run: () => this.estimateLength() },
+      null,
+      {
+        label: t.nsfReconstruct, hint: t.nsfReconstructHint, run: () => this.reconstructNsf(),
+        disabled: () => this.reconstructing || !this.editor.song?.info.comment.startsWith('Imported from an NSF:') ||
+          this.editor.tr.speed !== 1 || this.editor.tr.groove,
+      },
     ]);
     const moduleMenu = files.menu(t.moduleMenu, t.moduleMenuHint, [
       { label: t.detuneSettings, hint: t.detuneSettingsHint, run: () => this.openDetune() },
@@ -100,6 +106,33 @@ export class SongMenu {
   }
 
   // ---- the Song menu ---------------------------------------------------------------------
+
+  async reconstructNsf() {
+    if (this.reconstructing)
+      return;
+    const editor = this.editor, t = this.strings;
+    this.reconstructing = true;
+    editor.stopPlaying();
+    editor.message(t.nsfReconstructWorking);
+    try {
+      const result = await this.session.call('reconstructNsf', editor.track,
+        t.nsfReconstructTrack.replace('{title}', editor.tr.title));
+      const report = result.reconstruction;
+      if (report.track === null) {
+        editor.message(t.nsfReconstructUnchanged);
+        return;
+      }
+      editor.song.info = result.info;
+      editor.song.setTrackData(report.track, result.track);
+      await editor.selectTrack(report.track);
+      editor.edited();
+      editor.message(t.nsfReconstructed.replace('{before}', report.beforeRows).replace('{after}', report.rows));
+    } catch (error) {
+      editor.message(t.nsfReconstructFailed + (t[error.message] ?? error.message), true);
+    } finally {
+      this.reconstructing = false;
+    }
+  }
 
   // Song > Clone Patterns: the pattern at the cursor, copied to the channel's first free
   // number, which the frame then plays; with frames selected, each of their patterns
