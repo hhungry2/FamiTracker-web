@@ -22,6 +22,7 @@ Last updated: 2026-10-06
 
 ### Improvements
 
+- Web: Add a separate Dn-FT 2.16 driver decoding option for NSF/NSFe, restoring exported tracker rows, orders, effects and sound resources; fall back to playback analysis for unsupported or inconsistent data.
 - Web: Default NSF/NSFe import to all songs in one module, up to the first 64 tracks, sharing identical instruments and samples and stopping at capacity or playback configuration limits.
 - Web: Reconstruct speed 1 NSF imports into a separate track with fewer rows, retaining event timing and the original track.
 - Allow copying entire channel row at cursor with no selection (@henrikvilhelmberglund #385)

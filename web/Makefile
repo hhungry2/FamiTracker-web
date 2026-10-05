@@ -126,7 +126,7 @@ core: $(CORE_OBJECTS)
 # The demo page next to the engine, with the demo modules: serve dist/ over http
 # (module scripts do not load from file://), e.g. python3 -m http.server -d dist
 HTML := $(wildcard html/*)
-site: $(TARGET) $(NSF_TARGET) $(HTML)
+site: $(TARGET) $(NSF_TARGET) $(HTML) $(DIST)/dnft-nsf-drivers.mjs
 	cp $(HTML) $(DIST)/
 	mkdir -p $(DIST)/demo
 	for f in $(ROOT)/demo/*.dnm $(ROOT)/demo/*.0cc $(ROOT)/demo/*.ftm; do 		if [ -e "$$f" ]; then cp "$$f" $(DIST)/demo/; fi; 	done
@@ -199,6 +199,10 @@ $(DRIVERS_BUILT): $(DRIVER_ASM) $(DRIVER_SCRIPT)
 	touch $@
 
 $(BUILD)/core/Compiler.o: $(DRIVERS_BUILT)
+
+$(DIST)/dnft-nsf-drivers.mjs: $(DRIVERS_BUILT) tools/nsf_driver_profiles.mjs
+	@mkdir -p $(DIST)
+	node tools/nsf_driver_profiles.mjs $(BUILD)/generated/drivers $@
 
 clean:
 	rm -rf build $(DIST)

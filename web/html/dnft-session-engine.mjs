@@ -12,7 +12,7 @@
 // Methods: 'create' (sampleRate) and 'open' (bytes, sampleRate) start a session and
 // return snapshot(); 'importText' (bytes, sampleRate) too, for a text export, with the
 // importer's `warning`; 'importNsf' (bytes, options, sampleRate) too, for an NSF, which it
-// plays with the NSF analyzer (dnft-nsf.mjs) first, sending {type: 'progress', id, value}
+// decodes the driver data or plays with the NSF analyzer (dnft-nsf.mjs), sending {type: 'progress', id, value}
 // on the way, with the import's `report` (see importNsf()); 'nsfInfo' (bytes) reads an
 // NSF's header; 'reconstructNsf' (track, title) adds a track with unchanged intervals
 // combined, returning {info, track, reconstruction}; 'snapshot', 'trackData' (track);
@@ -31,7 +31,9 @@
 
 import createDnFT from './dnft.mjs';
 import { planNsfReconstruction, applyNsfReconstruction } from './dnft-nsf-reconstruct.mjs';
-import { importAllNsfSongs } from './dnft-nsf-import.mjs';
+import { importAllNsfSongs, nsfRegion } from './dnft-nsf-import.mjs';
+import { importNsfDriver, nsfDriverInfo, NsfDriverError } from './dnft-nsf-driver-import.mjs';
+import nsfDrivers from './dnft-nsf-drivers.mjs';
 
 const CHUNK = 1024;   // frames per render; the page tells the worklet the same
 
@@ -209,18 +211,44 @@ function inNsfHeap(nsf, bytes, fn) {
 // regions, preferred, periodNtsc, periodPal, tracks: [{title, time, fade}]...}
 async function nsfInfo(bytes) {
   const nsf = await nsfAnalyzer();
-  return inNsfHeap(nsf, bytes, (at, size) => nsf.nsfInfo(at, size));
+  const info = inNsfHeap(nsf, bytes, (at, size) => nsf.nsfInfo(at, size));
+  return { ...info, driver: info.error ? null : nsfDriverInfo(bytes, nsfDrivers) };
 }
 
 const NSF_RUN_FRAMES = 60;   // frames played between looks at the clock
 
-// Import NSF: plays the song for at most `seconds` and makes a module of it (the session's
-// importNsf()). options: {song (from 0), region (-1 the file's, 0 NTSC, 1 PAL), seconds,
+// Import NSF: decode the supported driver, or play for at most `seconds` and make
+// a module through the session's importNsf(). options: {method ('playback'/'driver'),
+// song (from 0), region (-1 the file's, 0 NTSC, 1 PAL), seconds,
 // patternLength, loop, trimSilence, allSongs}. Returns snapshot() with report (the session's
 // nsfReport()); sends {type: 'progress', id, value} while the song plays.
 // allSongs returns batch: {songs: [{song, track, title, report}], totalSongs, limit} instead.
 async function importNsf(id, bytes, options, sampleRate) {
   const nsf = await nsfAnalyzer();
+  const reader = { method: 'playback', fallback: false };
+  if (options.method === 'driver') {
+    try {
+      const core = await (nsfBatchReady ??= createDnFT());
+      const info = inNsfHeap(nsf, bytes, (at, size) => nsf.nsfInfo(at, size));
+      if (info.error) throw new Error(info.error);
+      const result = await importNsfDriver(core, bytes, info, nsfDrivers, options, sampleRate, {
+        onProgress: value => self.postMessage({ type: 'progress', id, value }),
+        isCancelled: () => cancelled.has(id),
+      });
+      const snapshot = inHeap(result.data, (at, size) => begin(dnft.openSession(at, size, sampleRate)));
+      cancelled.delete(id);
+      return { ...snapshot, nsfReader: { method: 'driver', driver: result.driver },
+        ...(options.allSongs ? { batch: { songs: result.songs, totalSongs: result.totalSongs, limit: result.limit } }
+          : { report: result.songs[0].report }) };
+    } catch (e) {
+      if (!(e instanceof NsfDriverError) || cancelled.has(id)) {
+        const wasCancelled = cancelled.delete(id);
+        throw wasCancelled ? new Error('cancelled') : e;
+      }
+      reader.fallback = true;
+      reader.reason = e.message;
+    }
+  }
   if (options.allSongs) {
     try {
       // A separate engine keeps the current editing session playable on failure
@@ -231,7 +259,7 @@ async function importNsf(id, bytes, options, sampleRate) {
         isCancelled: () => cancelled.has(id),
       });
       const snapshot = inHeap(result.data, (at, size) => begin(dnft.openSession(at, size, sampleRate)));
-      return { ...snapshot, batch: { songs: result.songs, totalSongs: result.totalSongs, limit: result.limit } };
+      return { ...snapshot, nsfReader: reader, batch: { songs: result.songs, totalSongs: result.totalSongs, limit: result.limit } };
     } finally {
       cancelled.delete(id);
     }
@@ -243,8 +271,8 @@ async function importNsf(id, bytes, options, sampleRate) {
     const error = inNsfHeap(nsf, bytes, (at, size) => analysis.load(at, size));
     if (error)
       throw new Error(error);
-    const region = options.region ?? -1;
-    const pal = region === 1 || (region < 0 && info.preferred !== 0);
+    const region = nsfRegion(info, options.region ?? -1);
+    const pal = region === 1;
     const frames = Math.max(1, Math.round((options.seconds ?? 300) * 1e6 / ((pal ? info.periodPal : info.periodNtsc) || 16639)));
     if (!analysis.start(options.song ?? info.start, region, frames))
       throw new Error(`no song ${(options.song ?? 0) + 1}`);
@@ -265,7 +293,7 @@ async function importNsf(id, bytes, options, sampleRate) {
   }
   // a module that cannot be made leaves the one open as it is
   const snapshot = inHeap(log, (at, size) => begin(dnft.importNsf(at, size, sampleRate, options)));
-  return { ...snapshot, report: session.nsfReport() };
+  return { ...snapshot, nsfReader: reader, report: session.nsfReport() };
 }
 
 function call(method, args, id) {

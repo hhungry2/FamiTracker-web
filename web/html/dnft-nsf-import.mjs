@@ -3,6 +3,12 @@
 import { CELL, MAX_INSTRUMENTS, INSTRUMENT_CHIP, emptyPattern } from './dnft-song.mjs';
 
 export const MAX_NSF_TRACKS = 64;
+
+// NSFPlay may report NTSC as preferred for PAL-only NSFe files. The region
+// availability takes precedence so both readers use the file's actual machine.
+export function nsfRegion(info, requested = -1) {
+  return requested >= 0 ? requested : info.regions === 2 ? 1 : info.regions === 1 ? 0 : info.preferred === 1 ? 1 : 0;
+}
 const json = value => JSON.stringify(value, (_, v) => ArrayBuffer.isView(v) ? [...v] : v);
 const bytesKey = bytes => String.fromCharCode(...bytes);
 const pause = () => new Promise(resolve => setTimeout(resolve));
@@ -230,8 +236,8 @@ export async function importAllNsfSongs(core, nsf, bytes, options, sampleRate, {
   let song = 0;
   try {
     checkCancelled();
-    const region = options.region ?? -1;
-    const pal = region === 1 || (region < 0 && info.preferred !== 0);
+    const region = nsfRegion(info, options.region ?? -1);
+    const pal = region === 1;
     const frames = Math.max(1, Math.round((options.seconds ?? 300) * 1e6 /
       ((pal ? info.periodPal : info.periodNtsc) || 16639)));
     for (; song < count; ++song) {

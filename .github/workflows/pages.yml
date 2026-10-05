@@ -75,7 +75,7 @@ jobs:
       # keep to; it runs on the desktop before a push
       - name: Test
         run: |
-          for suite in smoke session export text instrument dpcm pattern frames ui nsf nsf-reconstruct nsf-all; do
+          for suite in smoke session export text instrument dpcm pattern frames ui nsf nsf-reconstruct nsf-all nsf-driver; do
             node "web/test/$suite.mjs"
           done
 

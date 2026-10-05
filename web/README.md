@@ -684,6 +684,34 @@ session.nsfReport();                                // {rows, loopRow, stops, tr
 nsf.nsfRender(at, size, song, seconds, 44100, 0);   // Int16Array: NSFPlay playing it (mask: channels muted)
 ```
 
+### Direct NSF driver decoding
+
+The import dialog also offers **Driver decoding (Dn-FamiTracker)** alongside the
+default Playback analysis. `html/dnft-nsf-driver-import.mjs` verifies the complete
+relocated **Dn-FT 2.16** driver against profiles generated from the exporter's
+assembled drivers, then decodes exported rows, orders, compressed note spacing,
+effects, instruments, sequences, grooves, waves, patches and DPCM assignments.
+All seven chip types and multichip configurations are supported. Initial speed,
+tempo, PAL/custom rate and exported pitch tables are preserved. All songs remains
+selected by default, with at most 64 tracks in one module.
+
+The playback duration, pattern length, loop detection and silence trimming apply
+to Playback analysis. Direct decoding uses the exported structure. Unsupported
+driver versions, modified code, inconsistent streams and unsupported data switch
+to Playback analysis, with an explicit message. Both decoding and module creation
+use the separate staging engine, so a cancellation or failure keeps the current
+document usable. Instrument/sample names, unused data, original pattern numbers
+and highlights are lost during export; noise octaves and DPCM keys/grouping get
+equivalent playable assignments. Full restoration is not guaranteed.
+
+`test/nsf-driver.mjs` checks module→NSF→decode→save/reopen, PCM against original
+modules, per-channel spectra against direct NSF playback and Playback analysis,
+banks, grooves, PAL/custom timing, limits, invalid pointers and cancellation.
+Four of the five demo exports currently fail the compressed-stream consistency
+checks and fall back; one demo decodes directly. See the [Japanese scope and
+validation notes](../docs/NSF_driver_decoding.md) for current limitations and
+remaining work in [Issue #14](https://github.com/hhungry2/FamiTracker-web/issues/14).
+
 ### Reconstructing an NSF import
 
 Song > Reconstruct NSF import adds a separate track that combines the empty time
@@ -760,6 +788,7 @@ node web/test/ui.mjs                             # the key table, the register v
 node web/test/nsf.mjs                            # the NSF import: the demo modules and every chip through NSFs, an NSF of its own against NSFPlay
 node web/test/nsf-reconstruct.mjs                # reconstruct imported tracks: event timing, original data and PCM retained
 node web/test/nsf-all.mjs                        # all songs: per-channel PCM, resource sharing, 64-track/capacity limits, silence and cancellation
+node web/test/nsf-driver.mjs                     # separate driver decoding: rows/resources/PCM, direct NSF comparison and safe fallback cases
 node web/test/render.mjs <module> [out.wav]      # render and report
 node web/test/compare.mjs <module> <export.wav>  # against the desktop WAV export
 ```
