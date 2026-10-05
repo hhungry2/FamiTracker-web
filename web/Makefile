@@ -1,6 +1,6 @@
 # Dn-FamiTracker web build: the tracker core compiled to WebAssembly.
 #
-# Needs an activated emsdk (emcc/em++ on PATH), python3, and ca65 and ld65 from cc65
+# Needs an activated emsdk (emcc/em++ on PATH), Node.js, python3, and ca65 and ld65 from cc65
 # for the NSF drivers (CA65 and LD65 name other commands for them):
 #   source <emsdk>/emsdk_env.sh
 #   make -C web -j$(nproc)
@@ -181,6 +181,7 @@ $(BUILD)/web/dnft_compat.o: $(BUILD)/generated/strings.inc
 CA65 ?= ca65
 LD65 ?= ld65
 PYTHON ?= python3
+NODE ?= node
 DRIVER_ASM := $(wildcard $(SRC)/drivers/asm/*.s $(SRC)/drivers/asm/*.mac)
 DRIVER_SCRIPT := $(SRC)/drivers/asm/build/build_engine.py
 DRIVERS_BUILT := $(BUILD)/generated/drivers/.built
@@ -202,7 +203,7 @@ $(BUILD)/core/Compiler.o: $(DRIVERS_BUILT)
 
 $(DIST)/dnft-nsf-drivers.mjs: $(DRIVERS_BUILT) tools/nsf_driver_profiles.mjs
 	@mkdir -p $(DIST)
-	node tools/nsf_driver_profiles.mjs $(BUILD)/generated/drivers $@
+	$(NODE) tools/nsf_driver_profiles.mjs $(BUILD)/generated/drivers $@
 
 clean:
 	rm -rf build $(DIST)

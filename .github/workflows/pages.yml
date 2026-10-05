@@ -68,8 +68,9 @@ jobs:
 
       - name: Build
         run: |
+          node_runtime="$(command -v node)"
           source ~/emsdk/emsdk_env.sh
-          make -C web -j"$(nproc)" site
+          make -C web -j"$(nproc)" site NODE="$node_runtime"
 
       # the seeking test also times itself against playing, which a shared runner does not
       # keep to; it runs on the desktop before a push
