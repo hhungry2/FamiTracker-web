@@ -103,34 +103,78 @@ export class SongMenu {
     this.buildMixerDialog();
     this.buildOpllDialog();
     this.buildTransposeDialog();
+    this.buildReconstructionDialog();
   }
 
   // ---- the Song menu ---------------------------------------------------------------------
+
+  buildReconstructionDialog() {
+    const d = this.reconstructionDialog = this.editor.files.dialog('dnft-reconstruction-dialog', `
+      <p data-t="nsfReconstructWorking"></p>
+      <p class="dnft-hint" data-t="nsfReconstructAbout"></p>
+      <div class="dnft-progress"><progress max="1" value="0"></progress><span></span></div>`, `
+      <button type="button" class="dnft-button" data-role="cancel" data-t="cancel"></button>`);
+    d.querySelector('.dnft-dialog-title').textContent = this.strings.nsfReconstruct;
+    const cancel = () => this.reconstructionTask?.cancel();
+    d.querySelector('[data-role="cancel"]').addEventListener('click', cancel);
+    d.addEventListener('cancel', event => {
+      if (this.reconstructing) {
+        event.preventDefault();
+        cancel();
+      }
+    });
+  }
 
   async reconstructNsf() {
     if (this.reconstructing)
       return;
     const editor = this.editor, t = this.strings;
+    if (editor.song.info.tracks.length >= 64) {
+      editor.message(t.nsfReconstructFull, true);
+      return;
+    }
+    const d = this.reconstructionDialog;
+    const showProgress = value => {
+      d.querySelector('progress').value = value;
+      d.querySelector('.dnft-progress span').textContent = `${Math.floor(value * 100)}%`;
+    };
     this.reconstructing = true;
     editor.stopPlaying();
-    editor.message(t.nsfReconstructWorking);
+    showProgress(0);
+    d.showModal();
     try {
-      const result = await this.session.call('reconstructNsf', editor.track,
-        t.nsfReconstructTrack.replace('{title}', editor.tr.title));
+      this.reconstructionTask = this.session.task('reconstructNsf', [editor.track,
+        t.nsfReconstructTrack.replace('{title}', editor.tr.title), this.session.sampleRate], showProgress);
+      const result = await this.reconstructionTask.promise;
       const report = result.reconstruction;
       if (report.track === null) {
         editor.message(t.nsfReconstructUnchanged);
         return;
       }
+      d.close();
       editor.song.info = result.info;
+      editor.song.instruments = result.instruments;
       editor.song.setTrackData(report.track, result.track);
+      editor.session.clearRows();
+      editor.session.clearLevels();
+      editor.setMuted(editor.muted);
+      editor.session.send('setAverageBpm', editor.trackerMenu.options.averageBpm);
+      editor.session.send('setMeterDecayRate', editor.trackerMenu.options.decay);
       await editor.selectTrack(report.track);
       editor.edited();
-      editor.message(t.nsfReconstructed.replace('{before}', report.beforeRows).replace('{after}', report.rows));
+      const confirmation = report.verified ? t.nsfReconstructVerified : '';
+      const fallback = report.fallback ? t.nsfReconstructFallback : '';
+      editor.message(t.nsfReconstructed.replace('{before}', report.beforeRows).replace('{after}', report.rows)
+        .replace('{instruments}', report.instruments) + confirmation + fallback);
     } catch (error) {
-      editor.message(t.nsfReconstructFailed + (t[error.message] ?? error.message), true);
+      if (error.message === 'cancelled')
+        editor.message(t.nsfReconstructCancelled);
+      else
+        editor.message(t.nsfReconstructFailed + (t[error.message] ?? error.message), true);
     } finally {
+      this.reconstructionTask = null;
       this.reconstructing = false;
+      d.close();
     }
   }
 

@@ -474,6 +474,17 @@ public:
 		return CopyToJs(bytes.data(), bytes.size());
 	}
 
+	//! A .dnm snapshot that does not mark the document as saved, including on failure.
+	val saveSnapshot() {
+		CFamiTrackerDoc &doc = Doc();
+		struct RestoreModifiedFlag {
+			CFamiTrackerDoc &doc;
+			BOOL modified;
+			~RestoreModifiedFlag() { doc.SetModifiedFlag(modified); }
+		} restore {doc, doc.IsModified()};
+		return save();
+	}
+
 	bool isModified() const {
 		return m_pSession->IsModified();
 	}
@@ -2072,6 +2083,7 @@ EMSCRIPTEN_BINDINGS(dnft_session) {
 		.function("soundSettings", &EditSession::soundSettings)
 		.function("setSoundSettings", &EditSession::setSoundSettings)
 		.function("save", &EditSession::save)
+		.function("saveSnapshot", &EditSession::saveSnapshot)
 		.function("isModified", &EditSession::isModified)
 		.function("info", &EditSession::info)
 		.function("setTitle", &EditSession::setTitle)

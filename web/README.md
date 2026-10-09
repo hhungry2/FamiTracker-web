@@ -154,6 +154,7 @@ session.takeLevelEvents();           // [{at, levels}]: the channels' volume met
 session.setQueueFrame(frame);        // Ctrl+click on a frame while playing: the frame the player goes to
                                      // when the one it plays is done; -1 for none (it is taken with the jump)
 const bytes = session.save();        // Uint8Array of a .dnm file
+const snapshot = session.saveSnapshot(); // same bytes, without clearing isModified()
 ```
 
 The document is read and changed through the tracker's own functions:
@@ -717,26 +718,52 @@ remaining work in [Issue #14](https://github.com/hhungry2/FamiTracker-web/issues
 
 ### Reconstructing an NSF import
 
-Song > Reconstruct NSF import adds a separate track that combines the empty time
-between changes. Each retained row has the same notes, volume and effects as before;
-Fxx sets how many original ticks the row lasts. The original track, instruments and
-samples remain in the module, and both tracks can be saved as a `.dnm` file. This also
-works after reopening an unedited NSF import saved as `.dnm`.
+Song > Reconstruct NSF import adds a separate track with fewer volume and pitch entries.
+For suitable notes, it moves the per-tick volume and Pxx changes into new instrument
+sequences, reuses identical sequences/instruments, and combines the resulting empty
+time between events. Fxx sets how many original ticks each row lasts. The original
+track, instruments and samples remain in the module; both tracks and the added
+instruments can be saved as a `.dnm` file. This also works after reopening an unedited
+NSF playback import saved as `.dnm`. One free track is required within the 64-track limit.
 
-This first pass combines empty rows; it does not infer volume or pitch sequences or
-decode the NSF's driver. It accepts the original speed 1 import, with its fixed tick
+Before applying the result, two isolated engines compare the original and reconstructed
+PCM sample by sample at 44.1 kHz, over the intro and two loop passes (or the captured
+duration for a stopped track), with an extra second for the renderer's boundaries.
+They compare both the full mix and each channel whose sequences changed. A mismatch
+retries volume sequences alone, then empty-row packing alone. If those also differ,
+the existing module is retained. The progress dialog supports Cancel; failed or
+cancelled reconstruction and edits made while it runs do not replace the current data.
+
+Sequence inference is deliberately limited to normal attacks with an explicit instrument,
+ending at a normal attack or note cut within the same intro/loop section. It requires
+an instrument without enabled sequences and free instrument/sequence slots. Volume is
+inferred for 2A03 pulse/noise, MMC5, VRC6, N163 and S5B; period-based pitch for 2A03
+pulse/triangle, MMC5, VRC6 and S5B. DPCM, FDS, VRC7, held notes, releases, mid-note
+instrument changes, loop-crossing notes, linear pitch, and sequences exceeding 252
+items retain their existing entries. Hardware sweeps and phase reset retain Pxx.
+There is no beat quantization or recovery of the original composer's input.
+
+Reconstruction accepts the original speed 1 import, with its fixed tick
 rate and linear order ending in C00 or a loop back with Bxx (and an optional D00 before
 the loop). Edited speeds, grooves, other effects or branches are rejected before
 changing the source. Row highlights are disabled on the added track because its rows
-have varying durations; Fxx shows those durations. If there is no interval to combine,
-no track is added.
+have varying durations; Fxx shows those durations. A persistent start bookmark keeps
+the pattern grid unhighlighted after reopening (the legacy file's base highlight
+fields may still show 4/16). If neither sequences nor empty-row
+packing improve the input, no track is added. Reconstruction processes the selected
+track; it does not recover the NSF driver's internal data.
 
-`html/dnft-nsf-reconstruct.mjs` plans the reconstruction without changing the session,
-then creates the added track. `test/nsf-reconstruct.mjs` checks event times, packed
+`html/dnft-nsf-reconstruct.mjs` plans, stages and verifies reconstruction without changing
+the live session. `test/nsf-reconstruct.mjs` checks event times, packed
 intro/loop boundaries, the speed/tempo split, full effect columns, saving/reopening,
 and PCM equality against the retained original track: the demo imports over 20 seconds,
 each demo channel over five seconds, and repeated loops for each chip, PAL and a custom
-play rate. Driver-specific decoding is tracked separately in
+play rate. `test/nsf-reconstruct-sequences.mjs` checks sequence inference, PCM equality,
+resource limits, rollback and cancellation. `test/nsf-reconstruct-demos.mjs` reconstructs
+five actual NSF playback imports and checks the saved/reopened result over 20 seconds:
+6,000 imported rows become 4,305, compared with 4,684 for empty-row packing alone.
+`test/nsf-reconstruct-worker.mjs` checks worker progress, concurrent edits, cancellation,
+error handling and the UI's playback-setting restoration. Driver-specific decoding is tracked separately in
 [issue #14](https://github.com/hhungry2/FamiTracker-web/issues/14).
 
 ### Changes to desktop/Source/
@@ -790,6 +817,9 @@ node web/test/frames.mjs                         # the frame editor's selections
 node web/test/ui.mjs                             # the key table, the register view's texts, the effect table
 node web/test/nsf.mjs                            # the NSF import: the demo modules and every chip through NSFs, an NSF of its own against NSFPlay
 node web/test/nsf-reconstruct.mjs                # reconstruct imported tracks: event timing, original data and PCM retained
+node web/test/nsf-reconstruct-sequences.mjs      # volume/pitch sequences, exact PCM, resources and fallback/cancellation
+node web/test/nsf-reconstruct-demos.mjs          # real NSF playback imports, reconstruction and saved/reopened PCM
+node web/test/nsf-reconstruct-worker.mjs         # worker/UI progress, cancellation, concurrent edits and failures
 node web/test/nsf-all.mjs                        # all songs: per-channel PCM, resource sharing, 64-track/capacity limits, silence and cancellation
 node web/test/nsf-driver.mjs                     # separate driver decoding: rows/resources/PCM, direct NSF comparison and safe fallback cases
 node web/test/render.mjs <module> [out.wav]      # render and report
