@@ -421,7 +421,7 @@ async function samePlayback(core, source, otherCore, candidate, sourceTrack, res
 // the full intro and two loop passes before returning any replacement bytes.
 // If a chip's update semantics differ, retry volume only, then the basic packer.
 export async function reconstructNsf(core, verificationCore, bytes, sourceTrack, title, sampleRate,
-  { onProgress = () => {}, isCancelled = () => false } = {}) {
+  { onProgress = () => {}, isCancelled = () => false, sequences = true } = {}) {
   if (core === verificationCore) throw new Error('nsfReconstructUnsupported');
   let source = null, candidate = null;
   let progress = 0;
@@ -437,7 +437,7 @@ export async function reconstructNsf(core, verificationCore, bytes, sourceTrack,
     const seconds = Math.ceil(length.intro + 2 * length.loop + 1);
     if (!Number.isFinite(seconds) || seconds < 1 || seconds > 99 * 60)
       throw new Error('nsfReconstructUnsupported');
-    const attempts = [{ sequences: true }, { sequences: true, pitch: false }, { sequences: false }];
+    const attempts = sequences ? [{ sequences: true }, { sequences: true, pitch: false }, { sequences: false }] : [{ sequences: false }];
     for (const [attempt, options] of attempts.entries()) {
       checkCancelled();
       candidate?.delete();

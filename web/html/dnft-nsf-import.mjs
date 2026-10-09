@@ -27,26 +27,28 @@ function errorMessage(core, error) {
   return error instanceof WebAssembly.Exception ? core.getExceptionMessage(error).at(-1) : error.message;
 }
 
-function resources(session) {
+function resources(session, allowSequences = false) {
   const samples = new Map(session.samples().samples.map(({ index }) => {
     const sample = session.sample(index);
     return [index, { ...sample, key: bytesKey(sample.data) }];
   }));
   const instruments = session.instruments().map(({ index }) => {
     const instrument = session.instrument(index);
-    // Numbered sequences are disabled in NSF imports. Do not accidentally merge
-    // edited modules with enabled macros: this helper only accepts fresh imports.
-    if (instrument.sequences?.some(s => s.enabled))
+    // Ordinary playback imports have no numbered sequences. Only the game
+    // driver's verified reconstruction explicitly enables sequence merging.
+    if (!allowSequences && instrument.sequences?.some(s => s.enabled))
       throw new Error('NSF import unexpectedly contains instrument sequences');
     const { index: ignoredIndex, name: ignoredName, ...sound } = instrument;
+    const sequences = instrument.sequences?.map((s, type) => s.enabled
+      ? { ...session.sequence(instrument.type, type, s.index), type, index: s.index, instType: instrument.type } : null);
     if (sound.sequences)
-      sound.sequences = sound.sequences.map(() => false);
+      sound.sequences = sequences.map(s => s ? [s.items, s.loop, s.release, s.setting] : false);
     if (sound.dpcm) {
       const { samples: keys, pitches, deltas } = sound.dpcm;
       sound.dpcm = [...keys].map((sample, key) => sample
         ? [samples.get(sample - 1).key, pitches[key], deltas[key]] : null);
     }
-    return { instrument, key: json(sound) };
+    return { instrument, sequences, key: json(sound) };
   });
   return { samples, instruments };
 }
@@ -59,11 +61,24 @@ function configuration(session) {
     info.newVibrato, info.linearPitch, info.speedSplitPoint]);
 }
 
-function copyInstrument(target, instrument, samples) {
+const sequenceKey = s => json([s.instType, s.type, s.items, s.loop, s.release, s.setting]);
+
+function copyInstrument(target, { instrument, sequences }, samples, sequenceMap) {
   const index = target.addInstrument(INSTRUMENT_CHIP[instrument.type], instrument.name);
   if (index < 0)
     throw new Error('no free instrument slot');
   instrument.sequences?.forEach((_, type) => target.setInstrumentSequence(index, type, false, 0));
+  sequences?.forEach(s => {
+    if (!s) return;
+    const key = sequenceKey(s);
+    if (!sequenceMap.has(key)) {
+      const free = target.freeSequence(s.instType, s.type);
+      if (free < 0) throw new Error('no free sequence slot');
+      target.setSequence(s.instType, s.type, free, s.items, s.loop, s.release, s.setting);
+      sequenceMap.set(key, free);
+    }
+    target.setInstrumentSequence(index, s.type, true, sequenceMap.get(key));
+  });
   if (instrument.dpcm) {
     const { samples: keys, pitches, deltas } = instrument.dpcm;
     keys.forEach((sample, key) => target.setDpcmKey(index, key,
@@ -94,6 +109,7 @@ function copyTrack(target, source, instruments) {
   target.setPatternLength(track, data.rows);
   target.setFrameCount(track, data.frames);
   target.setHighlight(track, ...data.highlight);
+  target.setBookmarks(track, source.bookmarks(0));
   const channels = data.effColumns.length;
   data.effColumns.forEach((columns, channel) => target.setEffColumns(track, channel, columns));
   for (let frame = 0; frame < data.frames; ++frame)
@@ -116,13 +132,15 @@ function copyTrack(target, source, instruments) {
 
 // Make one module, checking capacity before copying each song.
 export class NsfModuleImport {
-  constructor(core, sampleRate, info) {
+  constructor(core, sampleRate, info, { sequences = false } = {}) {
     this.core = core;
     this.sampleRate = sampleRate;
     this.info = info;
     this.session = null;
     this.songs = [];
     this.limit = null;
+    this.allowSequences = sequences;
+    this.sequences = new Map();
   }
 
   append(source, song, report) {
@@ -132,7 +150,7 @@ export class NsfModuleImport {
       this.limit = 'trackLimit';
       return false;
     }
-    const resource = resources(source);
+    const resource = resources(source, this.allowSequences);
     const config = configuration(source);
     const extraSamples = new Map([...resource.samples.values()]
       .filter(s => !this.samples?.has(s.key)).map(s => [s.key, s]));
@@ -154,6 +172,9 @@ export class NsfModuleImport {
       this.config = config;
       this.samples = new Map([...resource.samples.values()].map(s => [s.key, s.index]));
       this.instruments = new Map(resource.instruments.map(i => [i.key, i.instrument.index]));
+      for (const inst of resource.instruments)
+        for (const sequence of inst.sequences ?? [])
+          if (sequence) this.sequences.set(sequenceKey(sequence), sequence.index);
     } else {
       const sampleMap = new Map();
       for (const [index, sample] of resource.samples) {
@@ -162,9 +183,10 @@ export class NsfModuleImport {
         sampleMap.set(index, this.samples.get(sample.key));
       }
       const instrumentMap = new Map();
-      for (const { instrument, key } of resource.instruments) {
+      for (const resourceInstrument of resource.instruments) {
+        const { instrument, key } = resourceInstrument;
         if (!this.instruments.has(key))
-          this.instruments.set(key, copyInstrument(this.session, instrument, sampleMap));
+          this.instruments.set(key, copyInstrument(this.session, resourceInstrument, sampleMap, this.sequences));
         instrumentMap.set(instrument.index, this.instruments.get(key));
       }
       track = copyTrack(this.session, source, instrumentMap);
@@ -194,7 +216,7 @@ export class NsfModuleImport {
 
 // Keep silent song numbers in the track list, with a visible warning. The log
 // header gives the same playback configuration the C++ importer would use.
-function silentSong(core, log, info, song, sampleRate, options) {
+export function silentSong(core, log, info, song, sampleRate, options) {
   const session = core.createSession(sampleRate);
   try {
     const pal = log[10] === 1;

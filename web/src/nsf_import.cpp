@@ -1124,7 +1124,7 @@ NsfImportResult ImportNsf(CFamiTrackerDoc &doc, const uint8_t *data, size_t size
 		return false;
 	};
 	int first = 0;
-	if (options.trimSilence)
+	if (options.trimSilence && !options.sourceRows)
 		while (first < frameCount && !heard(first))
 			++first;
 	int last = frameCount - 1;
@@ -1136,7 +1136,15 @@ NsfImportResult ImportNsf(CFamiTrackerDoc &doc, const uint8_t *data, size_t size
 
 	int rows = frameCount - first;		// frames the song plays
 	int loopRow = -1;
-	if (frameCount - 1 - last >= static_cast<int>(SILENT_END_SECONDS * rate)) {
+	if (options.sourceRows) {
+		if (options.sourceRows < 1 || options.sourceRows > frameCount ||
+			options.sourceLoopRow < -1 || options.sourceLoopRow >= options.sourceRows)
+			throw std::runtime_error("invalid decoded NSF song boundaries");
+		rows = options.sourceRows;
+		loopRow = options.sourceLoopRow;
+		result.stops = loopRow < 0;
+	}
+	else if (frameCount - 1 - last >= static_cast<int>(SILENT_END_SECONDS * rate)) {
 		// It falls silent for good: it stops a frame after its last sound, which writes
 		// what silences the channels
 		rows = last + 2 - first;

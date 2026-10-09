@@ -44,6 +44,10 @@ struct NsfImportOptions {
 	int patternLength = 128;	// rows (frames) per pattern; more when the song needs it
 	bool loop = true;			// end the song where it starts repeating itself, with a jump back
 	bool trimSilence = true;	// leave out the silent frames before the first sound
+	// A verified driver decoder can supply exact flow instead of guessing repeats.
+	// Zero keeps playback-analysis behavior; bounds are checked against the log.
+	int sourceRows = 0;
+	int sourceLoopRow = -1;
 };
 
 struct NsfImportResult {

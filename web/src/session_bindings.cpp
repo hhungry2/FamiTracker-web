@@ -2000,6 +2000,10 @@ std::shared_ptr<EditSession> importNsf(uint32_t data, uint32_t size, uint32_t sa
 		o.loop = options["loop"].as<bool>();
 	if (!options["trimSilence"].isUndefined())
 		o.trimSilence = options["trimSilence"].as<bool>();
+	if (options["sourceRows"].isNumber())
+		o.sourceRows = options["sourceRows"].as<int>();
+	if (options["sourceLoopRow"].isNumber())
+		o.sourceLoopRow = options["sourceLoopRow"].as<int>();
 	dnft::NsfImportResult report;
 	auto session = std::make_shared<EditSession>(dnft::Session::ImportNsf(static_cast<const uint8_t *>(HeapPointer(data)), size, sampleRate, o, report));
 	session->setNsfReport(report);

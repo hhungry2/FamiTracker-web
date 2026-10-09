@@ -2,7 +2,7 @@
 
 English | [日本語](NSF_import_and_reconstruction.ja.md)
 
-Updated: 2026-10-09. This guide covers the FamiTracker-web browser editor.
+Updated: 2026-10-10. This guide covers the FamiTracker-web browser editor.
 
 Importing NSF/NSFe files into editable tracker data and reconstructing an import are **extensions added by this web project**. They are separate from the original Dn-FamiTracker's NSF exporter.
 
@@ -10,7 +10,7 @@ Importing NSF/NSFe files into editable tracker data and reconstructing an import
 
 1. Open the [GitHub Pages editor](https://hhungry2.github.io/FamiTracker-web/editor.html?lang=en) or the [zxtune.com editor](https://zxtune.com/create/famitracker).
 2. Choose a `.nsf` or `.nsfe` file with Open, Import > Open an NSF, or drag and drop.
-3. Select a reading method. Start with Playback analysis; try Driver decoding for files with the supported Dn-FT 2.16 driver.
+3. Select a reading method. Start with Playback analysis; try Driver decoding for supported Dn-FT 2.16 or Mega Man 1–2 engines.
 4. All songs is selected by default. Select one song instead if needed, then open the file.
 5. Select a track created by playback analysis and choose Song > Reconstruct NSF import.
 6. Compare the original and added tracks, then use the usual Save action to save one `.dnm` file.
@@ -23,9 +23,9 @@ NSF import opens a new module. Save any work in the current module first. Recons
 | --- | --- | --- | --- |
 | Input | NSF/NSFe playback | Music data stored by a supported driver | A speed 1 track created by playback analysis |
 | Processing | Play with NSFPlay and record chip states | Verify the driver code and decode rows, notes and commands | Infer volume/pitch sequences and combine unchanged rows |
-| Meaning of a row | One chip playback frame; about 60 rows/second at standard NTSC rate | An exported pattern row | Duration set by Fxx; rows can last different amounts of time |
+| Meaning of a row | One chip playback frame; about 60 rows/second at standard NTSC rate | Dn-FT: exported row; Mega Man: automatically rebuilt row | Duration set by Fxx; rows can last different amounts of time |
 | Readability | Fine changes occupy many rows | Decoded data can be closer to the original tracker structure | Fewer entries and rows; no beat or bar inference |
-| Coverage | Formats and chips handled by NSFPlay and the converter | This repository's Dn-FT 2.16 driver and supported data | Playback imports retaining a supported structure |
+| Coverage | Formats and chips handled by NSFPlay and the converter | Dn-FT 2.16; stock Mega Man 1–2 music with hardware analysis | Playback imports retaining a supported structure |
 | Failure | Show an error and retain the current module | Switch to playback analysis and report the fallback | Retain the original data if verification fails |
 
 An NSF contains a playback program and music data, generally not the complete composition project. No method guarantees recovery of all original input, instrument names or unused data. The result is a vertical tracker pattern, rather than a conversion to staff notation or a piano roll.
@@ -51,7 +51,9 @@ The decoder verifies the **Dn-FT 2.16** driver code used by this repository's ex
 
 Direct decoding uses the exported structure, ignoring the playback-analysis duration, pattern-length, loop-detection and silence-trimming settings. All songs remains the default, with a 64-track maximum.
 
-Unknown drivers, other versions, modified code, inconsistent compressed streams and unsupported data fall back to playback analysis. **Direct decoding of proprietary commercial-game drivers is not implemented.** Playback analysis does not need to identify the driver, but does not guarantee complete reproduction of arbitrary game NSFs.
+The stock US **Mega Man 1 and 2** engines also support music-structure decoding combined with NSFPlay hardware analysis and automatic reconstruction. Their music durations and loops come from decoded commands; sound states come from NSFPlay. Unsupported songs, including SFX, fall back individually. All songs still produces one module with at most 64 tracks. See [game coverage, rip constraints and validation](NSF_game_drivers.en.md).
+
+Unknown drivers, other versions, modified code, inconsistent compressed streams and unsupported data fall back to playback analysis. Playback analysis does not need to identify the driver, but does not guarantee complete reproduction of arbitrary game NSFs.
 
 Of the five included demo exports, one currently decodes directly; four fall back because of compressed-stream consistency checks. See the [driver scope and verification notes in Japanese](NSF_driver_decoding.md) and [Issue #14](https://github.com/hhungry2/FamiTracker-web/issues/14).
 

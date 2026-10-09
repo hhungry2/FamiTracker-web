@@ -76,7 +76,8 @@ jobs:
       # keep to; it runs on the desktop before a push
       - name: Test
         run: |
-          for suite in smoke session export text instrument dpcm pattern frames ui i18n nsf nsf-reconstruct nsf-reconstruct-sequences nsf-reconstruct-demos nsf-reconstruct-worker nsf-all nsf-driver; do
+          node web/test/build-capcom-reference.mjs
+          for suite in smoke session export text instrument dpcm pattern frames ui i18n nsf nsf-reconstruct nsf-reconstruct-sequences nsf-reconstruct-demos nsf-reconstruct-worker nsf-all nsf-driver nsf-capcom; do
             node "web/test/$suite.mjs"
           done
 

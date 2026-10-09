@@ -1,14 +1,14 @@
 // Direct decoding of the Dn-FT 2.16 export format (Issue #14).
 // Source of truth: desktop/Source/{Compiler,PatternCompiler,SeqInstrument,
 // InstrumentFDS,InstrumentN163,InstrumentVRC7}.cpp and drivers/asm/.
-// No 6502 code is executed. A matched driver is necessary, then every pointer,
+// The Dn-FT path executes no 6502 code. A matched driver is necessary, then every pointer,
 // count and compressed row is checked before the current document is replaced.
 import { CELL, NOTE, NO_INSTRUMENT, HOLD_INSTRUMENT, emptyPattern } from './dnft-song.mjs';
 import { MAX_NSF_TRACKS, nsfRegion } from './dnft-nsf-import.mjs';
 
-export class NsfDriverError extends Error {
-  constructor(message) { super(message); this.name = 'NsfDriverError'; }
-}
+import { nsfMemory, NsfDriverError } from './dnft-nsf-memory.mjs';
+export { NsfDriverError } from './dnft-nsf-memory.mjs';
+import { identifyCapcomDriver, importCapcomNsf } from './dnft-nsf-capcom.mjs';
 const require = (condition, message) => { if (!condition) throw new NsfDriverError(message); };
 const word = (bytes, at) => bytes[at] | bytes[at + 1] << 8;
 const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
@@ -27,66 +27,19 @@ function profileBytes(profile) {
 // Addresses map through the eight initial NSF banks, with the driver's $B000
 // pattern window and $C000-$EFFF sample window overridden only when requested.
 export function nsfDriverMemory(bytes) {
-  require(bytes instanceof Uint8Array, 'invalid NSF bytes');
-  let data, load, init, play, chips, songs, banks = new Uint8Array(8), opll = null;
-  if (tag(bytes, 0, 5) === 'NESM\x1a') {
-    require(bytes.length >= 128, 'truncated NSF header');
-    require((bytes[5] === 1 || bytes[5] === 2) && !(bytes[0x7C] & 127), 'unsupported NSF execution flags');
-    load = word(bytes, 8); init = word(bytes, 10); play = word(bytes, 12);
-    chips = bytes[0x7B]; songs = bytes[6]; banks = bytes.slice(0x70, 0x78);
-    const size = bytes[0x7D] | bytes[0x7E] << 8 | bytes[0x7F] << 16;
-    require(!size || size <= bytes.length - 128, 'truncated NSF data');
-    data = bytes.subarray(128, size ? 128 + size : bytes.length);
-    if (bytes[5] === 2 && bytes[0x7C] & 128) {
-      require(size > 0, 'missing NSF2 data length');
-      for (let at = 128 + size; at < bytes.length;) {
-        require(at + 8 <= bytes.length, 'truncated NSF2 metadata');
-        const length = new DataView(bytes.buffer, bytes.byteOffset + at, 4).getUint32(0, true);
-        require(length <= bytes.length - at - 8, 'truncated NSF2 chunk');
-        if (tag(bytes, at + 4, 4) === 'VRC7') opll = bytes.slice(at + 8, at + 8 + length);
-        at += 8 + length;
-      }
-    }
-  } else if (tag(bytes, 0, 4) === 'NSFE') {
-    let end = false;
-    const chunks = new Map();
-    for (let at = 4; at < bytes.length;) {
-      require(at + 8 <= bytes.length, 'truncated NSFe chunk');
-      const size = new DataView(bytes.buffer, bytes.byteOffset + at, 4).getUint32(0, true);
-      const name = tag(bytes, at + 4, 4);
-      require(!/^[A-Z]/.test(name) || ['INFO', 'DATA', 'BANK', 'RATE', 'VRC7', 'NEND'].includes(name), 'unsupported mandatory NSFe chunk');
-      require(size <= bytes.length - at - 8, 'truncated NSFe data');
-      require(!chunks.has(name), 'duplicate NSFe chunk');
-      chunks.set(name, bytes.subarray(at + 8, at + 8 + size));
-      at += 8 + size;
-      if (name === 'NEND') { require(size === 0 && at === bytes.length, 'invalid NSFe end'); end = true; break; }
-    }
-    const info = chunks.get('INFO');
-    require(end && info?.length >= 10 && chunks.has('DATA'), 'missing NSFe header or data');
-    load = word(info, 0); init = word(info, 2); play = word(info, 4); chips = info[7]; songs = info[8];
-    data = chunks.get('DATA');
-    if (chunks.has('BANK')) { require(chunks.get('BANK').length <= 8, 'invalid NSF banks'); banks.set(chunks.get('BANK')); }
-    opll = chunks.get('VRC7');
-  } else throw new NsfDriverError('not an NSF/NSFe');
-  require(load >= 0x8000 && init >= 0x8000 && play === init + 3 && songs > 0 && chips <= 63, 'unsupported NSF layout');
-  const banked = banks.some(b => b !== 0);
-  const memory = { load, init, play, chips, songs, banks, banked, data, opll };
-  memory.offset = (address, patternBank = null, sampleBank = null) => {
-    require(Number.isInteger(address) && address >= 0x8000 && address <= 0xFFFF, 'music pointer outside NSF memory');
-    let offset = address - load;
-    if (banked) {
-      let bank = banks[(address - 0x8000) >> 12];
-      if (patternBank !== null && address >= 0xB000 && address < 0xC000) bank = patternBank;
-      if (sampleBank !== null && address >= 0xC000 && address < 0xF000) bank = sampleBank + ((address - 0xC000) >> 12);
-      offset = bank * 4096 + (address & 4095) - (load & 4095);
-    }
-    require(offset >= 0 && offset < data.length, 'music pointer outside NSF data');
-    return offset;
+  const m = nsfMemory(bytes);
+  require(m.play === m.init + 3, 'unsupported Dn-FT NSF layout');
+  const offset = m.offset;
+  m.offset = (address, patternBank = null, sampleBank = null) => {
+    const mapping = m.banks.slice();
+    if (patternBank !== null) mapping[3] = patternBank;
+    if (sampleBank !== null) for (let i = 4; i < 7; ++i) mapping[i] = sampleBank + i - 4;
+    return offset(address, mapping);
   };
-  memory.byte = (a, b = null) => data[memory.offset(a, b)];
-  memory.word = (a, b = null) => memory.byte(a, b) | memory.byte(a + 1, b) << 8;
-  memory.bytes = (a, n, b = null, sample = null) => Uint8Array.from({ length: n }, (_, i) => data[memory.offset(a + i, b, sample)]);
-  return memory;
+  m.byte = (a, b = null) => m.data[m.offset(a, b)];
+  m.word = (a, b = null) => m.byte(a, b) | m.byte(a + 1, b) << 8;
+  m.bytes = (a, n, b = null, sample = null) => Uint8Array.from({ length: n }, (_, i) => m.data[m.offset(a + i, b, sample)]);
+  return m;
 }
 
 // Export channel order differs from the module order; DPCM comes last.
@@ -140,7 +93,12 @@ export function identifyNsfDriver(bytes, profiles) {
 }
 
 export function nsfDriverInfo(bytes, profiles) {
-  try { const d = identifyNsfDriver(bytes, profiles); return { supported: true, name: d.name }; }
+  try {
+    let d;
+    try { d = identifyNsfDriver(bytes, profiles); }
+    catch (error) { if (!(error instanceof NsfDriverError)) throw error; d = identifyCapcomDriver(bytes); }
+    return { supported: true, name: d.name };
+  }
   catch (e) { if (!(e instanceof NsfDriverError)) throw e; return { supported: false, reason: e.message }; }
 }
 
@@ -398,7 +356,7 @@ function restoreTables(session, driver, profiles) {
     require(same(driver.actual.subarray(at, at + (type === 'VRC7' ? 26 : 192)), check.actual.subarray(at, at + (type === 'VRC7' ? 26 : 192))), 'pitch table could not be restored');
 }
 
-export async function importNsfDriver(core, bytes, info, profiles, options, sampleRate,
+async function importDnftDriver(core, bytes, info, profiles, options, sampleRate,
   { onProgress = () => {}, isCancelled = () => false, yieldControl = () => new Promise(resolve => setTimeout(resolve)) } = {}) {
   const driver = identifyNsfDriver(bytes, profiles), decoder = new Decoder(driver);
   const count = options.allSongs ? Math.min(info.songs, MAX_NSF_TRACKS) : 1;
@@ -486,4 +444,13 @@ export async function importNsfDriver(core, bytes, info, profiles, options, samp
     await checkpoint(1);
     return result;
   } finally { session.delete(); }
+}
+
+export async function importNsfDriver(core, bytes, info, profiles, options, sampleRate, hooks = {}) {
+  try { identifyNsfDriver(bytes, profiles); }
+  catch (error) {
+    if (!(error instanceof NsfDriverError)) throw error;
+    return importCapcomNsf(core, identifyCapcomDriver(bytes), bytes, info, options, sampleRate, hooks);
+  }
+  return importDnftDriver(core, bytes, info, profiles, options, sampleRate, hooks);
 }

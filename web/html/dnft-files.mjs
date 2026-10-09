@@ -753,7 +753,8 @@ export class FileMenu {
     const direct = d.querySelector('[data-role="method"]').value === 'driver';
     const supported = this.nsfFile?.info.driver?.supported;
     d.querySelector('[data-role="method-hint"]').textContent = !direct ? this.strings.nsfImportPlaybackHint :
-      supported ? this.strings.nsfImportDriverHint : this.strings.nsfImportDriverUnsupported;
+      supported ? `${this.nsfFile.info.driver.name}: ${this.strings.nsfImportDriverHint}` :
+        `${this.strings.nsfImportDriverUnsupported}${this.nsfFile?.info.driver?.reason ? ` (${this.nsfFile.info.driver.reason})` : ''}`;
     d.querySelector('[data-role="analysis-options"]').hidden = direct && supported;
     d.querySelector('[data-t="nsfImportAbout"]').hidden = direct;
   }
@@ -886,11 +887,13 @@ export class FileMenu {
     editor.dirty = true;
     editor.renderToolbar();
     const direct = snapshot.nsfReader?.method === 'driver';
-    const fallback = snapshot.nsfReader?.fallback ? [t.nsfImportDriverFallback] : [];
+    const fallback = snapshot.nsfReader?.fallback && !direct ? [t.nsfImportDriverFallback] : [];
     if (snapshot.batch) {
       const { songs, totalSongs, limit } = snapshot.batch;
       const warnings = [...fallback, ...songs.flatMap(({ song, report }) =>
-        report.warnings.map(code => `#${pad2(song + 1)}: ${t.nsfImportWarnings[code] ?? code}`))];
+        [...(direct && report.reader === 'playback' ? [t.nsfImportDriverFallback] : []),
+          ...report.warnings.map(code => t.nsfImportWarnings[code] ?? code)]
+          .map(message => `#${pad2(song + 1)}: ${message}`))];
       if (limit)
         warnings.unshift(t.nsfImportWarnings[limit] ?? limit);
       const message = (direct ? t.nsfDecodedAll : t.nsfImportedAll).replace('{n}', songs.length).replace('{total}', totalSongs);
