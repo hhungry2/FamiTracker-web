@@ -710,7 +710,7 @@ nsf.nsfRender(at, size, song, seconds, 44100, 0);   // Int16Array: NSFPlay playi
 
 ### Direct NSF driver decoding
 
-The import dialog also offers **Driver decoding (Dn-FamiTracker)** alongside the
+The import dialog also offers **Driver decoding (Dn-FT / Mega Man 1–2)** alongside the
 default Playback analysis. `html/dnft-nsf-driver-import.mjs` verifies the complete
 relocated **Dn-FT 2.16** driver against profiles generated from the exporter's
 assembled drivers, then decodes exported rows, orders, compressed note spacing,
@@ -735,6 +735,22 @@ Four of the five demo exports currently fail the compressed-stream consistency
 checks and fall back; one demo decodes directly. See the [Japanese scope and
 validation notes](../docs/NSF_driver_decoding.md) for current limitations and
 remaining work in [Issue #14](https://github.com/hhungry2/FamiTracker-web/issues/14).
+
+The stock US Mega Man 1 and 2 music engines also have a reader. It verifies full
+engine fingerprints, resolves NSF init-wrapper song mappings and decodes four
+independent music streams, including durations, tempo, ties, triplets and repeats.
+NSFPlay supplies APU hardware sound states; decoded loop/end positions and automatic
+PCM-verified reconstruction make editable tracks. SFX and unsupported song data
+fall back individually. Batches reserve instrument capacity by using verified row
+packing when generated macros would fill the module. See [coverage and validation](../docs/NSF_game_drivers.en.md)
+([日本語](../docs/NSF_game_drivers.ja.md)) and [Issue #21](https://github.com/hhungry2/FamiTracker-web/issues/21).
+
+`test/build-capcom-reference.mjs` fetches pinned public disassembly source and
+assembles stock engines with newly authored test notes. It needs ca65/ld65 and
+network access; on Windows it uses WSL. `test/nsf-capcom.mjs` checks identification,
+song mapping, timing, loops, safe fallback, 64 tracks, sequence merging,
+save/reopen, cancellation and per-channel audio. No game ROM/music fixtures are
+included in the repository.
 
 ### Reconstructing an NSF import
 
@@ -843,6 +859,8 @@ node web/test/nsf-reconstruct-worker.mjs         # worker/UI progress, cancellat
 node web/test/i18n.mjs                           # ten complete UI catalogs, locale resolution and localized NSF messages
 node web/test/nsf-all.mjs                        # all songs: per-channel PCM, resource sharing, 64-track/capacity limits, silence and cancellation
 node web/test/nsf-driver.mjs                     # separate driver decoding: rows/resources/PCM, direct NSF comparison and safe fallback cases
+node web/test/build-capcom-reference.mjs         # pinned stock Mega Man engines + synthetic music (ca65/ld65, network)
+node web/test/nsf-capcom.mjs                     # documented game drivers, reconstruction, PCM, per-song fallback and limits
 node web/test/render.mjs <module> [out.wav]      # render and report
 node web/test/compare.mjs <module> <export.wav>  # against the desktop WAV export
 ```

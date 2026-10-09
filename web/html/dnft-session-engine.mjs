@@ -196,6 +196,7 @@ async function exportWave(id, { track, passes, seconds, rate, muted = 0, separat
 let nsfReady = null;
 const nsfAnalyzer = () => nsfReady ??= import('./dnft-nsf.mjs').then(module => module.default());
 let nsfBatchReady = null;
+let nsfDriverVerificationReady = null;
 
 function inNsfHeap(nsf, bytes, fn) {
   const at = nsf._malloc(bytes.length);
@@ -232,12 +233,14 @@ async function importNsf(id, bytes, options, sampleRate) {
       const info = inNsfHeap(nsf, bytes, (at, size) => nsf.nsfInfo(at, size));
       if (info.error) throw new Error(info.error);
       const result = await importNsfDriver(core, bytes, info, nsfDrivers, options, sampleRate, {
+        nsf,
+        createVerificationCore: () => (nsfDriverVerificationReady ??= createDnFT()),
         onProgress: value => self.postMessage({ type: 'progress', id, value }),
         isCancelled: () => cancelled.has(id),
       });
       const snapshot = inHeap(result.data, (at, size) => begin(dnft.openSession(at, size, sampleRate)));
       cancelled.delete(id);
-      return { ...snapshot, nsfReader: { method: 'driver', driver: result.driver },
+      return { ...snapshot, nsfReader: { method: result.method, driver: result.driver, fallback: !!result.fallback },
         ...(options.allSongs ? { batch: { songs: result.songs, totalSongs: result.totalSongs, limit: result.limit } }
           : { report: result.songs[0].report }) };
     } catch (e) {
