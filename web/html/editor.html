@@ -15,10 +15,11 @@
 <div id="editor"></div>
 <script type="module">
 import { DnFTEditor } from './dnft-editor.mjs';
+import { resolveLanguage } from './dnft-editor-strings.mjs';
 
-// ?lang=ja or ?lang=en; the browser's language otherwise
-const lang = new URLSearchParams(location.search).get('lang') ?? undefined;
-document.documentElement.lang = lang ?? (navigator.language?.startsWith('ja') ? 'ja' : 'en');
+// All ten site languages, e.g. ?lang=de or ?lang=zh-Hant; browser preferences otherwise.
+const lang = resolveLanguage(new URLSearchParams(location.search).get('lang') ?? navigator.languages ?? navigator.language);
+document.documentElement.lang = lang;
 // demo/index.json lists the modules `make site` puts next to the page
 window.editor = await DnFTEditor.create(document.getElementById('editor'), { base: '.', lang, demos: 'demo/index.json' });
 </script>

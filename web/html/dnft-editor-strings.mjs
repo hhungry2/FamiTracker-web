@@ -1,5 +1,31 @@
-// Dn-FamiTracker web port - the editor's texts. `ja` and `en`; a page picks one with
-// the editor's `lang` option.
+// Dn-FamiTracker web port - static editor texts in the site's ten languages.
+// A page selects a language with the editor's `lang` option.
+import { TRANSLATIONS } from './dnft-editor-locales.mjs';
+
+export const LANGUAGES = Object.freeze({
+  ja: '日本語', en: 'English', 'zh-Hans': '简体中文', 'zh-Hant': '繁體中文',
+  ko: '한국어', es: 'Español', 'pt-BR': 'Português (Brasil)',
+  fr: 'Français', de: 'Deutsch', ru: 'Русский',
+});
+
+// Accept site BCP 47 codes, browser preferences and regional variants. Chinese
+// script/region distinctions take precedence over the base language.
+export function resolveLanguage(preferences) {
+  for (const value of Array.isArray(preferences) ? preferences : [preferences]) {
+    if (typeof value !== 'string') continue;
+    const tag = value.trim().replaceAll('_', '-').toLowerCase();
+    if (tag === 'zh' || tag.startsWith('zh-')) {
+      const parts = tag.split('-');
+      if (parts.includes('hant')) return 'zh-Hant';
+      if (parts.includes('hans')) return 'zh-Hans';
+      return parts.some(part => ['tw', 'hk', 'mo'].includes(part)) ? 'zh-Hant' : 'zh-Hans';
+    }
+    const base = tag.split('-')[0];
+    if (base === 'pt') return 'pt-BR';
+    if (Object.hasOwn(LANGUAGES, base)) return base;
+  }
+  return 'en';
+}
 
 export const STRINGS = {
   ja: {
@@ -2248,3 +2274,5 @@ export const STRINGS = {
     movedToBookmark: 'Moved to bookmark %1 (highlight: %2, %3)',
   },
 };
+
+Object.assign(STRINGS, TRANSLATIONS);

@@ -39,7 +39,7 @@ export class RecentFiles {
     return [
       ...this.files.map(file => ({
         label: file.name,
-        hint: `${new Date(file.time).toLocaleString(this.editor.lang === 'ja' ? 'ja-JP' : undefined)}  ·  ${Math.max(1, Math.round(file.bytes.length / 1024))} KB`,
+        hint: `${new Date(file.time).toLocaleString(this.editor.lang)}  ·  ${Math.max(1, Math.round(file.bytes.length / 1024))} KB`,
         run: () => this.editor.openFile(new File([file.bytes], file.name)),
       })),
       null,

@@ -4,6 +4,8 @@
 
 対象: Web版Dn-FamiTrackerのNSF／NSFe読み込み
 
+使い方と制限をまとめたガイド: [日本語](NSF_import_and_reconstruction.ja.md) / [English](NSF_import_and_reconstruction.en.md)。
+
 現在の方式は、NSFを演奏して音源チップの状態からトラッカーのデータを作る方式です。ドライバ別解読は、NSF内部に残っている楽曲データを直接読み取り、元の入力に近いトラッカーのデータを作る方式です。
 
 **ドライバ別解読を別の読み取り方式として実装しました。対応するDn-FT 2.16を直接解読し、未対応・不整合なデータは演奏解析へ切り替えます。全曲が初期選択、上限は64トラックです。[対応範囲・制限・検証](NSF_driver_decoding.md)を参照してください。**
