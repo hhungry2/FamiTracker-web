@@ -988,6 +988,34 @@ check('VRC7 patches: the module\'s own with an external OPLL, the default set wi
   s.delete();
 });
 
+check('snapshots retain dirty and clean states while regular saves still clear dirty state', () => {
+  const s = dnft.createSession(RATE);
+  let reopened;
+  try {
+    const saved = rethrow(() => s.save());
+    assert.equal(s.isModified(), false, 'regular save clears the modified flag');
+    assert.deepEqual(rethrow(() => s.saveSnapshot()), saved);
+    assert.equal(s.isModified(), false, 'a clean snapshot stays clean');
+
+    s.setTitle('Uncommitted reconstruction');
+    s.setCells(0, 0, 0, 0, new Uint8Array(cell(NOTE_E, 4)));
+    assert.equal(s.isModified(), true);
+    const snapshot = rethrow(() => s.saveSnapshot());
+    assert.equal(s.isModified(), true, 'staging a reconstruction must not mark edits as saved');
+    assert.deepEqual(rethrow(() => s.saveSnapshot()), snapshot);
+    assert.equal(s.isModified(), true, 'repeated comparison snapshots retain dirty state');
+    assert.deepEqual(rethrow(() => s.save()), snapshot);
+    assert.equal(s.isModified(), false, 'the existing save behavior is unchanged');
+
+    reopened = openSession(snapshot);
+    assert.equal(reopened.info().title, 'Uncommitted reconstruction');
+    assert.deepEqual([...reopened.pattern(0, 0, 0).subarray(0, 12)], cell(NOTE_E, 4));
+  } finally {
+    reopened?.delete();
+    s.delete();
+  }
+});
+
 check('what is saved loads back, in the player too', () => {
   const s = dnft.createSession(RATE);
   s.setTitle('Saved');

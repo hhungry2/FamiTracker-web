@@ -8,14 +8,14 @@
 // Messages from the page:
 //   {type: 'engine'} + port                 the worklet's end of the audio channel
 //   {type: 'call', id, method, args}        -> {type: 'result', id, value} | {type: 'error', id, reason}
-//   {type: 'cancel', id}                    calls off a call that takes a while (exportWave, importNsf)
+//   {type: 'cancel', id}                    calls off a call that takes a while (exportWave, importNsf, reconstructNsf)
 // Methods: 'create' (sampleRate) and 'open' (bytes, sampleRate) start a session and
 // return snapshot(); 'importText' (bytes, sampleRate) too, for a text export, with the
 // importer's `warning`; 'importNsf' (bytes, options, sampleRate) too, for an NSF, which it
 // decodes the driver data or plays with the NSF analyzer (dnft-nsf.mjs), sending {type: 'progress', id, value}
 // on the way, with the import's `report` (see importNsf()); 'nsfInfo' (bytes) reads an
-// NSF's header; 'reconstructNsf' (track, title) adds a track with unchanged intervals
-// combined, returning {info, track, reconstruction}; 'snapshot', 'trackData' (track);
+// NSF's header; 'reconstructNsf' (track, title, sampleRate) stages and verifies a new
+// track, returning {info, instruments, track, reconstruction}; 'snapshot', 'trackData' (track);
 // 'play' takes a number for the
 // playback besides the session's arguments; 'beginImport' (bytes) reads a module to
 // import from; 'exportWave' (options, see exportWave()) renders wave files, sending
@@ -30,7 +30,7 @@
 // in the same frames, after every tick that changed one.
 
 import createDnFT from './dnft.mjs';
-import { planNsfReconstruction, applyNsfReconstruction } from './dnft-nsf-reconstruct.mjs';
+import { reconstructNsf } from './dnft-nsf-reconstruct.mjs';
 import { importAllNsfSongs, nsfRegion } from './dnft-nsf-import.mjs';
 import { importNsfDriver, nsfDriverInfo, NsfDriverError } from './dnft-nsf-driver-import.mjs';
 import nsfDrivers from './dnft-nsf-drivers.mjs';
@@ -296,6 +296,59 @@ async function importNsf(id, bytes, options, sampleRate) {
   return { ...snapshot, nsfReader: reader, report: session.nsfReport() };
 }
 
+// Each staging engine owns its sound generator. The open session stays untouched
+// while reconstruction and its PCM comparison yield to playback and page messages.
+let reconstructionReady = null;
+let reconstructing = false;
+
+async function reconstructImport(id, track, title, sampleRate) {
+  if (reconstructing)
+    throw new Error('nsfReconstructBusy');
+  reconstructing = true;
+  const source = session;
+  try {
+    const bytes = source.saveSnapshot();
+    const [core, verificationCore] = await (reconstructionReady ??=
+      Promise.all([createDnFT(), createDnFT()]));
+    if (cancelled.has(id))
+      throw new Error('cancelled');
+    const result = await reconstructNsf(core, verificationCore, bytes, track, title, sampleRate, {
+      onProgress: value => self.postMessage({ type: 'progress', id, value }),
+      isCancelled: () => cancelled.has(id),
+    });
+    if (cancelled.has(id))
+      throw new Error('cancelled');
+    // A document can be edited or replaced while the staging engines are working.
+    // Never replace those edits with the earlier snapshot.
+    if (session !== source)
+      throw new Error('nsfReconstructChanged');
+    const current = source.saveSnapshot();
+    if (current.length !== bytes.length || current.some((byte, at) => byte !== bytes[at]))
+      throw new Error('nsfReconstructChanged');
+    if (result.data) {
+      // The legacy file header stores only global highlights. Keep the live
+      // per-track settings, including highlight edits made while work yielded.
+      const highlights = source.info().tracks.map((_, index) => source.track(index).highlight);
+      const next = inHeap(result.data, (at, size) => dnft.openSession(at, size, sampleRate));
+      try {
+        highlights.forEach(([first, second], index) => next.setHighlight(index, first, second));
+        next.setHighlight(result.reconstruction.track, 0, 0);
+      } catch (error) {
+        next.delete();
+        throw error;
+      }
+      begin(next);
+    }
+    return {
+      info: session.info(), instruments: session.instruments(), reconstruction: result.reconstruction,
+      track: result.reconstruction.track === null ? null : trackData(result.reconstruction.track),
+    };
+  } finally {
+    reconstructing = false;
+    cancelled.delete(id);
+  }
+}
+
 function call(method, args, id) {
   switch (method) {
     case 'create':
@@ -314,14 +367,8 @@ function call(method, args, id) {
   if (!session)
     throw new Error('no module is open');
   switch (method) {
-    case 'reconstructNsf': {
-      const plan = planNsfReconstruction(session, args[0]);
-      const reconstruction = applyNsfReconstruction(session, plan, args[1]);
-      return {
-        info: session.info(), reconstruction,
-        track: reconstruction.track === null ? null : trackData(reconstruction.track),
-      };
-    }
+    case 'reconstructNsf':
+      return reconstructImport(id, args[0], args[1], args[2]);
     case 'snapshot':
       return snapshot();
     case 'trackData':
