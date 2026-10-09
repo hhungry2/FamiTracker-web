@@ -15,6 +15,26 @@ so a page can drive either engine the same way.
 
 What is tested and what is not is listed in the [top-level README](../README.md).
 
+For NSF import and reconstruction steps, supported scope and limitations, see the
+[English guide](../docs/NSF_import_and_reconstruction.en.md) or
+[日本語ガイド](../docs/NSF_import_and_reconstruction.ja.md).
+
+The editor interface supports the site's ten languages: `ja`, `en`, `zh-Hans`,
+`zh-Hant`, `ko`, `es`, `pt-BR`, `fr`, `de`, and `ru`. Pass `lang` to
+`DnFTEditor.create`, or use `editor.html?lang=de` on the standalone page. Without
+an explicit language, the editor resolves the browser's language preferences.
+Regional variants are accepted, including `zh-TW`/`zh-HK` for Traditional Chinese.
+Texts are shipped as static files; translation needs no network service at runtime.
+
+`html/dnft-editor-strings.mjs` contains the Japanese/English source catalogs and
+language resolver. `html/dnft-editor-locales.mjs` contains the other eight complete
+catalogs, with the same object/array structure. Their initial drafts were prepared
+with Argos Translate models and Microsoft Translator; menus and NSF terminology were reviewed.
+Detailed help and technical prose can still benefit from native-language review.
+Edit these static catalogs directly when improving translations, keep effect codes
+and `{name}` / `%1` substitution tokens intact, and run `node web/test/i18n.mjs`.
+Include new keys in every language; do not fill a missing locale with English text.
+
 Directory layout
 ----------------
 
@@ -820,6 +840,7 @@ node web/test/nsf-reconstruct.mjs                # reconstruct imported tracks: 
 node web/test/nsf-reconstruct-sequences.mjs      # volume/pitch sequences, exact PCM, resources and fallback/cancellation
 node web/test/nsf-reconstruct-demos.mjs          # real NSF playback imports, reconstruction and saved/reopened PCM
 node web/test/nsf-reconstruct-worker.mjs         # worker/UI progress, cancellation, concurrent edits and failures
+node web/test/i18n.mjs                           # ten complete UI catalogs, locale resolution and localized NSF messages
 node web/test/nsf-all.mjs                        # all songs: per-channel PCM, resource sharing, 64-track/capacity limits, silence and cancellation
 node web/test/nsf-driver.mjs                     # separate driver decoding: rows/resources/PCM, direct NSF comparison and safe fallback cases
 node web/test/render.mjs <module> [out.wav]      # render and report

@@ -2,6 +2,8 @@
 
 実装日: 2026-10-06 / [Issue #14](https://github.com/hhungry2/FamiTracker-web/issues/14)
 
+読み込みから再構築までの利用ガイド: [日本語](NSF_import_and_reconstruction.ja.md) / [English](NSF_import_and_reconstruction.en.md)。
+
 NSF読み込み画面の「読み取り方式」で「ドライバ別解読（Dn-FamiTracker）」を選ぶと、対応するNSF内部の楽曲データを直接読み取ります。「演奏解析（現在の方式）」も引き続き選べます。曲の初期選択は全曲、上限は先頭64トラックです。結果は1つのモジュールとして開き、通常の保存で `.dnm` に保存します。
 
 ## 対応範囲

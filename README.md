@@ -10,6 +10,8 @@
 
 **NSF import is an extension added by FamiTracker-web.** Choose playback analysis or supported-driver decoding to convert NSF/NSFe files into editable tracker data and save a `.dnm` module.
 
+NSF import and reconstruction guide: [English](docs/NSF_import_and_reconstruction.en.md) / [日本語](docs/NSF_import_and_reconstruction.ja.md).
+
 [English](#english) | [日本語 (Japanese)](#日本語-japanese)
 
 ### Screenshot / 画面キャプチャー
@@ -90,7 +92,7 @@ The audio engine follows the same interface conventions as [ZXTune Web](https://
 - **Expansion Chips**: Toggle expansion audio chips on the fly, with channel-level mute and solo support.
 - **Exports**: WAV (by song passes or time, chosen channels, one file per channel, sample rate), NSF / NSFe / NSF2 / NES / BIN / PRG / ASM through the desktop's own NSF compiler and drivers, and text, JSON and CSV rows, as the desktop's File menu makes them.
 - **Imports**: Text exports, and the tracks, instruments, grooves and detune tables of another module.
-- **Bilingual Interface**: Native support for English and Japanese.
+- **Ten Interface Languages**: Japanese, English, Simplified Chinese, Traditional Chinese, Korean, Spanish, Brazilian Portuguese, French, German and Russian, including menus, settings, help, NSF import and reconstruction.
 
 #### 3. NSF / NSFe Import — Added by FamiTracker-web
 
@@ -292,7 +294,7 @@ JavaScript API やメッセージ構成は [ZXTune Web](https://github.com/hhung
 - **モジュールの設定**: NTSC / PAL、エンジン速度、ビブラートの方式、ピッチモード（Linear pitch）、スピードとグルーヴの切り替え。
 - **書き出し**: WAV（演奏回数または時間、チャンネルの選択、チャンネルごとのファイル、サンプリング周波数）、デスクトップ版の NSF コンパイラーとドライバーによる NSF / NSFe / NSF2 / NES / BIN / PRG / ASM、テキスト・JSON・行の一覧（CSV）。デスクトップ版の File メニューと同じ内容で書き出します。
 - **読み込み**: テキストで書き出した曲、別のモジュールの曲・音色・グルーヴ・デチューンの表。
-- **日英バイリンガル対応**: 日本語と英語の UI 切り替えに対応。
+- **10言語のインターフェイス**: 日本語、英語、簡体字中国語、繁体字中国語、韓国語、スペイン語、ブラジルポルトガル語、フランス語、ドイツ語、ロシア語。メニュー、設定、ヘルプ、NSF読み込み・再構築も対象です。
 
 #### 3. NSF／NSFe の読み込み — このWeb版の独自機能
 

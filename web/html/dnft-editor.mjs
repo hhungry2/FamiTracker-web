@@ -32,7 +32,7 @@ import { effectHintKey } from './dnft-effect-hints.mjs';
 import { TouchGestures } from './dnft-touch.mjs';
 import { RecentFiles } from './dnft-recent.mjs';
 import { Config } from './dnft-config.mjs';
-import { STRINGS } from './dnft-editor-strings.mjs';
+import { STRINGS, resolveLanguage } from './dnft-editor-strings.mjs';
 
 const AUTOSAVE_KEY = 'dnft-editor.autosave';
 const AUTOSAVE_DELAY = 1500;
@@ -90,19 +90,20 @@ export class DnFTEditor {
     return editor;
   }
 
-  // base: where the engine files are; lang: 'ja' or 'en'; autosave: keep the module in
+  // base: where the engine files are; lang: a site language or browser preference list;
+  // autosave: keep the module in
   // localStorage; source: the link to the source code; demos: the URL of a JSON list of
   // modules next to it, offered to open
   constructor(container, {
     base = '.',
-    lang = navigator.language?.startsWith('ja') ? 'ja' : 'en',
+    lang = navigator.languages ?? navigator.language,
     autosave = true,
     source = 'https://github.com/hhungry2/FamiTracker-web',
     demos = null,
   } = {}) {
     this.base = base;
-    this.lang = lang;
-    this.strings = STRINGS[lang] ?? STRINGS.en;
+    this.lang = resolveLanguage(lang);
+    this.strings = STRINGS[this.lang];
     this.autosave = autosave;
     this.source = source;
     this.demos = demos;
@@ -161,6 +162,7 @@ export class DnFTEditor {
     const t = this.strings;
     const root = this.root = document.createElement('div');
     root.className = 'dnft-editor';
+    root.lang = this.lang;
     root.innerHTML = `
       <div class="dnft-toolbar" role="toolbar">
         <div class="dnft-group">
