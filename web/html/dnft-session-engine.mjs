@@ -23,6 +23,8 @@
 // and pitches of chips in one go (see registerView()); everything else is a method of the
 // session
 // (src/session_bindings.cpp).
+// 'midiInfo' (bytes) validates an SMF; 'importMidi' (bytes, options, sampleRate)
+// converts it through the text importer and starts a session with `midiReport`.
 // Besides: {type: 'rows', events: [{at, frame, row, play}]} for the rows the player read,
 // `at` in frames of the output since the worklet started, `play` the number of the
 // playback they belong to (frame -1: playback stopped); {type: 'levels', events: [{at,
@@ -34,6 +36,7 @@ import { reconstructNsf } from './dnft-nsf-reconstruct.mjs';
 import { importAllNsfSongs, nsfRegion } from './dnft-nsf-import.mjs';
 import { importNsfDriver, nsfDriverInfo, NsfDriverError } from './dnft-nsf-driver-import.mjs';
 import nsfDrivers from './dnft-nsf-drivers.mjs';
+import { midiInfo, importMidi } from './dnft-midi-import.mjs';
 
 const CHUNK = 1024;   // frames per render; the page tells the worklet the same
 
@@ -361,6 +364,12 @@ function call(method, args, id) {
     case 'importText': {
       const snapshot = inHeap(args[0], (at, size) => begin(dnft.importText(at, size, args[1])));
       return { ...snapshot, warning: session.takeWarning() };
+    }
+    case 'midiInfo':
+      return midiInfo(args[0]);
+    case 'importMidi': {
+      const result = importMidi(dnft, args[0], args[1], args[2]);
+      return { ...begin(result.session), midiReport: result.report };
     }
     case 'nsfInfo':
       return nsfInfo(args[0]);

@@ -1,6 +1,7 @@
 // Dn-FamiTracker web port - static editor texts in the site's ten languages.
 // A page selects a language with the editor's `lang` option.
 import { TRANSLATIONS } from './dnft-editor-locales.mjs';
+import { MIDI_STRINGS } from './dnft-midi-strings.mjs';
 
 export const LANGUAGES = Object.freeze({
   ja: '日本語', en: 'English', 'zh-Hans': '简体中文', 'zh-Hant': '繁體中文',
@@ -33,7 +34,7 @@ export const STRINGS = {
     newSong: '新規',
     newHint: '新しい曲を作る',
     open: '開く',
-    openHint: '.dnm / .0cc / .ftm、NSF（.nsf / .nsfe）を開く（ドロップでも開けます）',
+    openHint: '.dnm / .0cc / .ftm、NSF、MIDI（.mid / .midi）を開く（ドロップでも開けます）',
     save: '保存',
     saveHint: '.dnm ファイルとして保存（Ctrl+S）',
     demos: 'デモ曲を開く…',
@@ -385,7 +386,7 @@ export const STRINGS = {
     help: 'キー: Z〜M と Q〜U の段で音を入力、1 でノートカット、Space で編集モード、Enter で再生／停止、Ctrl+Z で元に戻す',
 
     importMenu: '読み込み',
-    importMenuHint: 'テキスト・NSF・別のモジュールから読み込む',
+    importMenuHint: 'MIDI・テキスト・NSF・別のモジュールから読み込む',
     importText: 'テキストから開く…',
     importTextHint: 'テキストで書き出した曲（.txt）を開く',
     importNsf: 'NSF から開く…',
@@ -1156,7 +1157,7 @@ export const STRINGS = {
     newSong: 'New',
     newHint: 'Make a new song',
     open: 'Open',
-    openHint: 'Open a .dnm, .0cc or .ftm file, or an NSF (.nsf, .nsfe) (or drop one here)',
+    openHint: 'Open a .dnm, .0cc or .ftm file, NSF (.nsf, .nsfe) or MIDI (.mid, .midi) (or drop one here)',
     save: 'Save',
     saveHint: 'Save as a .dnm file (Ctrl+S)',
     demos: 'Open a demo…',
@@ -2276,3 +2277,4 @@ export const STRINGS = {
 };
 
 Object.assign(STRINGS, TRANSLATIONS);
+for (const [language, texts] of Object.entries(MIDI_STRINGS)) Object.assign(STRINGS[language], texts);

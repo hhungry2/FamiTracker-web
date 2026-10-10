@@ -91,7 +91,7 @@ The audio engine follows the same interface conventions as [ZXTune Web](https://
 - **Instrument Editor**: The panels of the desktop's editor for every chip. Sequences (Volume, Arpeggio, Pitch, Hi-Pitch, Duty) as bar graphs and text, with "Select next empty slot" and "Clone sequence"; the 2A03's DPCM keys (sample, pitch, loop, delta counter), samples (`.dmc` and WAV files in, `.dmc` out) and sample editor; the FDS's wave, modulation table and sequences; the N163's waves (size, position, count, text); the VRC7's patches and registers. The keyboard and an on-screen piano play the instrument as it is edited. Instruments load from and save to `.fti` files.
 - **Expansion Chips**: Toggle expansion audio chips on the fly, with channel-level mute and solo support.
 - **Exports**: WAV (by song passes or time, chosen channels, one file per channel, sample rate), NSF / NSFe / NSF2 / NES / BIN / PRG / ASM through the desktop's own NSF compiler and drivers, and text, JSON and CSV rows, as the desktop's File menu makes them.
-- **Imports**: Text exports, and the tracks, instruments, grooves and detune tables of another module.
+- **Imports**: MIDI (`.mid` / `.midi`, SMF 0/1), text exports, and the tracks, instruments, grooves and detune tables of another module. MIDI import converts notes, tempo, velocity and sustain to editable 2A03/VRC6 patterns, with grid/transposition settings and reports for omitted notes.
 - **Ten Interface Languages**: Japanese, English, Simplified Chinese, Traditional Chinese, Korean, Spanish, Brazilian Portuguese, French, German and Russian, including menus, settings, help, NSF import and reconstruction.
 
 #### 3. NSF / NSFe Import — Added by FamiTracker-web
@@ -293,7 +293,7 @@ JavaScript API やメッセージ構成は [ZXTune Web](https://github.com/hhung
 - **拡張音源の即時切り替え**: VRC6 / VRC7 / FDS / MMC5 / N163 / 5B の追加・変更、チャンネルごとのミュート / ソロに対応。
 - **モジュールの設定**: NTSC / PAL、エンジン速度、ビブラートの方式、ピッチモード（Linear pitch）、スピードとグルーヴの切り替え。
 - **書き出し**: WAV（演奏回数または時間、チャンネルの選択、チャンネルごとのファイル、サンプリング周波数）、デスクトップ版の NSF コンパイラーとドライバーによる NSF / NSFe / NSF2 / NES / BIN / PRG / ASM、テキスト・JSON・行の一覧（CSV）。デスクトップ版の File メニューと同じ内容で書き出します。
-- **読み込み**: テキストで書き出した曲、別のモジュールの曲・音色・グルーヴ・デチューンの表。
+- **読み込み**: MIDI（`.mid` / `.midi`、SMF 形式 0・1）、テキストで書き出した曲、別のモジュールの曲・音色・グルーヴ・デチューンの表。MIDI は音符・テンポ・ベロシティ・サステインを編集可能な 2A03／VRC6 のパターンへ変換し、行数・移調を指定できます。省略した音は結果に表示します。
 - **10言語のインターフェイス**: 日本語、英語、簡体字中国語、繁体字中国語、韓国語、スペイン語、ブラジルポルトガル語、フランス語、ドイツ語、ロシア語。メニュー、設定、ヘルプ、NSF読み込み・再構築も対象です。
 
 #### 3. NSF／NSFe の読み込み — このWeb版の独自機能

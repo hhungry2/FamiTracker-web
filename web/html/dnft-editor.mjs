@@ -169,7 +169,7 @@ export class DnFTEditor {
           <button type="button" class="dnft-button" data-action="new"></button>
           <button type="button" class="dnft-button" data-action="open"></button>
           <button type="button" class="dnft-button" data-action="save"><span></span><i class="dnft-dirty" hidden></i></button>
-          <input type="file" class="dnft-file" accept=".dnm,.0cc,.ftm,.nsf,.nsfe" hidden>
+          <input type="file" class="dnft-file" accept=".dnm,.0cc,.ftm,.nsf,.nsfe,.mid,.midi" hidden>
           <input type="file" class="dnft-instrument-file" accept=".fti" multiple hidden>
           <select class="dnft-demos" hidden></select>
         </div>
@@ -709,6 +709,8 @@ export class DnFTEditor {
   }
 
   async openFile(file) {
+    if (/\.midi?$/i.test(file.name))
+      return this.files.importMidi(file);
     // a text export (File > Import Text)
     if (/\.txt$/i.test(file.name))
       return this.files.importText(file);

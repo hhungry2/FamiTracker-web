@@ -53,6 +53,8 @@ export class FileMenu {
     this.importName = null;        // the file of the module import
     this.nsfFile = null;           // {name, bytes, info} of the NSF import's dialog
     this.nsfTask = null;           // the NSF import running
+    this.midiFile = null;
+    this.midiBusy = false;
     this.build();
   }
 
@@ -74,9 +76,11 @@ export class FileMenu {
     this.textInput = this.fileInput('.txt', file => this.importText(file));
     this.moduleInput = this.fileInput('.dnm,.0cc,.ftm', file => this.importModule(file));
     this.nsfInput = this.fileInput('.nsf,.nsfe', file => this.importNsf(file));
+    this.midiInput = this.fileInput('.mid,.midi', file => this.importMidi(file));
     const importMenu = this.menu(t.importMenu, t.importMenuHint, [
       { label: t.importText, hint: t.importTextHint, run: () => this.textInput.click() },
       { label: t.importNsf, hint: t.importNsfHint, run: () => this.nsfInput.click() },
+      { label: t.importMidi, hint: t.importMidiHint, run: () => this.midiInput.click() },
       { label: t.importModule, hint: t.importModuleHint, run: () => this.moduleInput.click() },
     ]);
     const exportMenu = this.menu(t.exportMenu, t.exportMenuHint, [
@@ -87,7 +91,7 @@ export class FileMenu {
       { label: t.exportJson, hint: t.exportJsonHint, run: () => this.exportFile('exportJSON', 'json', 'application/json') },
       { label: t.exportRows, hint: t.exportRowsHint, run: () => this.exportFile('exportRows', 'csv', 'text/csv') },
     ]);
-    save.after(importMenu, exportMenu, this.textInput, this.moduleInput, this.nsfInput);
+    save.after(importMenu, exportMenu, this.textInput, this.moduleInput, this.nsfInput, this.midiInput);
 
     // menus close on a click elsewhere
     document.addEventListener('pointerdown', e => {
@@ -108,6 +112,7 @@ export class FileMenu {
     this.buildNsfDialog();
     this.buildImportDialog();
     this.buildNsfImportDialog();
+    this.buildMidiImportDialog();
   }
 
   fileInput(accept, open) {
@@ -357,6 +362,78 @@ export class FileMenu {
     editor.renderToolbar();
     editor.message(t.textImported + file.name + (snapshot.warning ? ` — ${snapshot.warning}` : ''), !!snapshot.warning);
     editor.saveToBrowser();
+  }
+
+  // ---- MIDI ------------------------------------------------------------------------------
+
+  buildMidiImportDialog() {
+    const t = this.strings;
+    const d = this.midiImportDialog = this.dialog('dnft-midi-import-dialog', `
+      <p data-role="about"></p>
+      <label class="dnft-field"><span data-t="midiChips"></span><select data-role="chips"></select></label>
+      <label class="dnft-field"><span data-t="midiResolution"></span><select data-role="resolution"></select></label>
+      <label class="dnft-field"><span data-t="midiTranspose"></span><input type="number" data-role="transpose" value="0" min="-48" max="48" step="1"></label>
+      <p class="dnft-hint" data-t="midiAbout"></p>`, `
+      <button type="button" class="dnft-button dnft-button--primary" data-role="start" data-t="midiStart"></button>
+      <button type="button" class="dnft-button" data-role="close" data-t="close"></button>`);
+    const $ = role => d.querySelector(`[data-role="${role}"]`);
+    $('chips').append(new Option(t.midiBase, 0), new Option(t.midiExpanded, 1));
+    $('chips').value = '1';
+    $('resolution').append(...[4, 8, 12, 16].map(rows => new Option(rows, rows)));
+    $('resolution').value = '8';
+    $('start').addEventListener('click', () => this.startMidiImport());
+    $('close').addEventListener('click', () => d.close());
+    d.addEventListener('close', () => { this.midiFile = null; });
+    d.addEventListener('cancel', e => { if (this.midiBusy) e.preventDefault(); });
+  }
+
+  async importMidi(file) {
+    const t = this.strings;
+    try {
+      if (file.size > 16 * 1024 * 1024) throw new Error('midiTooLarge');
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const info = await this.session.call('midiInfo', bytes);
+      this.midiFile = { name: file.name, bytes };
+      const d = this.midiImportDialog;
+      d.querySelector('.dnft-dialog-title').textContent = `${t.midiImportTitle}: ${file.name}`;
+      d.querySelector('[data-role="about"]').textContent = [info.title,
+        t.midiImportInfo.replace('{tracks}', info.tracks).replace('{notes}', info.notes)].filter(Boolean).join(' · ');
+      d.showModal();
+    } catch (e) {
+      this.editor.message(t.midiImportFailed + (t[e.message] ?? e.message), true);
+    }
+  }
+
+  async startMidiImport() {
+    const t = this.strings, editor = this.editor, d = this.midiImportDialog;
+    if (this.midiBusy || !this.midiFile || (editor.dirty && !confirm(t.confirmOpen))) return;
+    const $ = role => d.querySelector(`[data-role="${role}"]`);
+    if (!$('transpose').checkValidity()) { $('transpose').reportValidity(); return; }
+    const { name, bytes } = this.midiFile;
+    const options = { chips: Number($('chips').value), resolution: Number($('resolution').value),
+      transpose: Number($('transpose').value), title: name.replace(/\.midi?$/i, '') };
+    this.midiBusy = true;
+    d.querySelectorAll('button, input, select').forEach(el => { el.disabled = true; });
+    editor.stopPlaying();
+    try {
+      const snapshot = await this.session.call('importMidi', bytes, options, this.session.sampleRate);
+      editor.setSong(snapshot);
+      editor.fileName = options.title;
+      editor.dirty = true;
+      editor.renderToolbar();
+      const report = snapshot.midiReport;
+      const warnings = Object.entries(t.midiWarnings).filter(([key]) => report[key])
+        .map(([key, text]) => text.replace('{n}', report[key]));
+      editor.message([t.midiImported.replace('{name}', name).replace('{notes}', report.notes).replace('{frames}', report.frames),
+        ...warnings].join(' · '), warnings.length > 0);
+      editor.saveToBrowser();
+      d.close();
+    } catch (e) {
+      editor.message(t.midiImportFailed + (t[e.message] ?? e.message), true);
+    } finally {
+      this.midiBusy = false;
+      d.querySelectorAll('button, input, select').forEach(el => { el.disabled = false; });
+    }
   }
 
   // ---- wave ------------------------------------------------------------------------------

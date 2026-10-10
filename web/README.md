@@ -752,6 +752,49 @@ song mapping, timing, loops, safe fallback, 64 tracks, sequence merging,
 save/reopen, cancellation and per-channel audio. No game ROM/music fixtures are
 included in the repository.
 
+### Importing MIDI
+
+Use **Import > Open a MIDI…**, **Open**, or drop a `.mid` / `.midi` file into the
+editor. Standard MIDI Files (SMF) format 0 and 1 with PPQN timing are supported;
+format 2 and SMPTE timing are rejected with an explanation. The import dialog
+chooses 2A03 (three melodic voices and noise) or 2A03 + VRC6 (six melodic voices
+and noise), 4/8/12/16 rows per quarter note, and transposition from -48 to +48
+semitones. The defaults are VRC6 and eight rows per quarter note.
+
+Notes and note-offs are rounded to the chosen grid, with at least one row per
+note. Chords use free channels, preferring triangle for bass; existing notes are
+kept when all voices are busy and excess notes are omitted. MIDI channel 10
+becomes short noise drums. Other notes must fit tracker octaves 0–7 (MIDI keys
+24–119 after transposition). Velocity, channel volume (CC7), expression (CC11),
+sustain (CC64), all sound/notes off (CC120/123) and reset controllers (CC121) are
+handled. Program changes select named basic instruments and pulse duties; they
+do not reproduce General MIDI or SoundFont timbres. Pitch bend, aftertouch,
+SysEx and other controllers are not converted and are counted in the result.
+
+Tempo changes use Fxx speed/tempo effects on the otherwise empty DPCM channel.
+Tempo is rounded to tracker values; rates beyond the engine's 60 rows/second or
+speed/tempo range are adjusted and reported. Imported patterns have 64 rows,
+beat/bar bookmarks and a final C00. The result is editable and saves as `.dnm`.
+Failed parsing or conversion retains the current module, and replacing unsaved
+work uses the editor's existing confirmation. Limits are 16 MiB, 1,024 source
+tracks, 200,000 events, 50,000 notes, 1,024 simultaneously active source notes,
+64 instruments and 256 output frames; excess instruments use a reported
+fallback, while excessive file/event/song lengths are rejected.
+
+`html/dnft-midi-import.mjs` parses and converts in the editor worker through the
+existing text importer. `node web/test/midi.mjs` checks parsing, polyphony,
+controllers, tempo changes, limits, real-engine timing/audio, save/reopen PCM
+equality, worker rollback and localized UI results. The format reference is the
+[MIDI Association's Standard MIDI Files specification](https://midi.org/standard-midi-files-specification);
+controller numbers follow its [Control Change table](https://midi.org/midi-1-0-control-change-messages).
+
+MIDI の読み込みは、**読み込み > MIDI から開く…**、**開く**、または `.mid` / `.midi`
+ファイルのドロップで行えます。SMF 形式 0・1（PPQN）に対応し、音源、四分音符あたりの
+行数、移調を指定できます。和音を空いているチャンネルへ分配し、音符の長さ、テンポ変更、
+ベロシティ、音量、サステインを取り込みます。チャンネル 10 はノイズのドラムになります。
+元の楽器音は簡単なチップ音色に置き換わります。音数・音域による省略や未対応イベントは
+結果に表示します。読み込み後は編集・再生して `.dnm` に保存できます。
+
 ### Reconstructing an NSF import
 
 Song > Reconstruct NSF import adds a separate track with fewer volume and pitch entries.
